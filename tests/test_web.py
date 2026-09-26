@@ -45,8 +45,9 @@ def wait_for(client, job_id, timeout=20):
 def test_home_page_and_assets(client):
     page = client.get("/")
     assert page.status_code == 200
-    assert 'lang="fa"' in page.text
-    for path in ("/app.css", "/app.js", "/fonts/Vazirmatn-Bold.woff2", "/assets/avatar.png"):
+    assert 'lang="en"' in page.text  # i18n.js switches to Persian for Persian browsers
+    assets = ("/app.css", "/app.js", "/i18n.js", "/fonts/Vazirmatn-Bold.woff2")
+    for path in (*assets, "/assets/avatar.png", "/assets/banner-en.png"):
         assert client.get(path).status_code == 200, path
 
 
@@ -58,7 +59,7 @@ def test_info(client):
 def test_rejects_links_that_are_not_videos(client, url):
     res = client.post("/api/jobs", json={"url": url})
     assert res.status_code == 400
-    assert res.json()["detail"]
+    assert res.json()["detail"] in ("bad_link", "unsupported_link")
 
 
 def test_download_and_fetch_file(client, server, any_link_is_video):
@@ -94,13 +95,45 @@ def test_too_large_file_is_an_error(client, server, any_link_is_video):
     res = client.post("/api/jobs", json={"url": f"{server}/big.mp4"})
     job = wait_for(client, res.json()["id"])
     assert job["status"] == "error"
-    assert "مگابایت" in job["error"]
+    assert job["error"] == "too_large"
+    assert job["error_details"] == {"limit_mb": 1}
     assert job["files"] == []
 
 
 def test_unknown_job_and_file(client):
-    assert client.get("/api/jobs/nope").status_code == 404
+    assert client.get("/api/jobs/nope").json() == {"detail": "not_found"}
     assert client.get("/files/nope/0").status_code == 404
+
+
+def test_page_texts_exist_in_both_languages(client):
+    """Every data-i18n key in the page, and every error code the server sends, is translated."""
+    import re
+
+    page = client.get("/").text
+    script = client.get("/i18n.js").text
+    en_block, fa_block = script.split("    fa: {")
+    keys = set(re.findall(r'data-i18n(?:-aria)?="(\w+)"', page))
+    keys |= {
+        f"err_{code}"
+        for code in (
+            "bad_link",
+            "unsupported_link",
+            "too_many_jobs",
+            "busy",
+            "not_found",
+            "unexpected",
+            "unsupported",
+            "login",
+            "private",
+            "unavailable",
+            "no_video",
+            "failed",
+            "too_large",
+        )
+    }
+    for key in keys:
+        assert re.search(rf"^\s+{key}:", en_block, re.MULTILINE), f"{key} missing in English"
+        assert re.search(rf"^\s+{key}:", fa_block, re.MULTILINE), f"{key} missing in Persian"
 
 
 def test_each_visitor_gets_limited_parallel_downloads(client, monkeypatch, any_link_is_video):
@@ -116,6 +149,7 @@ def test_each_visitor_gets_limited_parallel_downloads(client, monkeypatch, any_l
             assert client.post("/api/jobs", json={"url": "https://a/"}).status_code == 202
         res = client.post("/api/jobs", json={"url": "https://a/"})
         assert res.status_code == 429
+        assert res.json()["detail"] == "too_many_jobs"
     finally:
         release.set()
 

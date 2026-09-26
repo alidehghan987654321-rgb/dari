@@ -2,6 +2,8 @@
 
 Runs next to the Telegram bot (see docker-compose.yml) and uses the same
 downloader. Jobs live in memory and their files are deleted after a while.
+Errors are sent as codes; the page (static/i18n.js) words them in English or
+Persian.
 
     uvicorn web:app --host 0.0.0.0 --port 8000
 """
@@ -76,7 +78,8 @@ class Job:
     progress: Progress | None = None
     files: list[MediaFile] = field(default_factory=list)
     too_large: int = 0
-    error: str | None = None
+    error: str | None = None  # a DownloadError code, or "unexpected"
+    error_details: dict[str, Any] = field(default_factory=dict)
     finished_at: float | None = None
 
     @property
@@ -98,6 +101,7 @@ class Job:
             "status": self.status,
             "progress": progress,
             "error": self.error,
+            "error_details": self.error_details,
             "too_large": self.too_large,
             "files": [
                 {
@@ -201,11 +205,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     progress=on_progress,
                 )
             except DownloadError as exc:
-                job.error = str(exc)
+                job.error, job.error_details = exc.code, exc.details
                 job.status = "error"
             except Exception:
                 log.exception("Unexpected error for %s", job.url)
-                job.error = "خطای غیرمنتظره رخ داد. دوباره امتحان کنید."
+                job.error = "unexpected"
                 job.status = "error"
             else:
                 job.files, job.too_large = result.files, result.too_large
@@ -221,21 +225,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def create_job(body: JobRequest, request: Request) -> dict[str, Any]:
         url = normalize_url(body.url)
         if not url.lower().startswith(("http://", "https://")):
-            raise HTTPException(400, "لطفاً لینک ویدیو را وارد کنید.")
+            raise HTTPException(400, "bad_link")
         # Only links to known sites: this is a public page, and a generic
         # "fetch any URL" service invites abuse.
         if not is_video_link(url):
-            raise HTTPException(
-                400,
-                "این لینک پشتیبانی نمی‌شود. لینک خود پست یا ویدیو را بفرستید "
-                "(نه لینک پیج یا کانال).",
-            )
+            raise HTTPException(400, "unsupported_link")
         ip = request.client.host if request.client else "?"
         active = [j for j in jobs.values() if j.active]
         if sum(j.ip == ip for j in active) >= MAX_JOBS_PER_IP:
-            raise HTTPException(429, "چند دانلود شما هنوز تمام نشده؛ کمی صبر کنید.")
+            raise HTTPException(429, "too_many_jobs")
         if len(active) >= MAX_QUEUE:
-            raise HTTPException(503, "سرور الان خیلی شلوغ است؛ چند دقیقه‌ی دیگر امتحان کنید.")
+            raise HTTPException(503, "busy")
 
         job_id = secrets.token_urlsafe(12)
         job = Job(id=job_id, url=url, ip=ip, dir=workdir / job_id)
@@ -251,14 +251,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def get_job(job_id: str) -> dict[str, Any]:
         job = jobs.get(job_id)
         if job is None:
-            raise HTTPException(404, "این دانلود پیدا نشد یا منقضی شده است.")
+            raise HTTPException(404, "not_found")
         return job.to_json()
 
     @app.get("/files/{job_id}/{index}")
     async def get_file(job_id: str, index: int, inline: bool = False) -> FileResponse:
         job = jobs.get(job_id)
         if job is None or not 0 <= index < len(job.files) or not job.files[index].path.is_file():
-            raise HTTPException(404, "فایل پیدا نشد یا منقضی شده است.")
+            raise HTTPException(404, "not_found")
         media = job.files[index]
         return FileResponse(
             media.path,

@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot.py downloader.py ui.py web.py ./
 COPY static ./static
-COPY assets/avatar.png assets/banner.png ./assets/
+COPY assets/avatar.png assets/banner.png assets/banner-en.png ./assets/
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000

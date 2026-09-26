@@ -1,9 +1,9 @@
 """Telegram bot that downloads videos from Instagram, TikTok, YouTube, X, ...
 
 Send it a link and it replies with the video. It also works in groups and
-channels: add it and it replies to every video link posted there. All the
-site-specific work is done by yt-dlp (see downloader.py), so any site yt-dlp
-supports works here.
+channels: add it and it replies to every video link posted there. It speaks
+English and Persian (see ui.py). All the site-specific work is done by yt-dlp
+(see downloader.py), so any site yt-dlp supports works here.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from telegram import (
     Bot,
     BotCommand,
     Chat,
+    InputMediaPhoto,
     InputProfilePhotoStatic,
     Message,
     MessageEntity,
@@ -57,7 +58,7 @@ GROUP_TYPES = (ChatType.GROUP, ChatType.SUPERGROUP)
 HTML = ParseMode.HTML
 
 ASSETS = Path(__file__).resolve().parent / "assets"
-BANNER = ASSETS / "banner.png"
+BANNERS = {"en": ASSETS / "banner-en.png", "fa": ASSETS / "banner.png"}
 AVATAR = ASSETS / "avatar.png"
 
 
@@ -74,6 +75,7 @@ class Config:
     bot_api_url: str | None
     bot_api_file_url: str | None
     site_url: str | None = None  # the website, if it's set up (web.py)
+    default_lang: str = "en"  # for channels, and users whose app language is unknown
 
     @classmethod
     def from_env(cls) -> Config:
@@ -99,7 +101,18 @@ class Config:
             bot_api_url=os.getenv("BOT_API_URL") or None,
             bot_api_file_url=os.getenv("BOT_API_FILE_URL") or None,
             site_url=f"https://{domain}" if domain and domain != "localhost" else None,
+            default_lang=ui.pick_lang(os.getenv("DEFAULT_LANGUAGE"), "en"),
         )
+
+
+def lang_for(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """The language the user picked, else their Telegram app's, else the default."""
+    chosen = (context.user_data or {}).get("lang")  # user_data is None for channel posts
+    if chosen in ui.LANGS:
+        return chosen
+    user = update.effective_user
+    default = context.bot_data["config"].default_lang
+    return ui.pick_lang(user.language_code if user else None, default)
 
 
 def extract_urls(message: Message) -> list[str]:
@@ -167,11 +180,13 @@ class StatusMessage:
             await self._message.delete()
 
 
-async def send_media(message: Message, media: MediaFile, signature: str | None = None) -> None:
+async def send_media(
+    message: Message, media: MediaFile, lang: str, signature: str | None = None
+) -> None:
     """Reply with ``media``, waiting out Telegram's flood limits (busy groups hit them)."""
     for attempt in range(1, SEND_ATTEMPTS + 1):
         try:
-            await _send_media(message, media, signature)
+            await _send_media(message, media, lang, signature)
             return
         except RetryAfter as exc:
             if attempt == SEND_ATTEMPTS:
@@ -181,11 +196,11 @@ async def send_media(message: Message, media: MediaFile, signature: str | None =
             await asyncio.sleep(delay)
 
 
-async def _send_media(message: Message, media: MediaFile, signature: str | None) -> None:
+async def _send_media(message: Message, media: MediaFile, lang: str, signature: str | None) -> None:
     extra = {
-        "caption": ui.media_caption(media, signature),
+        "caption": ui.media_caption(lang, media, signature),
         "parse_mode": HTML,
-        "reply_markup": ui.source_keyboard(media),
+        "reply_markup": ui.source_keyboard(lang, media),
     }
     if media.kind == "video":
         await message.reply_video(
@@ -216,6 +231,7 @@ async def process_url(
     config: Config,
     sem: asyncio.Semaphore,
     *,
+    lang: str,
     verbose: bool = True,
 ) -> None:
     """Download ``url`` and reply to ``message`` with the media.
@@ -231,7 +247,7 @@ async def process_url(
 
     async def show_progress() -> None:
         if latest is not None:
-            await status.show(ui.downloading(latest))
+            await status.show(ui.downloading(lang, latest))
 
     private = message.chat.type == ChatType.PRIVATE
     interval = PROGRESS_INTERVAL if private else GROUP_PROGRESS_INTERVAL
@@ -241,9 +257,9 @@ async def process_url(
 
     try:
         if sem.locked():
-            await status.show(ui.QUEUED)
+            await status.show(ui.t(lang, "queued"))
         async with sem:
-            await status.show(ui.CHECKING)
+            await status.show(ui.t(lang, "checking"))
             with tempfile.TemporaryDirectory(prefix="dl_") as tmp:
                 async with every(4, lambda: message.chat.send_action(ChatAction.UPLOAD_VIDEO)):
                     async with progress_updates:
@@ -258,36 +274,43 @@ async def process_url(
                             proxy=config.proxy,
                             progress=on_progress,
                         )
-                    await status.show(ui.SENDING)
+                    await status.show(ui.t(lang, "sending"))
                     for media in result.files:
-                        await send_media(message, media, signature)
+                        await send_media(message, media, lang, signature)
         if result.too_large:
-            await status.show(ui.partly_sent(result.too_large))
+            await status.show(ui.partly_sent(lang, result.too_large))
         else:
             await status.delete()
     except DownloadError as exc:
         log.info("Could not download %s: %s", url, exc)
-        await status.show(ui.failed(str(exc)))
+        await status.show(ui.failed(lang, exc))
     except TelegramError as exc:
         log.exception("Sending %s failed", url)
-        await status.show(ui.send_failed(exc.message))
+        await status.show(ui.send_failed(lang, exc.message))
     except Exception:
         log.exception("Unexpected error for %s", url)
-        await status.show(ui.UNEXPECTED)
+        await status.show(ui.t(lang, "unexpected"))
 
 
 async def download_and_send(
-    message: Message, urls: list[str], context: ContextTypes.DEFAULT_TYPE, *, verbose: bool
+    message: Message,
+    urls: list[str],
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    lang: str,
+    verbose: bool,
 ) -> None:
     config: Config = context.bot_data["config"]
     sem: asyncio.Semaphore = context.bot_data["semaphore"]
     if len(urls) > MAX_URLS_PER_MESSAGE:
         if verbose:
-            await message.reply_text(ui.too_many_links(MAX_URLS_PER_MESSAGE), parse_mode=HTML)
+            await message.reply_text(ui.too_many_links(lang, MAX_URLS_PER_MESSAGE), parse_mode=HTML)
         urls = urls[:MAX_URLS_PER_MESSAGE]
     user_id = message.from_user.id if message.from_user else None
     log.info("Chat %s, user %s requested %s", message.chat.id, user_id, urls)
-    await asyncio.gather(*(process_url(message, url, config, sem, verbose=verbose) for url in urls))
+    await asyncio.gather(
+        *(process_url(message, url, config, sem, lang=lang, verbose=verbose) for url in urls)
+    )
 
 
 async def sees_all_messages(chat: Chat, bot: Bot) -> bool:
@@ -300,44 +323,83 @@ async def sees_all_messages(chat: Chat, bot: Bot) -> bool:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
+    lang = lang_for(update, context)
     if message.chat.type == ChatType.PRIVATE:
-        await send_welcome(message, context)
+        await send_welcome(message, context, lang)
     elif context.args:
         # "/start add" is sent when someone adds the bot with the button under
         # the welcome message; on_my_chat_member has already said hello.
         return
     else:
         sees_all = await sees_all_messages(message.chat, context.bot)
-        await message.reply_text(ui.group_help(sees_all), parse_mode=HTML)
+        await message.reply_text(ui.group_help(lang, sees_all), parse_mode=HTML)
 
 
-async def send_welcome(message: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = ui.welcome_keyboard(context.bot.username, context.bot_data["config"].site_url)
-    # Upload the banner once, then reuse Telegram's copy.
-    banner = context.bot_data.get("banner_file_id") or (BANNER if BANNER.is_file() else None)
-    if banner is None:
-        await message.reply_text(ui.WELCOME, parse_mode=HTML, reply_markup=keyboard)
+async def switch_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/lang: flip between English and Persian."""
+    lang = ui.other_lang(lang_for(update, context))
+    context.user_data["lang"] = lang
+    message = update.effective_message
+    if message.chat.type == ChatType.PRIVATE:
+        await send_welcome(message, context, lang)
+    else:
+        await message.reply_text(ui.t(lang, "lang_switched"))
+
+
+def banner(context: ContextTypes.DEFAULT_TYPE, lang: str) -> str | Path | None:
+    """The welcome picture: Telegram's copy once uploaded, else the file."""
+    file_id = context.bot_data.setdefault("banner_file_ids", {}).get(lang)
+    path = BANNERS[lang]
+    return file_id or (path if path.is_file() else None)
+
+
+def remember_banner(context: ContextTypes.DEFAULT_TYPE, lang: str, sent: Message | bool) -> None:
+    if isinstance(sent, Message) and sent.photo:
+        context.bot_data.setdefault("banner_file_ids", {})[lang] = sent.photo[-1].file_id
+
+
+def welcome_keyboard(context: ContextTypes.DEFAULT_TYPE, lang: str):
+    return ui.welcome_keyboard(lang, context.bot.username, context.bot_data["config"].site_url)
+
+
+async def send_welcome(message: Message, context: ContextTypes.DEFAULT_TYPE, lang: str) -> None:
+    keyboard = welcome_keyboard(context, lang)
+    photo = banner(context, lang)
+    if photo is None:
+        await message.reply_text(ui.welcome(lang), parse_mode=HTML, reply_markup=keyboard)
         return
     sent = await message.reply_photo(
-        banner, caption=ui.WELCOME, parse_mode=HTML, reply_markup=keyboard
+        photo, caption=ui.welcome(lang), parse_mode=HTML, reply_markup=keyboard
     )
-    if sent.photo:
-        context.bot_data["banner_file_id"] = sent.photo[-1].file_id
+    remember_banner(context, lang, sent)
 
 
 async def on_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """The "help" / "back" buttons under the welcome message."""
+    """The help, back and language buttons under the welcome message."""
     query = update.callback_query
     await query.answer()
-    if query.data == ui.CB_HELP:
-        max_mb = context.bot_data["config"].max_bytes // (1024 * 1024)
-        text, keyboard = ui.help_text(max_mb), ui.help_keyboard()
-    else:
-        site_url = context.bot_data["config"].site_url
-        text, keyboard = ui.WELCOME, ui.welcome_keyboard(context.bot.username, site_url)
-    # Double taps would try to "edit" to the same text.
+    has_photo = bool(getattr(query.message, "photo", None))
+    # Double taps would try to "edit" to the same thing.
     with contextlib.suppress(BadRequest):
-        if getattr(query.message, "photo", None):
+        if query.data.startswith(ui.CB_LANG):
+            lang = query.data.removeprefix(ui.CB_LANG)
+            context.user_data["lang"] = lang
+            text, keyboard = ui.welcome(lang), welcome_keyboard(context, lang)
+            photo = banner(context, lang)
+            if has_photo and photo is not None:
+                # Each language has its own banner.
+                media = InputMediaPhoto(photo, caption=text, parse_mode=HTML)
+                sent = await query.edit_message_media(media, reply_markup=keyboard)
+                remember_banner(context, lang, sent)
+                return
+        elif query.data == ui.CB_HELP:
+            lang = lang_for(update, context)
+            max_mb = context.bot_data["config"].max_bytes // (1024 * 1024)
+            text, keyboard = ui.help_text(lang, max_mb), ui.help_keyboard(lang)
+        else:
+            lang = lang_for(update, context)
+            text, keyboard = ui.welcome(lang), welcome_keyboard(context, lang)
+        if has_photo:
             await query.edit_message_caption(caption=text, parse_mode=HTML, reply_markup=keyboard)
         else:
             await query.edit_message_text(text, parse_mode=HTML, reply_markup=keyboard)
@@ -349,10 +411,11 @@ async def dl_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     urls = extract_urls(message)
     if message.reply_to_message:
         urls += [u for u in extract_urls(message.reply_to_message) if u not in urls]
+    lang = lang_for(update, context)
     if not urls:
-        await message.reply_text(ui.DL_USAGE, parse_mode=HTML)
+        await message.reply_text(ui.t(lang, "dl_usage"), parse_mode=HTML)
         return
-    await download_and_send(message, urls, context, verbose=True)
+    await download_and_send(message, urls, context, lang=lang, verbose=True)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -362,11 +425,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not private:
         # People post all sorts of links in groups and channels; only react to videos.
         urls = [url for url in urls if is_video_link(url)]
+    lang = lang_for(update, context)
     if not urls:
         if private:
-            await message.reply_text(ui.NO_LINK, parse_mode=HTML)
+            await message.reply_text(ui.t(lang, "no_link"), parse_mode=HTML)
         return
-    await download_and_send(message, urls, context, verbose=private)
+    await download_and_send(message, urls, context, lang=lang, verbose=private)
 
 
 async def on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -374,6 +438,8 @@ async def on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     change = update.my_chat_member
     chat, old, new = change.chat, change.old_chat_member, change.new_chat_member
     was_in = old.status not in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED)
+    # Talk in the language of whoever added the bot.
+    lang = ui.pick_lang(change.from_user.language_code, context.bot_data["config"].default_lang)
 
     if (
         chat.type in GROUP_TYPES
@@ -389,7 +455,7 @@ async def on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             context.bot.can_read_all_group_messages or new.status == ChatMemberStatus.ADMINISTRATOR
         )
         with contextlib.suppress(TelegramError):
-            await chat.send_message(ui.group_help(sees_all), parse_mode=HTML)
+            await chat.send_message(ui.group_help(lang, sees_all), parse_mode=HTML)
 
     elif (
         chat.type == ChatType.CHANNEL
@@ -397,7 +463,8 @@ async def on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         and old.status != ChatMemberStatus.ADMINISTRATOR
     ):
         log.info("Added to channel %s (%s)", chat.id, chat.title)
-        text = ui.channel_added(chat.title or "", getattr(new, "can_post_messages", False))
+        can_post = getattr(new, "can_post_messages", False)
+        text = ui.channel_added(lang, chat.title or "", can_post)
         # Only works if that person has started a chat with the bot before.
         with contextlib.suppress(TelegramError):
             await context.bot.send_message(change.from_user.id, text, parse_mode=HTML)
@@ -405,23 +472,31 @@ async def on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.type == "private":
-        await update.effective_message.reply_text(ui.NOT_ALLOWED)
+        await update.effective_message.reply_text(ui.t(lang_for(update, context), "not_allowed"))
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.error("Unhandled error while processing %s", update, exc_info=context.error)
 
 
+# Telegram shows the "fa" texts to Persian apps and the default (English) to everyone else.
+PROFILE_LANGS = {"en": None, "fa": "fa"}
+
+
 async def setup_profile(bot: Bot) -> None:
-    """Give the bot a description and profile picture, unless it already has them.
+    """Give the bot descriptions and a profile picture, unless it already has them.
 
     Whatever the owner sets in @BotFather is left alone.
     """
     try:
-        if not (await bot.get_my_short_description()).short_description:
-            await bot.set_my_short_description(ui.SHORT_DESCRIPTION)
-        if not (await bot.get_my_description()).description:
-            await bot.set_my_description(ui.DESCRIPTION)
+        for lang, code in PROFILE_LANGS.items():
+            current = await bot.get_my_short_description(language_code=code)
+            if not current.short_description:
+                await bot.set_my_short_description(
+                    ui.t(lang, "short_description"), language_code=code
+                )
+            if not (await bot.get_my_description(language_code=code)).description:
+                await bot.set_my_description(ui.t(lang, "description"), language_code=code)
         photos = await bot.get_user_profile_photos(bot.id, limit=1)
         if photos.total_count == 0 and AVATAR.is_file():
             await bot.set_my_profile_photo(InputProfilePhotoStatic(AVATAR.read_bytes()))
@@ -431,7 +506,9 @@ async def setup_profile(bot: Bot) -> None:
 
 
 async def post_init(app: Application) -> None:
-    await app.bot.set_my_commands([BotCommand(cmd, text) for cmd, text in ui.COMMANDS.items()])
+    for lang, code in PROFILE_LANGS.items():
+        commands = [BotCommand(cmd, ui.t(lang, f"cmd_{cmd}")) for cmd in ("start", "dl", "lang")]
+        await app.bot.set_my_commands(commands, language_code=code)
     await setup_profile(app.bot)
     if not app.bot.can_join_groups:
         log.warning("Adding the bot to groups is disabled. Enable it: @BotFather -> /setjoingroups")
@@ -473,6 +550,7 @@ def build_app(config: Config) -> Application:
     new_message = filters.UpdateType.MESSAGE  # not edits, which would download again
     app.add_handler(CommandHandler(["start", "help"], start, filters=new_message))
     app.add_handler(CommandHandler("dl", dl_command, filters=new_message))
+    app.add_handler(CommandHandler("lang", switch_language, filters=new_message))
     links = (
         (filters.TEXT | filters.CAPTION)
         & ~filters.COMMAND
@@ -483,7 +561,7 @@ def build_app(config: Config) -> Application:
     )
     app.add_handler(MessageHandler(links, handle_message))
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
-    menu = f"^({ui.CB_HELP}|{ui.CB_HOME})$"
+    menu = f"^({ui.CB_HELP}|{ui.CB_HOME}|{ui.CB_LANG}(en|fa))$"
     app.add_handler(CallbackQueryHandler(on_menu_button, pattern=menu))
     app.add_error_handler(on_error)
     return app

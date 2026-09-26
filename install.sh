@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-command setup on a fresh Ubuntu/Debian server. Log in as root and run:
 #
- bash$| bash
+#   curl -fsSL https://raw.githubusercontent.com/alidehghan987654321-rgb/dari/refs/heads/claude/telegram-video-downloader-bot-xwpwbv/install.sh | bash
 #
 # It installs Docker, downloads the code to /opt/dari, asks for the bot token
 # and the website's domain, then starts the bot, the website and HTTPS.

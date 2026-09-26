@@ -39,7 +39,17 @@ _COLLECTION_IE = re.compile(
 
 
 class DownloadError(Exception):
-    """Raised when nothing could be downloaded. ``str(exc)`` is user-facing."""
+    """Raised when nothing could be downloaded.
+
+    ``code`` says why, for the UI to explain in the user's language:
+    unsupported, login, private, unavailable, no_video, failed, too_large
+    (with ``limit_mb``).
+    """
+
+    def __init__(self, code: str, **details: Any) -> None:
+        super().__init__(code)
+        self.code = code
+        self.details = details
 
 
 @dataclass
@@ -228,22 +238,20 @@ def _progress_hook(callback: Callable[[Progress], None]) -> Callable[[dict[str, 
     return hook
 
 
-def _friendly_error(message: str) -> str:
+def _error_code(message: str) -> str:
+    """Sort a yt-dlp error message into one of DownloadError's codes."""
     text = message.lower()
     if "unsupported url" in text:
-        return "این لینک پشتیبانی نمی‌شود."
+        return "unsupported"
     if any(k in text for k in ("login", "cookies", "sign in", "rate-limit", "rate limit")):
-        return (
-            "این سایت برای دانلود نیاز به ورود (لاگین) دارد یا موقتاً محدودیت گذاشته است. "
-            "مدیر ربات می‌تواند فایل کوکی (COOKIES_FILE) را تنظیم کند."
-        )
+        return "login"
     if "private" in text:
-        return "این محتوا خصوصی است و قابل دانلود نیست."
+        return "private"
     if any(k in text for k in ("not available", "unavailable", "removed", "404")):
-        return "این محتوا در دسترس نیست یا حذف شده است."
+        return "unavailable"
     if "no video" in text:
-        return "در این لینک ویدیویی پیدا نشد."
-    return "دانلود ناموفق بود. لینک را بررسی کنید و دوباره امتحان کنید."
+        return "no_video"
+    return "failed"
 
 
 def download(
@@ -261,7 +269,7 @@ def download(
 
     Files larger than ``max_bytes`` are dropped; if that leaves nothing, the
     download is retried at lower resolutions. Raises :class:`DownloadError`
-    with a user-facing (Persian) message when nothing could be downloaded.
+    when nothing could be downloaded.
     ``progress`` is called (from this thread) as the download advances.
     """
     heights = [max_height] + [h for h in FALLBACK_HEIGHTS if h < max_height]
@@ -282,11 +290,11 @@ def download(
                 info = ydl.extract_info(url, download=True)
         except YtDlpDownloadError as exc:
             log.warning("yt-dlp failed for %s: %s", url, exc)
-            raise DownloadError(_friendly_error(str(exc))) from exc
+            raise DownloadError(_error_code(str(exc))) from exc
 
         entries = list(_iter_entries(info))
         if not entries:
-            raise DownloadError("در این لینک ویدیویی پیدا نشد.")
+            raise DownloadError("no_video")
 
         result = _collect(info, max_bytes)
         if result.files:
@@ -303,5 +311,4 @@ def download(
             if leftover.is_file():
                 leftover.unlink(missing_ok=True)
 
-    limit_mb = max_bytes // (1024 * 1024)
-    raise DownloadError(f"حجم فایل بیشتر از حد مجاز ({limit_mb} مگابایت) است.")
+    raise DownloadError("too_large", limit_mb=max_bytes // (1024 * 1024))

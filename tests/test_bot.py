@@ -19,6 +19,7 @@ from bot import (
     on_my_chat_member,
     setup_profile,
     start,
+    switch_language,
 )
 from downloader import DownloadResult, MediaFile, Progress
 
@@ -116,8 +117,9 @@ class FakeTelegram(BaseRequest):
                 "chat": {"id": params.get("chat_id", 42), "type": "private"},
                 "text": params.get("text", ""),
             }
-            if name == "sendPhoto":
-                photo = {"file_id": "banner-id", "file_unique_id": "u", "width": 1, "height": 1}
+            if name in ("sendPhoto", "editMessageMedia"):
+                photo = {"file_id": f"id-{self._next_id}", "file_unique_id": "u"}
+                photo |= {"width": 1, "height": 1}
                 result["photo"] = [photo]
         return 200, json.dumps({"ok": True, "result": result}).encode()
 
@@ -133,7 +135,8 @@ class FakeTelegram(BaseRequest):
 
 
 BOT_USER = {"id": 1, "is_bot": True, "first_name": "bot", "username": "bot"}
-USER = {"id": 42, "is_bot": False, "first_name": "u"}
+USER = {"id": 42, "is_bot": False, "first_name": "u", "language_code": "en"}
+PERSIAN_USER = {**USER, "language_code": "fa"}
 CHATS = {
     "private": {"id": 42, "type": "private"},
     "supergroup": {"id": -1001, "type": "supergroup", "title": "Group"},
@@ -154,7 +157,7 @@ BASE_CONFIG = {
 }
 
 
-def message_json(text, chat="private", reply_to=None):
+def message_json(text, chat="private", reply_to=None, user=USER):
     """A message dict with entities for every link and a leading /command."""
     entities = []
     offset = 0
@@ -166,13 +169,13 @@ def message_json(text, chat="private", reply_to=None):
         offset += utf16_len(word) + 1
     msg = {"message_id": 7, "date": 0, "chat": CHATS[chat], "text": text, "entities": entities}
     if chat != "channel":
-        msg["from"] = USER
+        msg["from"] = user
     if reply_to:
         msg["reply_to_message"] = {**message_json(reply_to, chat), "message_id": 6}
     return msg
 
 
-def run(handler, tg, update, bot_data=None, **config):
+def run(handler, tg, update, bot_data=None, user_data=None, **config):
     """Call ``handler`` with ``update`` (a dict) against the fake Telegram API."""
 
     async def go():
@@ -182,7 +185,9 @@ def run(handler, tg, update, bot_data=None, **config):
         data = bot_data if bot_data is not None else {}
         data.setdefault("config", cfg)
         data.setdefault("semaphore", asyncio.Semaphore(cfg.max_concurrent))
-        context = SimpleNamespace(bot=bot, args=[], bot_data=data)
+        context = SimpleNamespace(
+            bot=bot, args=[], bot_data=data, user_data=user_data if user_data is not None else {}
+        )
         await handler(Update.de_json({"update_id": 1, **update}, bot), context)
 
     asyncio.run(go())
@@ -213,8 +218,8 @@ def test_link_is_downloaded_and_sent_as_video(server):
     run(handle_message, tg, post(f"{server}/small.mp4"))
 
     assert without_progress(tg.names()) == ["getMe", "sendMessage", "sendVideo", "deleteMessage"]
-    assert tg.texts()[0] == ui.CHECKING
-    assert tg.texts()[-1] == ui.SENDING
+    assert tg.texts()[0] == ui.t("en", "checking")
+    assert tg.texts()[-1] == ui.t("en", "sending")
     _, params, files = next(c for c in tg.calls if c[0] == "sendVideo")
     assert params["supports_streaming"] is True
     assert params["chat_id"] == 42
@@ -242,10 +247,10 @@ def test_progress_bar_is_shown_while_downloading(monkeypatch, tmp_path):
     run(handle_message, tg, post("https://www.instagram.com/reel/abc/"))
 
     texts = tg.texts()
-    assert texts[0] == ui.CHECKING
-    assert texts[1] == ui.downloading(Progress(512 * 1024, 1024 * 1024, None))
-    assert "۵۰٪" in texts[1]
-    assert texts[2] == ui.SENDING
+    assert texts[0] == ui.t("en", "checking")
+    assert texts[1] == ui.downloading("en", Progress(512 * 1024, 1024 * 1024, None))
+    assert "50%" in texts[1]
+    assert texts[2] == ui.t("en", "sending")
     assert len(texts) == 3  # unchanged progress isn't re-sent
 
 
@@ -256,7 +261,7 @@ def test_too_large_link_reports_error(server):
     assert sent_videos(tg) == []
     _, last, _ = [c for c in tg.calls if c[0] == "editMessageText"][-1]
     assert last["text"].startswith("❌")
-    assert "مگابایت" in last["text"]
+    assert "1 MB" in last["text"]
 
 
 def test_private_chat_without_link_gets_a_hint():
@@ -307,7 +312,7 @@ def test_dl_command_downloads_link_from_replied_message(server):
 
     # Explicit command, so progress is shown even in a group.
     assert without_progress(tg.names()) == ["getMe", "sendMessage", "sendVideo", "deleteMessage"]
-    assert tg.texts()[-1] == ui.SENDING
+    assert tg.texts()[-1] == ui.t("en", "sending")
 
 
 def test_dl_command_shows_errors_in_groups(server):
@@ -334,7 +339,7 @@ def test_start_in_private_shows_banner_with_buttons():
 
     assert tg.names() == ["getMe", "sendPhoto"]
     _, params, files = tg.calls[-1]
-    assert params["caption"] == ui.WELCOME
+    assert params["caption"] == ui.welcome("en")
     assert params["parse_mode"] == "HTML"
     assert "photo" in files  # uploaded from assets/banner.png
     rows = params["reply_markup"]["inline_keyboard"]
@@ -343,11 +348,13 @@ def test_start_in_private_shows_banner_with_buttons():
         "https://t.me/bot?startchannel=add&admin=post_messages",
     ]
     assert rows[1][0]["callback_data"] == ui.CB_HELP
+    assert rows[2][0]["callback_data"] == ui.CB_LANG + "fa"
 
     # The second time Telegram's copy of the banner is reused.
+    uploaded = bot_data["banner_file_ids"]["en"]
     run(start, tg, post("/start"), bot_data=bot_data)
     _, params, files = tg.calls[-1]
-    assert params["photo"] == "banner-id"
+    assert params["photo"] == uploaded
     assert not files
 
 
@@ -355,7 +362,7 @@ def test_start_links_to_the_website_when_there_is_one():
     tg = FakeTelegram()
     run(start, tg, post("/start"), site_url="https://dl.gryffin.uk")
     help_row = tg.last("sendPhoto")["reply_markup"]["inline_keyboard"][1]
-    assert help_row[1] == {"text": "🌐 نسخه‌ی وب", "url": "https://dl.gryffin.uk"}
+    assert help_row[1] == {"text": "🌐 Website", "url": "https://dl.gryffin.uk"}
 
 
 def test_site_url_comes_from_domain(monkeypatch):
@@ -367,20 +374,20 @@ def test_site_url_comes_from_domain(monkeypatch):
 
 
 def test_start_without_banner_falls_back_to_text(monkeypatch, tmp_path):
-    monkeypatch.setattr(botmod, "BANNER", tmp_path / "missing.png")
+    monkeypatch.setattr(botmod, "BANNERS", {"en": tmp_path / "x.png", "fa": tmp_path / "y.png"})
     tg = FakeTelegram()
     run(start, tg, post("/start"))
     assert tg.names() == ["getMe", "sendMessage"]
-    assert tg.last("sendMessage")["text"] == ui.WELCOME
+    assert tg.last("sendMessage")["text"] == ui.welcome("en")
 
 
-def menu_press(data):
+def menu_press(data, user=USER):
     photo = [{"file_id": "banner-id", "file_unique_id": "u", "width": 1, "height": 1}]
     message = {"message_id": 9, "date": 0, "chat": CHATS["private"], "photo": photo}
     return {
         "callback_query": {
             "id": "1",
-            "from": USER,
+            "from": user,
             "chat_instance": "c",
             "data": data,
             "message": message,
@@ -394,12 +401,12 @@ def test_help_and_back_buttons_edit_the_welcome_message():
 
     assert tg.names() == ["getMe", "answerCallbackQuery", "editMessageCaption"]
     params = tg.last("editMessageCaption")
-    assert params["caption"] == ui.help_text(1)
+    assert params["caption"] == ui.help_text("en", 1)
     assert params["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == ui.CB_HOME
 
     run(on_menu_button, tg, menu_press(ui.CB_HOME))
     params = tg.last("editMessageCaption")
-    assert params["caption"] == ui.WELCOME
+    assert params["caption"] == ui.welcome("en")
     assert params["reply_markup"]["inline_keyboard"][1][0]["callback_data"] == ui.CB_HELP
 
 
@@ -416,8 +423,13 @@ def test_profile_is_set_up_on_first_start():
     tg = FakeTelegram(profile_done=False)
     run_setup_profile(tg)
 
-    assert tg.last("setMyShortDescription")["short_description"] == ui.SHORT_DESCRIPTION
-    assert tg.last("setMyDescription")["description"] == ui.DESCRIPTION
+    short = [p for n, p, _ in tg.calls if n == "setMyShortDescription"]
+    assert [(p["short_description"], p.get("language_code")) for p in short] == [
+        (ui.t("en", "short_description"), None),  # default, for everyone
+        (ui.t("fa", "short_description"), "fa"),  # Persian Telegram apps
+    ]
+    long = [p for n, p, _ in tg.calls if n == "setMyDescription"]
+    assert [p.get("language_code") for p in long] == [None, "fa"]
     _, _, files = next(c for c in tg.calls if c[0] == "setMyProfilePhoto")
     assert files  # assets/avatar.png is uploaded
 
@@ -478,7 +490,7 @@ def test_welcome_when_added_to_group():
     params = tg.calls[-1][1]
     assert params["chat_id"] == CHATS["supergroup"]["id"]
     assert "/dl" in params["text"]
-    assert "ادمین" in params["text"]  # privacy mode: asks to be made admin
+    assert "admin" in params["text"]  # privacy mode: asks to be made admin
 
 
 def test_welcome_skips_admin_hint_when_bot_sees_all_messages():
@@ -513,3 +525,91 @@ def test_channel_admin_without_post_right_is_warned():
     tg = FakeTelegram()
     run(on_my_chat_member, tg, membership("channel", "left", admin(can_post_messages=False)))
     assert "⚠️" in tg.calls[-1][1]["text"]
+
+
+# ------------------------------------------------------------------ languages
+
+
+def test_persian_telegram_users_get_persian(tmp_path, monkeypatch):
+    tg = FakeTelegram()
+    run(start, tg, post("/start", user=PERSIAN_USER))
+    _, params, files = tg.calls[-1]
+    assert params["caption"] == ui.welcome("fa")
+    assert files["photo"][0] == "banner.png"  # the Persian banner
+
+    run(handle_message, tg, post("hello", user=PERSIAN_USER))
+    assert tg.last("sendMessage")["text"] == ui.t("fa", "no_link")
+
+
+def test_everyone_else_gets_english():
+    tg = FakeTelegram()
+    for code in ("en", "de", "ar"):
+        run(handle_message, tg, post("hello", user={**USER, "language_code": code}))
+        assert tg.last("sendMessage")["text"] == ui.t("en", "no_link")
+
+
+def test_persian_progress_uses_persian_digits(monkeypatch, tmp_path):
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"\0" * 10)
+
+    def fake_download(url, dest, *, progress, **kwargs):
+        progress(Progress(downloaded=512 * 1024, total=1024 * 1024, speed=None))
+        time.sleep(0.3)
+        return DownloadResult(files=[MediaFile(video, "video", duration=83)])
+
+    monkeypatch.setattr(botmod, "download", fake_download)
+    monkeypatch.setattr(botmod, "PROGRESS_INTERVAL", 0.05)
+    tg = FakeTelegram()
+    run(handle_message, tg, post("https://www.instagram.com/reel/abc/", user=PERSIAN_USER))
+
+    assert "۵۰٪" in tg.texts()[1]
+    assert "۱:۲۳" in tg.last("sendVideo")["caption"]
+
+
+def test_language_button_switches_and_swaps_the_banner():
+    tg = FakeTelegram()
+    user_data = {}
+    run(on_menu_button, tg, menu_press(ui.CB_LANG + "fa"), user_data=user_data)
+
+    assert user_data["lang"] == "fa"
+    params = tg.last("editMessageMedia")
+    media = json.loads(params["media"]) if isinstance(params["media"], str) else params["media"]
+    assert media["caption"] == ui.welcome("fa")
+    assert params["reply_markup"]["inline_keyboard"][2][0]["callback_data"] == ui.CB_LANG + "en"
+
+    # The choice sticks, whatever the Telegram app's language.
+    run(handle_message, tg, post("hello"), user_data=user_data)
+    assert tg.last("sendMessage")["text"] == ui.t("fa", "no_link")
+
+
+def test_lang_command_flips_the_language():
+    tg = FakeTelegram()
+    user_data = {}
+    run(switch_language, tg, post("/lang"), user_data=user_data)
+    assert user_data["lang"] == "fa"
+    assert tg.last("sendPhoto")["caption"] == ui.welcome("fa")
+
+    run(switch_language, tg, post("/lang", "supergroup"), user_data=user_data)
+    assert user_data["lang"] == "en"
+    assert tg.last("sendMessage")["text"] == ui.t("en", "lang_switched")
+
+
+def test_join_messages_use_the_language_of_whoever_added_the_bot():
+    tg = FakeTelegram()
+    update = membership("supergroup", "left", "member")
+    update["my_chat_member"]["from"] = PERSIAN_USER
+    run(on_my_chat_member, tg, update)
+    assert tg.last("sendMessage")["text"] == ui.group_help("fa", sees_all_messages=False)
+
+
+def test_default_language_setting(monkeypatch):
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    assert Config.from_env().default_lang == "en"
+    monkeypatch.setenv("DEFAULT_LANGUAGE", "fa")
+    assert Config.from_env().default_lang == "fa"
+
+    # Users whose app doesn't report a language get the default.
+    tg = FakeTelegram()
+    no_lang = {k: v for k, v in USER.items() if k != "language_code"}
+    run(handle_message, tg, post("hello", user=no_lang), default_lang="fa")
+    assert tg.last("sendMessage")["text"] == ui.t("fa", "no_link")

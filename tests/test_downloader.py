@@ -54,15 +54,17 @@ def test_progress_sums_separate_video_and_audio_files():
 
 
 def test_rejects_file_over_limit(server, dest):
-    with pytest.raises(DownloadError, match="1 مگابایت"):
+    with pytest.raises(DownloadError) as exc:
         download(f"{server}/big.mp4", dest, max_bytes=MB)
+    assert exc.value.code == "too_large"
+    assert exc.value.details == {"limit_mb": 1}
     assert not any(dest.iterdir())
 
 
-def test_missing_file_is_friendly_error(server, dest):
+def test_missing_file_is_reported_as_unavailable(server, dest):
     with pytest.raises(DownloadError) as exc:
         download(f"{server}/nope.mp4", dest, max_bytes=MB)
-    assert "404" not in str(exc.value)
+    assert exc.value.code == "unavailable"
 
 
 @pytest.mark.parametrize(
