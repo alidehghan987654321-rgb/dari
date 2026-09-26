@@ -1,0 +1,226 @@
+"""Download media from (almost) any URL with yt-dlp.
+
+This module is deliberately independent from Telegram so it can be tested and
+reused on its own. :func:`download` is blocking; run it in a worker thread from
+async code.
+"""
+
+from __future__ import annotations
+
+import logging
+import shutil
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yt_dlp
+from yt_dlp.utils import DownloadError as YtDlpDownloadError
+
+log = logging.getLogger(__name__)
+
+# Formats Telegram clients can play inline. Anything else is sent as a file.
+VIDEO_EXTS = {".mp4", ".m4v", ".mov"}
+AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wav"}
+PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+
+# If the best version is too big for Telegram, try again at these heights.
+FALLBACK_HEIGHTS = (480, 360, 240)
+
+
+class DownloadError(Exception):
+    """Raised when nothing could be downloaded. ``str(exc)`` is user-facing."""
+
+
+@dataclass
+class MediaFile:
+    path: Path
+    kind: str  # "video" | "audio" | "photo" | "document"
+    title: str = ""
+    width: int | None = None
+    height: int | None = None
+    duration: int | None = None
+
+    @property
+    def size(self) -> int:
+        return self.path.stat().st_size
+
+
+@dataclass
+class DownloadResult:
+    files: list[MediaFile] = field(default_factory=list)
+    too_large: int = 0  # items dropped for exceeding the size limit
+
+
+def kind_for(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext in VIDEO_EXTS:
+        return "video"
+    if ext in AUDIO_EXTS:
+        return "audio"
+    if ext in PHOTO_EXTS:
+        return "photo"
+    return "document"
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return round(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _iter_entries(info: dict[str, Any] | None) -> Iterator[dict[str, Any]]:
+    """Yield every downloaded video entry, flattening (nested) playlists."""
+    if not info:
+        return
+    if info.get("_type") == "playlist" or "entries" in info:
+        for entry in info.get("entries") or []:
+            yield from _iter_entries(entry)
+    else:
+        yield info
+
+
+def _build_options(
+    dest: Path,
+    *,
+    max_bytes: int,
+    max_height: int,
+    max_items: int,
+    cookies_file: str | None,
+    proxy: str | None,
+) -> dict[str, Any]:
+    has_ffmpeg = shutil.which("ffmpeg") is not None
+    opts: dict[str, Any] = {
+        # Without ffmpeg separate video/audio streams can't be merged, so only
+        # pick formats that already contain both.
+        "format": "bv*+ba/b" if has_ffmpeg else "b",
+        # Prefer <= max_height, H.264/AAC in MP4: plays everywhere in Telegram
+        # and keeps files small enough for the upload limit.
+        "format_sort": [f"res:{max_height}", "vcodec:h264", "acodec:aac", "ext:mp4:m4a"],
+        "merge_output_format": "mp4",
+        "outtmpl": str(dest / "%(playlist_index|0)s_%(id).60B.%(ext)s"),
+        "restrictfilenames": True,
+        "noplaylist": True,  # a YouTube video inside a playlist -> just that video
+        "playlistend": max_items,  # but carousels (e.g. Instagram) are allowed
+        "max_filesize": max_bytes,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
+        "concurrent_fragment_downloads": 4,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "logger": log,
+    }
+    if cookies_file:
+        opts["cookiefile"] = cookies_file
+    if proxy:
+        opts["proxy"] = proxy
+    return opts
+
+
+def _collect(info: dict[str, Any] | None, max_bytes: int) -> DownloadResult:
+    result = DownloadResult()
+    seen: set[Path] = set()
+    for entry in _iter_entries(info):
+        for item in entry.get("requested_downloads") or []:
+            filepath = item.get("filepath")
+            if not filepath:
+                # yt-dlp aborted it for exceeding max_filesize.
+                result.too_large += 1
+                continue
+            path = Path(filepath)
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            if path.stat().st_size > max_bytes:
+                result.too_large += 1
+                path.unlink(missing_ok=True)
+                continue
+            result.files.append(
+                MediaFile(
+                    path=path,
+                    kind=kind_for(path),
+                    title=entry.get("title") or "",
+                    width=_as_int(item.get("width") or entry.get("width")),
+                    height=_as_int(item.get("height") or entry.get("height")),
+                    duration=_as_int(entry.get("duration")),
+                )
+            )
+    return result
+
+
+def _friendly_error(message: str) -> str:
+    text = message.lower()
+    if "unsupported url" in text:
+        return "این لینک پشتیبانی نمی‌شود."
+    if any(k in text for k in ("login", "cookies", "sign in", "rate-limit", "rate limit")):
+        return (
+            "این سایت برای دانلود نیاز به ورود (لاگین) دارد یا موقتاً محدودیت گذاشته است. "
+            "مدیر ربات می‌تواند فایل کوکی (COOKIES_FILE) را تنظیم کند."
+        )
+    if "private" in text:
+        return "این محتوا خصوصی است و قابل دانلود نیست."
+    if any(k in text for k in ("not available", "unavailable", "removed", "404")):
+        return "این محتوا در دسترس نیست یا حذف شده است."
+    if "no video" in text:
+        return "در این لینک ویدیویی پیدا نشد."
+    return "دانلود ناموفق بود. لینک را بررسی کنید و دوباره امتحان کنید."
+
+
+def download(
+    url: str,
+    dest: Path,
+    *,
+    max_bytes: int,
+    max_height: int = 720,
+    max_items: int = 10,
+    cookies_file: str | None = None,
+    proxy: str | None = None,
+) -> DownloadResult:
+    """Download the media behind ``url`` into ``dest``.
+
+    Files larger than ``max_bytes`` are dropped; if that leaves nothing, the
+    download is retried at lower resolutions. Raises :class:`DownloadError`
+    with a user-facing (Persian) message when nothing could be downloaded.
+    """
+    heights = [max_height] + [h for h in FALLBACK_HEIGHTS if h < max_height]
+    while heights:
+        height = heights.pop(0)
+        opts = _build_options(
+            dest,
+            max_bytes=max_bytes,
+            max_height=height,
+            max_items=max_items,
+            cookies_file=cookies_file,
+            proxy=proxy,
+        )
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+        except YtDlpDownloadError as exc:
+            log.warning("yt-dlp failed for %s: %s", url, exc)
+            raise DownloadError(_friendly_error(str(exc))) from exc
+
+        entries = list(_iter_entries(info))
+        if not entries:
+            raise DownloadError("در این لینک ویدیویی پیدا نشد.")
+
+        result = _collect(info, max_bytes)
+        if result.files:
+            return result
+
+        # Nothing was kept: yt-dlp skips or aborts files over max_filesize and
+        # _collect drops any that still came out too big. Retry only at
+        # heights below what was picked, otherwise the same format comes back.
+        picked = max((_as_int(e.get("height")) or 0 for e in entries), default=0)
+        heights = [h for h in heights if h < picked]
+        if heights:
+            log.info("%s too large at %sp, retrying at %sp", url, height, heights[0])
+        for leftover in dest.iterdir():
+            if leftover.is_file():
+                leftover.unlink(missing_ok=True)
+
+    limit_mb = max_bytes // (1024 * 1024)
+    raise DownloadError(f"حجم فایل بیشتر از حد مجاز ({limit_mb} مگابایت) است.")

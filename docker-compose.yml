@@ -1,0 +1,8 @@
+services:
+  bot:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    # Uncomment to use a cookies file (and set COOKIES_FILE=/app/cookies.txt in .env):
+    # volumes:
+    #   - ./cookies.txt:/app/cookies.txt:ro

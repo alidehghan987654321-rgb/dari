@@ -1,0 +1,5 @@
+python-telegram-bot[socks]==22.8
+# Sites change often and break downloads; keep yt-dlp up to date (pip install -U "yt-dlp[default,curl-cffi,deno]").
+# curl-cffi: browser impersonation some sites (e.g. TikTok) need. deno: JS runtime YouTube needs.
+yt-dlp[default,curl-cffi,deno]>=2026.8.19
+python-dotenv==1.2.3
