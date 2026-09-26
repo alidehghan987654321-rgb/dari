@@ -59,6 +59,18 @@ cp .env.example .env
 
 ## ۳. اجرا
 
+### سریع‌ترین راه: یک دستور روی سرور
+
+روی یک سرور اوبونتو (VPS) که با کاربر root وارد آن شده‌اید (از ویندوز: `ssh root@آی‌پی-سرور` در PowerShell):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alidehghan987654321-rgb/dari/refs/heads/claude/telegram-video-downloader-bot-xwpwbv/install.sh | bash
+```
+
+این دستور داکر را نصب می‌کند، کد را در `/opt/dari` می‌گذارد، توکن ربات و آدرس سایت را می‌پرسد، ربات و سایت و HTTPS را
+روشن می‌کند و در آخر دقیقاً می‌گوید چه رکورد DNSی در Cloudflare بسازید. اجرای دوباره‌اش همه‌چیز را آپدیت می‌کند
+و تنظیمات را نگه می‌دارد.
+
 ### روش اول: Docker (پیشنهادی)
 
 ```bash
