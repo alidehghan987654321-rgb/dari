@@ -61,6 +61,8 @@ cp .env.example .env
 
 ## ۳. اجرا
 
+بدون سرور هم می‌شود: بخش «اجرا روی Cloudflare» را ببینید.
+
 ### سریع‌ترین راه: یک دستور روی سرور
 
 روی یک سرور اوبونتو (VPS) که با کاربر root وارد آن شده‌اید (از ویندوز: `ssh root@آی‌پی-سرور` در PowerShell):
@@ -96,6 +98,42 @@ python bot.py
 
 حالا در تلگرام به ربات خود `/start` بفرستید و یک لینک امتحان کنید.
 وب‌سایت را هم می‌توانید جدا اجرا کنید: `uvicorn web:app --port 8000` و بعد http://localhost:8000
+
+## اجرا روی Cloudflare (بدون سرور)
+
+ربات و سایت می‌توانند روی **Cloudflare Containers** اجرا شوند؛ دیگر سرور، SSH و ساختن رکورد DNS لازم نیست.
+هر بار که کد در گیت‌هاب تغییر کند، GitHub Actions خودش تست می‌کند، ایمیج داکر را می‌سازد و روی Cloudflare می‌گذارد
+(`.github/workflows/deploy-cloudflare.yml`). آدرس سایت `dl.gryffin.uk` است و Cloudflare رکورد DNS و گواهی HTTPS آن را
+خودش می‌سازد.
+
+**کارهایی که فقط یک بار لازم است:**
+
+1. **پلن Workers Paid** (حدود ۵ دلار در ماه؛ Containers بدون آن کار نمی‌کند):
+   در [dash.cloudflare.com](https://dash.cloudflare.com) ← **Workers & Pages** ← **Plans** ← **Workers Paid**.
+2. **API Token:** عکس پروفایل (بالا راست) ← **My Profile** ← **API Tokens** ← **Create Token** ← قالب
+   **Edit Cloudflare Workers** ← **Use template**. بعد با **+ Add more** این دسترسی‌ها را هم اضافه کنید:
+   - Account ← **Containers** ← Edit
+   - Zone ← **DNS** ← Edit
+   - Zone ← **Zone** ← Read
+
+   در **Zone Resources** دامنه‌ی `gryffin.uk` را انتخاب کنید ← **Continue to summary** ← **Create Token** و توکن را کپی کنید.
+3. **Account ID:** در صفحه‌ی **Workers & Pages**، سمت راست، **Account ID** را کپی کنید.
+4. **سه Secret در گیت‌هاب:** در مخزن ← **Settings** ← **Secrets and variables** ← **Actions** ← **New repository secret**:
+   - `CLOUDFLARE_API_TOKEN` = توکن مرحله‌ی ۲
+   - `CLOUDFLARE_ACCOUNT_ID` = شناسه‌ی مرحله‌ی ۳
+   - `BOT_TOKEN` = توکن ربات از BotFather
+5. **اجرا:** در مخزن ← **Actions** ← **Deploy to Cloudflare** ← **Run workflow**. اولین بار چند دقیقه طول می‌کشد؛ بعد
+   https://dl.gryffin.uk باز می‌شود و ربات جواب می‌دهد.
+
+نکته‌ها:
+
+- روی Cloudflare ربات در حالت **webhook** است: تلگرام پیام‌ها را به `https://dl.gryffin.uk/telegram` می‌فرستد و ربات
+  داخل همان کانتینر سایت اجرا می‌شود (`BOT_MODE=webhook` در `web.py`).
+- کانتینر بعد از ۳۰ دقیقه بی‌کاری می‌خوابد و با اولین پیام یا بازدید دوباره روشن می‌شود؛ جواب اول بعد از خواب
+  چند ثانیه دیرتر می‌آید.
+- ربات را هم‌زمان جای دیگری (مثلاً روی VPS با `docker compose`) اجرا نکنید؛ دو نسخه با یک توکن با هم تداخل دارند.
+- برای آدرس دیگر، `dl.gryffin.uk` را در `cloudflare/wrangler.jsonc` (دو جا) عوض کنید.
+- لاگ‌ها: Cloudflare ← **Workers & Pages** ← `dari` ← **Logs**، یا لاگ اجرای GitHub Actions.
 
 ## وب‌سایت روی دامنه (مثلاً dl.gryffin.uk)
 

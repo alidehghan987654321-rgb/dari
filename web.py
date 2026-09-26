@@ -5,6 +5,10 @@ downloader. Jobs live in memory and their files are deleted after a while.
 Errors are sent as codes; the page (static/i18n.js) words them in English or
 Persian.
 
+With BOT_MODE=webhook (how it runs on Cloudflare, see cloudflare/) the site
+also hosts the Telegram bot: Telegram sends updates to https://DOMAIN/telegram
+instead of the bot polling for them.
+
     uvicorn web:app --host 0.0.0.0 --port 8000
 """
 
@@ -12,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import os
 import re
@@ -29,10 +34,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from telegram import Bot
+from telegram import Bot, Update
 from telegram.error import TelegramError
+from telegram.ext import Application
 from telegram.request import HTTPXRequest
 
+import bot as telegram_bot
 from downloader import DownloadError, MediaFile, Progress, download, is_video_link
 
 log = logging.getLogger("web")
@@ -53,6 +60,8 @@ class Settings:
     cookies_file: str | None
     proxy: str | None
     bot_token: str | None
+    bot_mode: str = "polling"  # "webhook": host the bot here (on Cloudflare)
+    domain: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -65,6 +74,8 @@ class Settings:
             cookies_file=os.getenv("COOKIES_FILE") or None,
             proxy=os.getenv("PROXY") or None,
             bot_token=os.getenv("BOT_TOKEN", "").strip() or None,
+            bot_mode=os.getenv("BOT_MODE", "polling").strip().lower(),
+            domain=os.getenv("DOMAIN", "").strip() or None,
         )
 
 
@@ -138,8 +149,26 @@ def download_name(media: MediaFile, index: int) -> str:
     return f"{title or f'video-{index + 1}'}{media.path.suffix}"
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def webhook_secret(bot_token: str) -> str:
+    """What Telegram sends with every webhook call, so others can't fake updates.
+
+    Derived from the token so there's nothing extra to configure; the deploy
+    workflow computes the same value (sha256, first 32 hex characters).
+    """
+    return hashlib.sha256(bot_token.encode()).hexdigest()[:32]
+
+
+def create_app(settings: Settings | None = None, telegram: Application | None = None) -> FastAPI:
+    """The website. ``telegram`` is the bot to host in webhook mode (built from
+    the environment when BOT_MODE=webhook; tests pass their own)."""
     settings = settings or Settings.from_env()
+    if telegram is None and settings.bot_mode == "webhook":
+        if settings.bot_token and settings.domain:
+            telegram = telegram_bot.build_app(telegram_bot.Config.from_env())
+        else:
+            log.error("BOT_MODE=webhook needs BOT_TOKEN and DOMAIN; running without the bot")
+    secret = webhook_secret(settings.bot_token or "")
+    bot_ready = False
     jobs: dict[str, Job] = {}
     running: set[asyncio.Task[None]] = set()  # keeps the tasks from being garbage collected
     sem = asyncio.Semaphore(settings.max_concurrent)
@@ -171,14 +200,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await asyncio.sleep(CLEANUP_EVERY)
             sweep(time.monotonic())
 
+    async def start_bot() -> None:
+        """Start the hosted bot and point Telegram's webhook here."""
+        nonlocal bot_ready
+        try:
+            await telegram.initialize()
+            await telegram_bot.post_init(telegram)  # what run_polling() would do
+            await telegram.start()
+            url = f"https://{settings.domain}/telegram"
+            await telegram.bot.set_webhook(url, secret_token=secret)
+        except TelegramError:
+            # Keep the website up; Telegram retries its webhook calls later.
+            log.exception("Could not start the Telegram bot")
+            return
+        info["bot_username"] = telegram.bot.username
+        bot_ready = True
+        log.info("Telegram bot @%s is receiving updates at %s", telegram.bot.username, url)
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await find_bot_username()
+        if telegram is not None:
+            await start_bot()
+        else:
+            await find_bot_username()
         cleaner = asyncio.create_task(cleanup_loop())
         try:
             yield
         finally:
             cleaner.cancel()
+            if bot_ready:
+                await telegram.stop()
+                await telegram.shutdown()
             shutil.rmtree(workdir, ignore_errors=True)
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -216,6 +268,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 job.status = "done"
             finally:
                 job.finished_at = time.monotonic()
+
+    @app.post("/telegram")
+    async def telegram_update(request: Request) -> dict[str, bool]:
+        if telegram is None:
+            raise HTTPException(404)
+        given = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not secrets.compare_digest(given, secret):
+            raise HTTPException(403)
+        if not bot_ready:
+            raise HTTPException(503)  # Telegram tries again later
+        # Answer right away and handle it in the background: downloads take
+        # longer than Telegram waits, and it would resend the update.
+        await telegram.update_queue.put(Update.de_json(await request.json(), telegram.bot))
+        return {"ok": True}
 
     @app.get("/api/info")
     async def get_info() -> dict[str, Any]:

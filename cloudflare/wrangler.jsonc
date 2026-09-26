@@ -1,0 +1,28 @@
+// Runs the bot and the website on Cloudflare: a Worker on the domain below
+// hands every request to one container built from the repo's Dockerfile.
+// Deployed by .github/workflows/deploy-cloudflare.yml (see README). To use a
+// different address, change it in both "routes" and "vars".
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dari",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "workers_dev": false,
+  // Cloudflare creates the DNS record and HTTPS certificate for this itself.
+  "routes": [{ "pattern": "dl.gryffin.uk", "custom_domain": true }],
+  "vars": { "DOMAIN": "dl.gryffin.uk" },
+  "containers": [
+    {
+      "class_name": "App",
+      "image": "../Dockerfile",
+      "image_build_context": "..",
+      // 1/2 vCPU and 4 GiB: enough for yt-dlp and ffmpeg merging video + audio.
+      "instance_type": "standard-1",
+      // One instance: downloads in progress and the bot's state live in its memory.
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": { "bindings": [{ "name": "APP", "class_name": "App" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["App"] }],
+  "observability": { "enabled": true }
+}

@@ -2,8 +2,10 @@ import threading
 import time
 
 import pytest
+from conftest import FakeTelegram
 from fastapi.testclient import TestClient
 
+import ui
 import web
 from downloader import DownloadResult
 
@@ -173,3 +175,99 @@ def test_download_name():
     media = MediaFile(Path("x/abc.mp4"), "video", title='Sunset / "beach" <3 🌅 غروب')
     assert web.download_name(media, 0) == "Sunset beach 3 غروب.mp4"
     assert web.download_name(MediaFile(Path("x/abc.mp4"), "video"), 1) == "video-2.mp4"
+
+
+# ------------------------------------------------- the bot hosted in the site
+
+
+def hosted_bot(tg):
+    """The site with the Telegram bot inside it, as it runs on Cloudflare."""
+    import bot as telegram_bot
+
+    config = telegram_bot.Config(
+        token="1:fake",
+        allowed_users=frozenset(),
+        max_bytes=MB,
+        max_height=720,
+        max_items=10,
+        max_concurrent=2,
+        cookies_file=None,
+        proxy=None,
+        bot_api_url=None,
+        bot_api_file_url=None,
+    )
+    settings = web.Settings(
+        **{
+            **SETTINGS.__dict__,
+            "bot_token": "1:fake",
+            "bot_mode": "webhook",
+            "domain": "dl.example",
+        }
+    )
+    return TestClient(web.create_app(settings, telegram_bot.build_app(config, request=tg)))
+
+
+def telegram_message(text):
+    return {
+        "update_id": 5,
+        "message": {
+            "message_id": 7,
+            "date": 0,
+            "chat": {"id": 42, "type": "private"},
+            "from": {"id": 42, "is_bot": False, "first_name": "u", "language_code": "en"},
+            "text": text,
+        },
+    }
+
+
+def test_hosted_bot_points_telegram_at_the_site():
+    tg = FakeTelegram()
+    with hosted_bot(tg) as client:
+        webhook = tg.last("setWebhook")
+        assert webhook["url"] == "https://dl.example/telegram"
+        assert webhook["secret_token"] == web.webhook_secret("1:fake")
+        assert "setMyCommands" in tg.names()  # the bot's normal start-up ran too
+        assert client.get("/api/info").json()["bot_username"] == "bot"
+
+
+def test_hosted_bot_handles_updates_from_telegram():
+    tg = FakeTelegram()
+    with hosted_bot(tg) as client:
+        headers = {"X-Telegram-Bot-Api-Secret-Token": web.webhook_secret("1:fake")}
+        res = client.post("/telegram", json=telegram_message("hello"), headers=headers)
+        assert res.status_code == 200
+        deadline = time.monotonic() + 5
+        while "sendMessage" not in tg.names() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert tg.last("sendMessage")["text"] == ui.t("en", "no_link")
+
+
+def test_hosted_bot_rejects_calls_without_the_secret():
+    tg = FakeTelegram()
+    with hosted_bot(tg) as client:
+        assert client.post("/telegram", json=telegram_message("hi")).status_code == 403
+        wrong = {"X-Telegram-Bot-Api-Secret-Token": "nope"}
+        assert (
+            client.post("/telegram", json=telegram_message("hi"), headers=wrong).status_code == 403
+        )
+        assert "sendMessage" not in tg.names()
+
+
+def test_site_stays_up_when_telegram_is_unreachable():
+    with hosted_bot(FakeTelegram(down=True)) as client:
+        assert client.get("/").status_code == 200
+        headers = {"X-Telegram-Bot-Api-Secret-Token": web.webhook_secret("1:fake")}
+        res = client.post("/telegram", json=telegram_message("hi"), headers=headers)
+        assert res.status_code == 503  # Telegram retries later
+
+
+def test_no_webhook_endpoint_without_hosted_bot(client):
+    assert client.post("/telegram", json={}).status_code == 404
+
+
+def test_webhook_secret_matches_the_deploy_workflow():
+    # .github/workflows/deploy-cloudflare.yml: printf '%s' "$BOT_TOKEN" | sha256sum | cut -c1-32
+    import hashlib
+
+    assert web.webhook_secret("1:fake") == hashlib.sha256(b"1:fake").hexdigest()[:32]
+    assert len(web.webhook_secret("1:fake")) == 32

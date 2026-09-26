@@ -40,6 +40,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import BaseRequest
 
 import ui
 from downloader import DownloadError, MediaFile, Progress, download, is_video_link
@@ -521,18 +522,16 @@ async def post_init(app: Application) -> None:
     await asyncio.to_thread(is_video_link, "https://example.com")
 
 
-def build_app(config: Config) -> Application:
-    builder = (
-        ApplicationBuilder()
-        .token(config.token)
-        .concurrent_updates(True)
-        .read_timeout(60)
-        .write_timeout(60)
-        .media_write_timeout(600)
-        .post_init(post_init)
-    )
-    if config.proxy:
-        builder = builder.proxy(config.proxy).get_updates_proxy(config.proxy)
+def build_app(config: Config, request: BaseRequest | None = None) -> Application:
+    """The bot, ready to run. ``request`` replaces the HTTP client (tests pass a fake)."""
+    builder = ApplicationBuilder().token(config.token).concurrent_updates(True).post_init(post_init)
+    if request is not None:
+        builder = builder.request(request).get_updates_request(request)
+    else:
+        # Uploads of big videos take a while.
+        builder = builder.read_timeout(60).write_timeout(60).media_write_timeout(600)
+        if config.proxy:
+            builder = builder.proxy(config.proxy).get_updates_proxy(config.proxy)
     if config.bot_api_url:
         builder = builder.base_url(config.bot_api_url)
         if config.bot_api_file_url:

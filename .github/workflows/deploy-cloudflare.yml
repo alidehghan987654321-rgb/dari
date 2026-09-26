@@ -1,0 +1,102 @@
+# Tests, then deploys the bot and website to Cloudflare Containers (see
+# README, "Cloudflare"). Needs three repository secrets, under Settings ->
+# Secrets and variables -> Actions: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+# and BOT_TOKEN. Until they're there, the deploy is skipped.
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main, claude/telegram-video-downloader-bot-xwpwbv]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+    steps:
+      - name: Check the secrets are set
+        id: secrets
+        run: |
+          missing=""
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID BOT_TOKEN; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::Not deployed. Add these repository secrets (Settings -> Secrets and variables -> Actions):$missing"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - name: Deploy (builds the Docker image and uploads it)
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: cloudflare
+        run: |
+          npm ci
+          npx wrangler deploy
+
+      - name: Give the container the bot token
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: cloudflare
+        run: |
+          umask 077
+          printf '{"BOT_TOKEN": "%s"}' "$BOT_TOKEN" > "$RUNNER_TEMP/secrets.json"
+          npx wrangler secret bulk "$RUNNER_TEMP/secrets.json"
+          rm "$RUNNER_TEMP/secrets.json"
+
+      - name: Point Telegram at the site
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          domain=$(sed -n 's/.*"DOMAIN": *"\([^"]*\)".*/\1/p' cloudflare/wrangler.jsonc)
+          echo "DOMAIN=$domain" >> "$GITHUB_ENV"
+          # The same secret web.py expects (web.webhook_secret).
+          secret=$(printf '%s' "$BOT_TOKEN" | sha256sum | cut -c1-32)
+          curl -fsS "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
+            --data-urlencode "url=https://$domain/telegram" \
+            --data-urlencode "secret_token=$secret" > /dev/null
+          echo "Telegram sends messages to https://$domain/telegram"
+
+      - name: Wait for the site to come up
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          # The first start also waits for the domain's HTTPS certificate.
+          for _ in $(seq 1 30); do
+            if info=$(curl -fsS -m 90 "https://$DOMAIN/api/info"); then
+              echo "Up at https://$DOMAIN: $info"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::warning::https://$DOMAIN didn't answer within 10 minutes; check the container's logs in the Cloudflare dashboard."

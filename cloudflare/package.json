@@ -1,0 +1,14 @@
+{
+  "name": "dari-cloudflare",
+  "private": true,
+  "description": "Runs the bot and website on Cloudflare Containers (see README).",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.141.0"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  }
+}
