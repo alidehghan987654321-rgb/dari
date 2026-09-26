@@ -9,8 +9,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py downloader.py ui.py ./
+COPY bot.py downloader.py ui.py web.py ./
+COPY static ./static
 COPY assets/avatar.png assets/banner.png ./assets/
 
 ENV PYTHONUNBUFFERED=1
+EXPOSE 8000
+# The bot by default; docker-compose.yml runs the website from the same image.
 CMD ["python", "bot.py"]

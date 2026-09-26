@@ -150,6 +150,7 @@ BASE_CONFIG = {
     "proxy": None,
     "bot_api_url": None,
     "bot_api_file_url": None,
+    "site_url": None,
 }
 
 
@@ -348,6 +349,21 @@ def test_start_in_private_shows_banner_with_buttons():
     _, params, files = tg.calls[-1]
     assert params["photo"] == "banner-id"
     assert not files
+
+
+def test_start_links_to_the_website_when_there_is_one():
+    tg = FakeTelegram()
+    run(start, tg, post("/start"), site_url="https://dl.gryffin.uk")
+    help_row = tg.last("sendPhoto")["reply_markup"]["inline_keyboard"][1]
+    assert help_row[1] == {"text": "🌐 نسخه‌ی وب", "url": "https://dl.gryffin.uk"}
+
+
+def test_site_url_comes_from_domain(monkeypatch):
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    monkeypatch.setenv("DOMAIN", "dl.gryffin.uk")
+    assert Config.from_env().site_url == "https://dl.gryffin.uk"
+    monkeypatch.setenv("DOMAIN", "localhost")
+    assert Config.from_env().site_url is None
 
 
 def test_start_without_banner_falls_back_to_text(monkeypatch, tmp_path):

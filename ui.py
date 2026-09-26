@@ -68,19 +68,20 @@ def help_text(max_mb: int) -> str:
     )
 
 
-def welcome_keyboard(bot_username: str) -> InlineKeyboardMarkup:
+def welcome_keyboard(bot_username: str, site_url: str | None = None) -> InlineKeyboardMarkup:
     link = f"https://t.me/{bot_username}"
-    return InlineKeyboardMarkup(
+    rows = [
         [
-            [
-                InlineKeyboardButton("➕ افزودن به گروه", url=f"{link}?startgroup=add"),
-                InlineKeyboardButton(
-                    "📢 افزودن به کانال", url=f"{link}?startchannel=add&admin=post_messages"
-                ),
-            ],
-            [InlineKeyboardButton("📖 راهنما", callback_data=CB_HELP)],
-        ]
-    )
+            InlineKeyboardButton("➕ افزودن به گروه", url=f"{link}?startgroup=add"),
+            InlineKeyboardButton(
+                "📢 افزودن به کانال", url=f"{link}?startchannel=add&admin=post_messages"
+            ),
+        ],
+        [InlineKeyboardButton("📖 راهنما", callback_data=CB_HELP)],
+    ]
+    if site_url:
+        rows[1].append(InlineKeyboardButton("🌐 نسخه‌ی وب", url=site_url))
+    return InlineKeyboardMarkup(rows)
 
 
 def help_keyboard() -> InlineKeyboardMarkup:

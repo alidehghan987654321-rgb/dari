@@ -73,6 +73,7 @@ class Config:
     proxy: str | None
     bot_api_url: str | None
     bot_api_file_url: str | None
+    site_url: str | None = None  # the website, if it's set up (web.py)
 
     @classmethod
     def from_env(cls) -> Config:
@@ -82,6 +83,7 @@ class Config:
         allowed = frozenset(
             int(x) for x in os.getenv("ALLOWED_USERS", "").replace(" ", "").split(",") if x
         )
+        domain = os.getenv("DOMAIN", "").strip()
         cookies = os.getenv("COOKIES_FILE") or None
         if cookies and not Path(cookies).is_file():
             raise SystemExit(f"COOKIES_FILE {cookies!r} does not exist.")
@@ -96,6 +98,7 @@ class Config:
             proxy=os.getenv("PROXY") or None,
             bot_api_url=os.getenv("BOT_API_URL") or None,
             bot_api_file_url=os.getenv("BOT_API_FILE_URL") or None,
+            site_url=f"https://{domain}" if domain and domain != "localhost" else None,
         )
 
 
@@ -309,7 +312,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def send_welcome(message: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = ui.welcome_keyboard(context.bot.username)
+    keyboard = ui.welcome_keyboard(context.bot.username, context.bot_data["config"].site_url)
     # Upload the banner once, then reuse Telegram's copy.
     banner = context.bot_data.get("banner_file_id") or (BANNER if BANNER.is_file() else None)
     if banner is None:
@@ -330,7 +333,8 @@ async def on_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         max_mb = context.bot_data["config"].max_bytes // (1024 * 1024)
         text, keyboard = ui.help_text(max_mb), ui.help_keyboard()
     else:
-        text, keyboard = ui.WELCOME, ui.welcome_keyboard(context.bot.username)
+        site_url = context.bot_data["config"].site_url
+        text, keyboard = ui.WELCOME, ui.welcome_keyboard(context.bot.username, site_url)
     # Double taps would try to "edit" to the same text.
     with contextlib.suppress(BadRequest):
         if getattr(query.message, "photo", None):

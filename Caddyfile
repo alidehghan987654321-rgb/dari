@@ -1,0 +1,6 @@
+# The website, with HTTPS. Caddy gets and renews the certificate by itself as
+# soon as DOMAIN (set in .env, e.g. dl.gryffin.uk) points at this server.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:8000
+}

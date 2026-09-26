@@ -1,8 +1,40 @@
 services:
+  # The Telegram bot.
   bot:
     build: .
     env_file: .env
     restart: unless-stopped
-    # Uncomment to use a cookies file (and set COOKIES_FILE=/app/cookies.txt in .env):
+    # To use a cookies file, uncomment this (on web too) and set COOKIES_FILE=/app/cookies.txt in .env:
     # volumes:
     #   - ./cookies.txt:/app/cookies.txt:ro
+
+  # The website (same downloader), only reachable through caddy.
+  web:
+    build: .
+    command: ["uvicorn", "web:app", "--host", "0.0.0.0", "--port", "8000",
+              "--proxy-headers", "--forwarded-allow-ips", "*"]
+    env_file: .env
+    restart: unless-stopped
+    # volumes:
+    #   - ./cookies.txt:/app/cookies.txt:ro
+
+  # HTTPS in front of the website on DOMAIN.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:

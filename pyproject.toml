@@ -4,3 +4,5 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# FastAPI's TestClient still uses httpx; harmless for tests.
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]
