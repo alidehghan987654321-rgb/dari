@@ -1,0 +1,128 @@
+<!doctype html>
+<!-- Source of assets/banner.png (1280x720), the picture on the bot's /start message,
+     and assets/description.png (640x360, same page at half scale) for BotFather. -->
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700;800;900&display=swap">
+<style>
+  :root {
+    --bg: #0c0a1f;
+    --ink: #f5f3ff;
+    --muted: #b7b0d6;
+    --grad: linear-gradient(90deg, #22d3ee, #a855f7 55%, #f472b6);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; }
+  body {
+    font-family: Vazirmatn, sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(600px 420px at 88% 8%, rgba(34, 211, 238, .22), transparent 70%),
+      radial-gradient(640px 480px at 8% 100%, rgba(236, 72, 153, .24), transparent 70%),
+      radial-gradient(700px 500px at 30% 30%, rgba(124, 58, 237, .25), transparent 70%),
+      var(--bg);
+    display: grid;
+    grid-template-columns: 1fr 470px;
+    align-items: center;
+    gap: 56px;
+    padding: 0 88px 0 80px;
+  }
+
+  /* ---- text column (right side, RTL) ---- */
+  .badge {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 8px 18px 8px 14px; border-radius: 999px;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
+    font-size: 22px; font-weight: 500; color: var(--muted);
+  }
+  .badge i { width: 10px; height: 10px; border-radius: 50%; background: #34d399; box-shadow: 0 0 12px #34d399; }
+  h1 { margin: 26px 0 18px; font-size: 78px; line-height: 1.22; font-weight: 900; letter-spacing: -.5px; }
+  h1 span { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  p.sub { margin: 0 0 34px; font-size: 30px; font-weight: 500; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 12px; max-width: 640px; }
+  .chip {
+    padding: 9px 20px; border-radius: 14px; font-size: 22px; font-weight: 700;
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+  }
+  .chip.more { background: var(--grad); border: 0; color: #140a2a; }
+  .where { display: flex; gap: 28px; margin-top: 38px; font-size: 22px; font-weight: 500; color: var(--muted); }
+  .where span { display: inline-flex; align-items: center; gap: 10px; }
+  .where svg { width: 26px; height: 26px; stroke: #c4b5fd; }
+
+  /* ---- chat mock (left side) ---- */
+  .phone {
+    direction: ltr;
+    background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+    border: 1px solid rgba(255,255,255,.16);
+    border-radius: 40px; padding: 26px 24px 30px;
+    box-shadow: 0 40px 80px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.12);
+  }
+  .top { display: flex; align-items: center; gap: 14px; padding: 0 6px 20px; border-bottom: 1px solid rgba(255,255,255,.1); }
+  .top .ava { width: 48px; height: 48px; border-radius: 50%; background: url(../avatar.png) center/cover; }
+  .top b { display: block; font-size: 20px; }
+  .top small { font-size: 15px; color: #34d399; }
+  .msg { margin-top: 20px; display: flex; }
+  .msg.me { justify-content: flex-end; }
+  .bubble { border-radius: 22px; padding: 14px 18px; font-size: 19px; max-width: 86%; }
+  .me .bubble { background: linear-gradient(135deg, #7c3aed, #a855f7); border-bottom-right-radius: 6px; font-family: ui-monospace, monospace; }
+  .me .bubble u { text-decoration-color: rgba(255,255,255,.5); }
+  .bot .bubble { background: rgba(255,255,255,.1); border-bottom-left-radius: 6px; padding: 8px; width: 86%; }
+  .video {
+    position: relative; height: 190px; border-radius: 16px; overflow: hidden;
+    background:
+      radial-gradient(circle at 70% 30%, rgba(255,255,255,.35), transparent 40%),
+      linear-gradient(135deg, #0891b2, #7c3aed 60%, #db2777);
+  }
+  .play {
+    position: absolute; inset: 0; margin: auto; width: 68px; height: 68px; border-radius: 50%;
+    background: rgba(12,10,31,.55); backdrop-filter: blur(4px); display: grid; place-items: center;
+  }
+  .play::before { content: ""; margin-left: 6px; border-left: 24px solid #fff; border-top: 15px solid transparent; border-bottom: 15px solid transparent; }
+  .dur { position: absolute; left: 10px; top: 10px; padding: 2px 10px; border-radius: 8px; background: rgba(12,10,31,.6); font-size: 15px; font-weight: 700; }
+  .cap { direction: rtl; padding: 10px 8px 4px; font-size: 18px; font-weight: 700; }
+  .cap small { display: block; font-weight: 400; color: var(--muted); font-size: 15px; margin-top: 2px; }
+  .btn { direction: rtl; margin-top: 8px; text-align: center; padding: 10px; border-radius: 12px; background: rgba(255,255,255,.08); font-size: 16px; font-weight: 500; }
+  .progress { direction: rtl; margin-top: 16px; padding: 0 4px; display: flex; align-items: center; gap: 12px; font-size: 16px; color: var(--muted); }
+  .bar { flex: 1; height: 8px; border-radius: 99px; background: rgba(255,255,255,.1); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 100%; background: var(--grad); }
+</style>
+</head>
+<body>
+  <main>
+    <div class="badge"><i></i>ربات تلگرام</div>
+    <h1>هر ویدیویی،<br><span>فقط با یک لینک</span></h1>
+    <p class="sub">لینک را بفرستید؛ ویدیو را همین‌جا تحویل بگیرید.</p>
+    <div class="chips">
+      <span class="chip">اینستاگرام</span>
+      <span class="chip">تیک‌تاک</span>
+      <span class="chip">یوتیوب</span>
+      <span class="chip">توییتر</span>
+      <span class="chip">فیسبوک</span>
+      <span class="chip">آپارات</span>
+      <span class="chip more">و بیش از ۱۰۰۰ سایت دیگر</span>
+    </div>
+    <div class="where">
+      <span><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>چت خصوصی</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><circle cx="17" cy="9" r="2.5"/><path d="M2 20c0-3.5 3-5.5 7-5.5s7 2 7 5.5M16 14.5c3 0 6 1.5 6 4.5"/></svg>گروه</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4a1 1 0 0 0 1 1h3l6 5V4L7 9H4a1 1 0 0 0-1 1zM17 8a5 5 0 0 1 0 8M20 5a9 9 0 0 1 0 14"/></svg>کانال</span>
+    </div>
+  </main>
+
+  <div class="phone">
+    <div class="top">
+      <div class="ava"></div>
+      <div><b>Video Downloader</b><small>online</small></div>
+    </div>
+    <div class="msg me"><div class="bubble"><u>instagram.com/reel/C9x…</u></div></div>
+    <div class="msg bot">
+      <div class="bubble">
+        <div class="video"><div class="play"></div><div class="dur">0:42</div></div>
+        <div class="cap">غروب در ساحل 🌅<small>👤 travel.page  •  ⏱ ۰:۴۲</small></div>
+        <div class="btn">🔗 مشاهده‌ی پست اصلی</div>
+      </div>
+    </div>
+    <div class="progress"><span>ارسال شد</span><div class="bar"><i></i></div><span>۱۰۰٪</span></div>
+  </div>
+</body>
+</html>

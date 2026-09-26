@@ -11,7 +11,7 @@ import functools
 import logging
 import re
 import shutil
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -47,6 +47,8 @@ class MediaFile:
     path: Path
     kind: str  # "video" | "audio" | "photo" | "document"
     title: str = ""
+    uploader: str = ""
+    webpage_url: str = ""  # the post/page the media came from
     width: int | None = None
     height: int | None = None
     duration: int | None = None
@@ -54,6 +56,19 @@ class MediaFile:
     @property
     def size(self) -> int:
         return self.path.stat().st_size
+
+
+@dataclass(frozen=True)
+class Progress:
+    downloaded: int  # bytes
+    total: int | None  # bytes, None while unknown
+    speed: float | None  # bytes per second
+
+    @property
+    def fraction(self) -> float | None:
+        if not self.total:
+            return None
+        return min(self.downloaded / self.total, 1.0)
 
 
 @dataclass
@@ -175,12 +190,42 @@ def _collect(info: dict[str, Any] | None, max_bytes: int) -> DownloadResult:
                     path=path,
                     kind=kind_for(path),
                     title=entry.get("title") or "",
+                    uploader=entry.get("uploader") or entry.get("channel") or "",
+                    webpage_url=entry.get("webpage_url") or "",
                     width=_as_int(item.get("width") or entry.get("width")),
                     height=_as_int(item.get("height") or entry.get("height")),
                     duration=_as_int(entry.get("duration")),
                 )
             )
     return result
+
+
+def _progress_hook(callback: Callable[[Progress], None]) -> Callable[[dict[str, Any]], None]:
+    """Turn yt-dlp's per-file progress into overall progress.
+
+    A video can be several files (e.g. separate video and audio streams, or
+    the items of a carousel), so sizes are summed across all of them.
+    """
+    files: dict[str, tuple[int, int | None]] = {}
+
+    def hook(d: dict[str, Any]) -> None:
+        if d.get("status") not in ("downloading", "finished"):
+            return
+        done = d.get("downloaded_bytes") or 0
+        total = d.get("total_bytes") or d.get("total_bytes_estimate")
+        if d["status"] == "finished":
+            done = total = total or done
+        files[d.get("filename") or ""] = (done, total)
+        totals = [t for _, t in files.values()]
+        callback(
+            Progress(
+                downloaded=sum(dn for dn, _ in files.values()),
+                total=int(sum(totals)) if all(totals) else None,
+                speed=d.get("speed"),
+            )
+        )
+
+    return hook
 
 
 def _friendly_error(message: str) -> str:
@@ -210,12 +255,14 @@ def download(
     max_items: int = 10,
     cookies_file: str | None = None,
     proxy: str | None = None,
+    progress: Callable[[Progress], None] | None = None,
 ) -> DownloadResult:
     """Download the media behind ``url`` into ``dest``.
 
     Files larger than ``max_bytes`` are dropped; if that leaves nothing, the
     download is retried at lower resolutions. Raises :class:`DownloadError`
     with a user-facing (Persian) message when nothing could be downloaded.
+    ``progress`` is called (from this thread) as the download advances.
     """
     heights = [max_height] + [h for h in FALLBACK_HEIGHTS if h < max_height]
     while heights:
@@ -228,6 +275,8 @@ def download(
             cookies_file=cookies_file,
             proxy=proxy,
         )
+        if progress:
+            opts["progress_hooks"] = [_progress_hook(progress)]
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)

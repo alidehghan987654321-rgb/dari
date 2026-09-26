@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- Source of assets/avatar.png (640x640). Telegram shows it cropped to a circle. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 640px; height: 640px; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(circle at 30% 20%, rgba(255,255,255,.28), transparent 45%),
+      linear-gradient(135deg, #06b6d4 0%, #7c3aed 55%, #ec4899 100%);
+    display: grid; place-items: center;
+  }
+  svg { filter: drop-shadow(0 18px 30px rgba(30, 10, 60, .35)); }
+</style>
+</head>
+<body>
+<svg width="460" height="460" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06b6d4"/>
+      <stop offset=".55" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-8 -10)">
+    <!-- video frame -->
+    <rect x="30" y="70" width="300" height="210" rx="54" fill="#fff"/>
+    <!-- play triangle -->
+    <path d="M152 132 L230 175 L152 218 Z" fill="url(#g)" stroke="url(#g)" stroke-width="18"
+          stroke-linejoin="round"/>
+    <!-- download badge -->
+    <circle cx="318" cy="282" r="70" fill="#1e1036" stroke="#fff" stroke-width="12"/>
+    <path d="M318 246 V312 M288 284 L318 314 L348 284" fill="none" stroke="#fff" stroke-width="17"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
+</body>
+</html>

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from conftest import MB
 
-from downloader import DownloadError, download, is_video_link, kind_for
+from downloader import DownloadError, _progress_hook, download, is_video_link, kind_for
 
 
 @pytest.fixture
@@ -29,13 +29,28 @@ def test_kind_for(name, kind):
 
 
 def test_downloads_direct_file(server, dest):
-    result = download(f"{server}/small.mp4", dest, max_bytes=MB)
+    updates = []
+    result = download(f"{server}/small.mp4", dest, max_bytes=MB, progress=updates.append)
     assert len(result.files) == 1
     media = result.files[0]
     assert media.kind == "video"
     assert media.path.parent == dest
     assert media.size == 200_000
+    assert media.webpage_url == f"{server}/small.mp4"
     assert result.too_large == 0
+    assert updates[-1].downloaded == updates[-1].total == 200_000
+    assert updates[-1].fraction == 1
+
+
+def test_progress_sums_separate_video_and_audio_files():
+    updates = []
+    hook = _progress_hook(updates.append)
+    hook({"status": "finished", "filename": "v.mp4", "downloaded_bytes": 300, "total_bytes": 300})
+    hook({"status": "downloading", "filename": "a.m4a", "downloaded_bytes": 50})
+    assert updates[-1].total is None  # audio size unknown yet
+    hook({"status": "downloading", "filename": "a.m4a", "downloaded_bytes": 60, "total_bytes": 100})
+    assert (updates[-1].downloaded, updates[-1].total) == (360, 400)
+    assert updates[-1].fraction == 0.9
 
 
 def test_rejects_file_over_limit(server, dest):
