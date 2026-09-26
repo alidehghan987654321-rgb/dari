@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from conftest import MB
 
-from downloader import DownloadError, download, kind_for
+from downloader import DownloadError, download, is_video_link, kind_for
 
 
 @pytest.fixture
@@ -48,3 +48,38 @@ def test_missing_file_is_friendly_error(server, dest):
     with pytest.raises(DownloadError) as exc:
         download(f"{server}/nope.mp4", dest, max_bytes=MB)
     assert "404" not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.instagram.com/reel/C1abcDEFgh/",
+        "https://www.instagram.com/p/C1abcDEFgh/?img_index=1",
+        "https://vm.tiktok.com/ZMabc123/",
+        "https://www.tiktok.com/@user/video/7300000000000000000",
+        "https://youtu.be/dQw4w9WgXcQ",
+        "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123",
+        "https://x.com/user/status/1234567890",
+        "https://www.aparat.com/v/abc12",
+    ],
+)
+def test_video_links(url):
+    assert is_video_link(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.google.com/search?q=x",
+        "https://github.com/foo/bar",
+        "https://t.me/somechannel/123",
+        "https://www.instagram.com/someone/",
+        "https://www.tiktok.com/@user",
+        "https://www.youtube.com/@somechannel",
+        "https://www.youtube.com/playlist?list=PL123",
+        "https://soundcloud.com/a/sets/b",
+    ],
+)
+def test_not_video_links(url):
+    assert not is_video_link(url)

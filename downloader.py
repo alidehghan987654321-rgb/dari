@@ -7,14 +7,18 @@ async code.
 
 from __future__ import annotations
 
+import functools
 import logging
+import re
 import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import yt_dlp
+import yt_dlp.extractor
 from yt_dlp.utils import DownloadError as YtDlpDownloadError
 
 log = logging.getLogger(__name__)
@@ -26,6 +30,12 @@ PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 # If the best version is too big for Telegram, try again at these heights.
 FALLBACK_HEIGHTS = (480, 360, 240)
+
+# Extractors for a whole channel/profile/playlist rather than a single post,
+# e.g. "youtube:tab", "tiktok:user", "instagram:user".
+_COLLECTION_IE = re.compile(
+    r":.*(tab|playlist|channel|user|profile|search|feed|collection|album|series|season|\bsets?\b|\bshows?\b)"
+)
 
 
 class DownloadError(Exception):
@@ -61,6 +71,28 @@ def kind_for(path: Path) -> str:
     if ext in PHOTO_EXTS:
         return "photo"
     return "document"
+
+
+@functools.cache
+def _site_extractors() -> tuple[type, ...]:
+    return tuple(ie for ie in yt_dlp.extractor.gen_extractor_classes() if ie.ie_key() != "Generic")
+
+
+def is_video_link(url: str) -> bool:
+    """Whether ``url`` looks like a single video/post on a site yt-dlp knows.
+
+    Used in groups and channels, where people post all sorts of links: this
+    skips ordinary web pages, Telegram links and whole channels or profiles
+    (which would flood the chat with videos). It only matches URL patterns,
+    so it's fast and offline. The first call takes ~0.5 s to compile them.
+    """
+    ie = next((ie for ie in _site_extractors() if ie.suitable(url)), None)
+    if ie is None or ie.IE_NAME.lower().startswith("telegram"):
+        return False
+    if _COLLECTION_IE.search(ie.IE_NAME.lower()):
+        # youtube.com/watch?v=...&list=... is one video that happens to be in a playlist.
+        return "v" in parse_qs(urlsplit(url).query)
+    return True
 
 
 def _as_int(value: Any) -> int | None:
