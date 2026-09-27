@@ -18,7 +18,7 @@ import httpx
 
 from ..categories import Category
 from ..matching import best_match, search_terms
-from ..models import MarketListing, SupplierOffer
+from ..models import MarketListing, OfferDetail, SupplierOffer
 from .base import LinkError, pick, to_count, to_number
 
 log = logging.getLogger(__name__)
@@ -36,6 +36,7 @@ SOURCE_IMAGE_FIELDS = (
     "sourceImage", "sourceImageUrl", "input.imageUrl", "query.imageUrl",
 )  # fmt: skip
 MATCH_RESULTS = 5  # results asked for when looking a product up on Temu (each one is paid for)
+DEFAULT_1688_DETAIL_INPUT = '{"startUrls": [{"url": "{url}"}], "maxItems": 1}'
 
 
 def fill(template: str, **values: Any) -> dict:
@@ -152,6 +153,8 @@ class Supplier1688:
         image_input: str = DEFAULT_1688_IMAGE_INPUT,
         keyword_input: str = DEFAULT_1688_KEYWORD_INPUT,
         batch_input: str = DEFAULT_1688_BATCH_INPUT,
+        detail_actor: str = "",
+        detail_input: str = DEFAULT_1688_DETAIL_INPUT,
     ):
         self.apify = apify
         self.image_actor = image_actor
@@ -159,6 +162,15 @@ class Supplier1688:
         self.image_input = image_input
         self.keyword_input = keyword_input
         self.batch_input = batch_input  # "" turns batching off
+        self.detail_actor = detail_actor  # reads one offer page, to show it on our site
+        self.detail_input = detail_input
+
+    def offer_detail(self, url: str) -> OfferDetail | None:
+        """Pictures, specs, variants and shop badges of one offer page."""
+        if not self.detail_actor:
+            raise LinkError("details_not_configured")
+        items = self.apify.run(self.detail_actor, fill(self.detail_input, url=url))
+        return next((d for d in (offer_detail(i, url) for i in items) if d), None)
 
     def by_images(self, image_urls: list[str], limit: int) -> dict[str, list[SupplierOffer]]:
         """One actor run for many pictures (one run fee instead of one per picture).
@@ -256,3 +268,56 @@ def price_tiers(value: Any) -> list[list[float]]:
         if qty and price:
             tiers.append([int(qty), price])
     return sorted(tiers)
+
+
+def _strings(value: Any) -> list[str]:
+    """A list of strings from a list of strings or of {url/name/text: ...} objects."""
+    out = []
+    for v in value if isinstance(value, list) else []:
+        text = (
+            v
+            if isinstance(v, str)
+            else pick(v, "url", "fullPathImageURI", "name", "text", "label")
+            if isinstance(v, dict)
+            else None
+        )
+        if text:
+            out.append(str(text))
+    return out
+
+
+def offer_detail(item: dict, url: str) -> OfferDetail | None:
+    offer = offer_1688({**item, "url": pick(item, "url", "detailUrl", "offerUrl") or url})
+    if offer is None:
+        return None
+    images = _strings(pick(item, "images", "imageList", "mainImages", "pics", "imageUrls"))
+    attrs_raw = pick(item, "attributes", "productAttributes", "props", "specs", "attributeList")
+    if isinstance(attrs_raw, dict):
+        attributes = [[str(k), str(v)] for k, v in attrs_raw.items()]
+    else:
+        attributes = [
+            [
+                str(pick(a, "name", "attributeName", "key") or ""),
+                str(pick(a, "value", "attributeValue", "values") or ""),
+            ]
+            for a in attrs_raw or []
+            if isinstance(a, dict)
+        ]
+    skus = []
+    for sku in pick(item, "skus", "skuList", "skuInfos", "variants") or []:
+        if not isinstance(sku, dict):
+            continue
+        name = pick(sku, "name", "specAttrs", "spec", "title", "attributes")
+        skus.append({
+            "name": " / ".join(_strings(name)) if isinstance(name, list) else str(name or ""),
+            "price_cny": to_number(pick(sku, "price", "discountPrice", "salePrice")),
+            "stock": to_count(pick(sku, "stock", "amountOnSale", "canBookCount", "quantity")),
+        })  # fmt: skip
+    badges = _strings(pick(item, "badges", "shopBadges", "serviceTags", "tags", "labels"))
+    return OfferDetail(
+        offer=offer,
+        images=images or ([offer.image_url] if offer.image_url else []),
+        attributes=[a for a in attributes if a[0] and a[1]],
+        skus=[x for x in skus if x["name"]],
+        badges=badges,
+    )

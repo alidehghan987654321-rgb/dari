@@ -7,7 +7,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var state = {
     config: null, me: null, hunt: null, picks: null, tab: "hunt",
-    filter: { cat: "all", verdict: "all", sort: "score" }, authMode: "signup", analysis: null, jobs: undefined,
+    filter: { cat: "all", verdict: "all", sort: "score", fresh: false }, authMode: "signup", analysis: null, jobs: undefined,
   };
 
   var ERRORS = {
@@ -122,10 +122,11 @@
     }
     var main = $("main");
     if (!loggedIn) { main.innerHTML = landingHTML(); bindLanding(); return; }
-    if (state.tab === "picks") return renderPicks();
-    if (state.tab === "analyze") { main.innerHTML = analyzeHTML(); bindAnalyze(); return; }
-    if (state.tab === "account") { main.innerHTML = accountHTML(); bindAccount(); return; }
-    main.innerHTML = huntHTML(); bindHunt();
+    if (state.tab === "picks") renderPicks();
+    else if (state.tab === "analyze") { main.innerHTML = analyzeHTML(); bindAnalyze(); }
+    else if (state.tab === "account") { main.innerHTML = accountHTML(); bindAccount(); }
+    else { main.innerHTML = huntHTML(); bindHunt(); }
+    bindCards(main);
   }
 
   function cardHTML(c) {
@@ -133,11 +134,12 @@
     var initial = esc((c.title_fa || "?").trim().charAt(0));
     var head =
       '<div class="card-head">' +
-        '<div class="thumb">' + (c.listing && safeUrl(c.listing.image_url)
-          ? '<img src="' + esc(c.listing.image_url) + '" alt="" loading="lazy" onerror="this.remove()">' : "") + initial + "</div>" +
+        '<div class="thumb">' + (c.listing && imgSrc(c.listing.image_url)
+          ? '<img src="' + esc(imgSrc(c.listing.image_url)) + '" alt="" loading="lazy" onerror="this.remove()">' : "") + initial + "</div>" +
         "<div><div class=\"card-title\">" + title + "</div>" +
           (c.listing && c.listing.title && c.title_fa ? '<div class="card-sub">' + esc(c.listing.title) + "</div>" : "") +
-          '<div class="card-cat">' + esc(catName(c.category)) + ' · <span class="pill ' + c.verdict + '" style="padding:0 8px"><span class="dot"></span>' + VERDICT[c.verdict] + "</span></div></div>" +
+          '<div class="card-cat">' + esc(catName(c.category)) + ' · <span class="pill ' + c.verdict + '" style="padding:0 8px"><span class="dot"></span>' + VERDICT[c.verdict] + "</span>" +
+            (c.is_new ? ' <span class="pill new">جدید امروز</span>' : "") + "</div></div>" +
         '<div class="score ' + c.verdict + '" title="امتیاز از ۱۰۰">' + c.score + "</div>" +
       "</div>";
     if (c.locked) {
@@ -213,9 +215,16 @@
   }
 
   // Exactly what to buy and from whom, with backups.
+  var LEVEL = { gold: "طلایی", silver: "نقره‌ای", bronze: "برنزی", unknown: "نامشخص" };
+  function levelPill(level) {
+    if (!level || !level.key) return "";
+    var cls = { gold: "green", silver: "neutral", bronze: "yellow", unknown: "neutral" }[level.key];
+    return '<span class="pill ' + cls + '" title="امتیاز تأمین‌کننده ' + level.points + " از " + level.of + '">سطح تأمین‌کننده: ' + LEVEL[level.key] + "</span>";
+  }
+
+  // Exactly what to buy and from whom, with backups, shown here instead of on 1688.
   function supplierHTML(c) {
     var o = c.offer;
-    var isSearch = /offer_search|search_result|\/s\?/.test(o.url || "");
     var facts = [];
     if (o.is_factory != null) facts.push(o.is_factory ? "کارخانه" : "بازرگانی (واسطه)");
     if (o.location) facts.push(esc(o.location));
@@ -223,33 +232,124 @@
     if (o.rating != null) facts.push("امتیاز " + o.rating);
     if (o.repurchase_rate != null) facts.push("خرید مجدد " + pct(o.repurchase_rate));
     if (o.sales != null) facts.push(count(o.sales) + " فروش");
-    var tiers = (o.price_tiers || []).length
-      ? '<div class="tiers">' + o.price_tiers.map(function (t) {
-          return '<span>از <b class="num">' + count(t[0]) + '</b> عدد: <b class="num">¥' + Number(t[1]).toFixed(2) + "</b></span>";
-        }).join("") + "</div>" : "";
-    var links = [];
-    if (safeUrl(o.url)) links.push('<a href="' + esc(o.url) + '" target="_blank" rel="noopener">' + (isSearch ? "جستجوی این کالا در 1688" : "صفحه‌ی همین محصول در 1688") + " ↗</a>");
-    if (safeUrl(o.shop_url)) links.push('<a href="' + esc(o.shop_url) + '" target="_blank" rel="noopener">فروشگاه تأمین‌کننده ↗</a>');
     var alts = (c.alternatives || []).map(function (a) {
-      return "<li>" + (safeUrl(a.url) ? '<a href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.shop_name || a.title) + "</a>" : esc(a.shop_name || a.title)) +
-        ' — <span class="num">¥' + Number(a.price_cny).toFixed(2) + "</span>" +
-        (a.sales != null ? " · " + count(a.sales) + " فروش" : "") + (a.is_factory ? " · کارخانه" : "") + "</li>";
+      return "<li>" + esc(a.shop_name || a.title) + ' — <span class="num">¥' + Number(a.price_cny).toFixed(2) + "</span>" +
+        (a.sales != null ? " · " + count(a.sales) + " فروش" : "") + (a.is_factory ? " · کارخانه" : "") +
+        (a.url ? ' <button type="button" class="linkbtn" data-offer="' + esc(a.url) + '" data-card="' + esc(c.id) + '">نمایش</button>' : "") + "</li>";
     }).join("");
     return '<div class="supplier">' +
-      '<div class="label">تأمین‌کننده در 1688</div>' +
+      '<div class="label">تأمین‌کننده در 1688 ' + levelPill(c.level) + "</div>" +
       '<div class="shop">' + esc(o.shop_name || "نام فروشگاه در دسترس نیست") + "</div>" +
-      (facts.length ? '<div class="facts">' + facts.join(" · ") + "</div>" : "") +
+      (facts.length ? '<div class="facts">' + facts.map(function (f) { return "<bdi>" + f + "</bdi>"; }).join(" · ") + "</div>" : "") +
       (o.title ? '<div class="offer-title" title="اسم محصول در 1688">' + esc(o.title) + "</div>" : "") +
-      tiers +
-      (links.length ? '<div class="links">' + links.join("") + "</div>" : "") +
+      tiersHTML(o) +
+      '<div class="links">' +
+        (o.url ? '<button type="button" class="btn small" data-offer="' + esc(o.url) + '" data-card="' + esc(c.id) + '">نمایش کامل محصول و تأمین‌کننده</button>' : "") +
+        (o.url ? '<button type="button" class="btn ghost small" data-copy="' + esc(o.url) + '">کپی لینک برای ایجنت خرید</button>' : "") +
+      "</div>" +
       (alts ? '<details class="alts"><summary>' + toman(c.alternatives.length) + " تأمین‌کننده‌ی جایگزین</summary><ul>" + alts + "</ul></details>" : "") +
       '<details class="howto"><summary>چطور بخرم؟</summary><ol>' +
-        "<li>لینک همین محصول در 1688 رو برای ایجنت خریدت بفرست؛ اسم چینی محصول بالا اومده تا اشتباه نشه.</li>" +
+        "<li>«کپی لینک برای ایجنت خرید» رو بزن و لینک رو برای ایجنتت بفرست؛ اسم چینی محصول هم بالا هست تا اشتباه نشه.</li>" +
         "<li>اول ۱ تا ۳ عدد نمونه بخر و جنس، اندازه و بسته‌بندی رو چک کن.</li>" +
         "<li>برای سفارش اصلی (حداقل " + count(c.starter_qty) + " عدد) قیمت پلکانی رو از تأمین‌کننده بپرس و عکس محموله قبل از ارسال بخواه.</li>" +
         "<li>ارسال به انبار دبی و منشأ «ساخت چین» در اسناد.</li>" +
       "</ol></details>" +
     "</div>";
+  }
+  function tiersHTML(o) {
+    return (o.price_tiers || []).length
+      ? '<div class="tiers">' + o.price_tiers.map(function (t) {
+          return '<span>از <b class="num">' + count(t[0]) + '</b> عدد: <b class="num">¥' + Number(t[1]).toFixed(2) + "</b></span>";
+        }).join("") + "</div>" : "";
+  }
+
+  // --- a 1688 offer, shown here (sellers in Iran can't open 1688) ------------------
+
+  function imgSrc(u) { return DEMO || !safeUrl(u) ? "" : "/img?u=" + encodeURIComponent(u); }
+
+  function findCard(id) {
+    var all = [].concat(state.hunt && state.hunt.candidates || [], state.picks && state.picks.candidates || [],
+      (state.jobs && state.jobs.items || []).map(function (j) { return j.result; }), state.analysis ? [state.analysis] : []);
+    return all.find(function (c) { return c && c.id === id; });
+  }
+
+  function openOffer(url, card) {
+    var box = $("offer-modal");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "offer-modal"; box.className = "modal"; box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true");
+      $("app").appendChild(box);
+      box.addEventListener("click", function (ev) { if (ev.target === box || ev.target.dataset.close) box.hidden = true; });
+      document.addEventListener("keydown", function (ev) { if (ev.key === "Escape") box.hidden = true; });
+    }
+    box.hidden = false;
+    var close = '<button type="button" class="btn ghost close" data-close="1">بستن</button>';
+    box.innerHTML = '<div class="sheet"><p class="loading">در حال خوندن صفحه‌ی محصول از 1688…</p></div>';
+    var got = DEMO ? Promise.resolve((DEMO.details || {})[url] || null) : api("/api/offer?url=" + encodeURIComponent(url));
+    got.then(function (view) {
+      box.innerHTML = '<div class="sheet">' + close + (view ? offerHTML(view, card, url) : '<p class="empty">جزئیات این محصول در دسترس نیست.</p>') + "</div>";
+      bindCopy(box);
+    }, function (e) {
+      var msg = e.code === "details_not_configured" ? "نمایش جزئیات 1688 هنوز روی سایت فعال نشده." : errText(e);
+      box.innerHTML = '<div class="sheet">' + close + '<p class="empty">' + esc(msg) + "</p></div>";
+    });
+  }
+
+  function offerHTML(v, card, url) {
+    var o = v.offer, main = card && card.offer && card.offer.url === url;
+    var pics = (v.images || []).map(imgSrc).filter(Boolean);
+    var gallery = pics.length
+      ? '<div class="gallery">' + pics.slice(0, 8).map(function (src) { return '<img src="' + esc(src) + '" alt="" loading="lazy">'; }).join("") + "</div>"
+      : '<div class="gallery no-pic">عکس‌های محصول اینجا نشون داده میشن (در داده‌ی نمونه عکس نیست)</div>';
+    var p = card && card.pricing;
+    var money = main && p
+      ? '<div class="roi">' +
+          '<div><span class="k">قیمت فروش پیشنهادی</span><b class="num">' + usd(p.price_usd) + "</b></div>" +
+          '<div><span class="k">سود هر عدد</span><b class="num">' + usd(p.profit_usd) + "</b></div>" +
+          '<div><span class="k">بازده سرمایه</span><b class="num">' + pct(p.roi) + "</b></div>" +
+          '<div><span class="k">سرمایه‌ی شروع (' + count(card.starter_qty) + ' عدد)</span><b class="num">' + usd(card.starter_capital_usd) + "</b></div>" +
+          '<div><span class="k">سود اولین محموله</span><b class="num">' + usd(p.profit_usd * card.starter_qty) + "</b></div>" +
+        "</div>"
+      : (card && card.offer ? '<p class="hint">تأمین‌کننده‌ی جایگزین: <span class="num">¥' + Number(o.price_cny).toFixed(2) +
+          '</span> در برابر <span class="num">¥' + Number(card.offer.price_cny).toFixed(2) + "</span> تأمین‌کننده‌ی اصلی.</p>" : "");
+    var attrs = (v.attributes_fa || []).map(function (a) { return "<tr><td>" + esc(a[0]) + "</td><td>" + esc(a[1]) + "</td></tr>"; }).join("");
+    var skus = (v.skus_fa || []).map(function (k) {
+      return "<tr><td>" + esc(k.name_fa || k.name) + (k.name_fa ? ' <span class="zh">' + esc(k.name) + "</span>" : "") + '</td><td class="num">' +
+        (k.price_cny != null ? "¥" + Number(k.price_cny).toFixed(2) : "—") + '</td><td class="num">' + (k.stock != null ? count(k.stock) : "—") + "</td></tr>";
+    }).join("");
+    var facts = [o.location && esc(o.location), o.years != null && toman(o.years) + " سال در 1688",
+      o.is_factory != null && (o.is_factory ? "کارخانه" : "بازرگانی"), o.rating != null && "امتیاز " + o.rating,
+      o.repurchase_rate != null && "خرید مجدد " + pct(o.repurchase_rate), o.sales != null && count(o.sales) + " فروش"].filter(Boolean);
+    return '<div class="offer">' + gallery +
+      '<div class="offer-body">' +
+        '<h2 class="section-title">' + esc(v.title_fa || (main && card.title_fa) || o.title) + "</h2>" +
+        '<p class="zh">' + esc(o.title) + "</p>" +
+        money +
+        '<h3 class="sub">تأمین‌کننده ' + levelPill(v.level) + "</h3>" +
+        "<p><b>" + esc(o.shop_name || "—") + "</b>" + (facts.length ? " · " + facts.map(function (f) { return "<bdi>" + f + "</bdi>"; }).join(" · ") : "") + "</p>" +
+        ((v.badges_fa || []).length ? '<div class="badges">' + v.badges_fa.map(function (b) { return '<span class="pill neutral">' + esc(b) + "</span>"; }).join("") + "</div>" : "") +
+        '<h3 class="sub">قیمت و حداقل سفارش</h3><p>حداقل سفارش: <b class="num">' + count(o.moq) + "</b> عدد</p>" + tiersHTML(o) +
+        (skus ? '<h3 class="sub">مدل‌ها</h3><div class="scroll"><table class="costs"><thead><tr><td>مدل</td><td>قیمت</td><td>موجودی</td></tr></thead><tbody>' + skus + "</tbody></table></div>" : "") +
+        (attrs ? '<h3 class="sub">مشخصات</h3><div class="scroll"><table class="costs specs"><tbody>' + attrs + "</tbody></table></div>" : "") +
+        '<div class="links" style="margin-top:12px"><button type="button" class="btn small" data-copy="' + esc(url) + '">کپی لینک برای ایجنت خرید</button></div>' +
+      "</div></div>";
+  }
+
+  function bindCopy(root) {
+    Array.prototype.forEach.call((root || document).querySelectorAll("[data-copy]"), function (b) {
+      b.onclick = function () {
+        var text = b.dataset.copy;
+        var shown = function () { toast("لینک: " + text); };
+        if (!navigator.clipboard) { shown(); return; }
+        navigator.clipboard.writeText(text).then(function () { toast("لینک کپی شد؛ برای ایجنت خریدت بفرست."); }, shown);
+      };
+    });
+  }
+  function bindCards(root) {
+    Array.prototype.forEach.call((root || document).querySelectorAll("[data-offer]"), function (b) {
+      b.onclick = function () { openOffer(b.dataset.offer, findCard(b.dataset.card)); };
+    });
+    bindCopy(root);
   }
   function row(k, v) { return "<tr><td>" + esc(k) + "</td><td>" + usd(v) + "</td></tr>"; }
 
@@ -260,7 +360,7 @@
     var teaser = state.hunt && state.hunt.candidates || [];
     var plans = (cfg.plans || []).map(function (p) {
       return '<div class="plan"><div class="label">' + esc(p.name_fa) + '</div><div class="price">' + toman(p.price_toman) +
-        ' <small>تومان</small></div><div class="hint" style="color:var(--ink-soft);font-size:13px">' + toman(p.days) + " روز دسترسی کامل</div></div>";
+        ' <small>تومان</small></div><div class="hint" style="color:var(--ink-soft);font-size:13px">' + toman(p.days) + " روز: شکار روزانه، شکارهای اختصاصی و " + toman(p.links) + " تحلیل محصول</div></div>";
     }).join("");
     return (
       '<section class="hero">' +
@@ -325,6 +425,8 @@
         '<span class="pill green"><span class="dot"></span>' + (counts.green || 0) + " شکار خوب</span>" +
         '<span class="pill yellow"><span class="dot"></span>' + (counts.yellow || 0) + " با احتیاط</span>" +
         '<span class="pill red"><span class="dot"></span>' + (counts.red || 0) + " نیار</span>" +
+        (h.candidates.some(function (c) { return c.is_new; })
+          ? '<span class="pill new">' + toman(h.candidates.filter(function (c) { return c.is_new; }).length) + " محصول جدید امروز</span>" : "") +
       "</div>";
     if (h.locked) {
       return head + '<div class="notice"><b>اشتراک نداری.</b> فقط چند نمونه قفل‌شده می‌بینی. از «حساب من» اشتراک بخر.</div><div class="grid">' +
@@ -334,7 +436,7 @@
     h.candidates.forEach(function (c) { cats[c.category] = true; });
     var f = state.filter;
     var list = h.candidates.filter(function (c) {
-      return (f.cat === "all" || c.category === f.cat) && (f.verdict === "all" || c.verdict === f.verdict);
+      return (f.cat === "all" || c.category === f.cat) && (f.verdict === "all" || c.verdict === f.verdict) && (!f.fresh || c.is_new);
     });
     var sorters = {
       score: function (a, b) { return b.score - a.score; },
@@ -354,6 +456,7 @@
           [["all", "همه"], ["green", "شکار خوب"], ["yellow", "با احتیاط"], ["red", "نیار"]].map(function (v) {
             return '<button type="button" data-v="' + v[0] + '" aria-pressed="' + (f.verdict === v[0]) + '">' + v[1] + "</button>";
           }).join("") + "</div></div>" +
+        '<div class="field"><span class="label">فقط جدیدها</span><div class="chips"><button type="button" id="flt-new" aria-pressed="' + f.fresh + '">جدید امروز</button></div></div>' +
       "</div>";
     return head + filters + (list.length ? '<div class="grid">' + list.map(cardHTML).join("") + "</div>" : '<div class="empty">چیزی با این فیلتر پیدا نشد.</div>');
   }
@@ -364,6 +467,8 @@
     if (v) Array.prototype.forEach.call(v.querySelectorAll("button"), function (b) {
       b.onclick = function () { state.filter.verdict = b.dataset.v; render(); };
     });
+    var fresh = $("flt-new");
+    if (fresh) fresh.onclick = function () { state.filter.fresh = !state.filter.fresh; render(); };
   }
 
   // --- picks tab -----------------------------------------------------------------
@@ -422,7 +527,7 @@
           '<div class="field"><label for="links">لینک محصول‌های Temu یا آمازون (هر خط یه لینک، حداکثر ' + toman(cfg.links_per_request) + " تا)</label>" +
           '<textarea class="input" id="links" placeholder="https://www.temu.com/...&#10;https://www.amazon.com/dp/..."></textarea>' +
           '<span class="hint">برای هر لینک، موتور همون محصول رو در 1688 پیدا می‌کنه، تأمین‌کننده رو مشخص می‌کنه، با Temu و آمازون مقایسه می‌کنه و قیمت فروش پیشنهاد می‌ده. ' +
-          (jobs ? "این ماه " + toman(jobs.left) + " تحلیل دیگه داری (از " + toman(cfg.monthly_links) + " تا). محصولی که قبلاً تحلیل شده فوری و بدون هزینه جواب می‌گیره." : "") + "</span></div>" +
+          (jobs ? "این ماه " + toman(jobs.left) + " تحلیل دیگه داری (از " + toman(jobs.quota || cfg.monthly_links) + " تا). محصولی که قبلاً تحلیل شده فوری و بدون هزینه جواب می‌گیره." : "") + "</span></div>" +
           examples +
           '<div class="error" id="links-error"></div><button class="btn" type="submit">تحلیل کن</button>' +
         "</form>" +
@@ -471,7 +576,7 @@
     var pending = (state.jobs && state.jobs.items || []).some(function (j) { return j.status === "queued" || j.status === "running"; });
     if (!pending || state.tab !== "analyze") return;
     pollJobs.timer = setTimeout(function () {
-      loadJobs().then(function () { var box = $("jobs"); if (box && state.tab === "analyze") box.innerHTML = jobsHTML(); pollJobs(); });
+      loadJobs().then(function () { var box = $("jobs"); if (box && state.tab === "analyze") { box.innerHTML = jobsHTML(); bindCards(box); } pollJobs(); });
     }, 4000);
   }
 
@@ -540,7 +645,8 @@
       return c ? { url: u, status: "done", result: c } : { url: u, status: "failed", error: /temu\.com|amazon\./.test(u) ? "listing_not_found" : "unsupported_link" };
     });
     var prev = (state.jobs && state.jobs.items) || [];
-    return { items: items.concat(prev), left: Math.max(0, state.config.monthly_links - items.length - prev.length) };
+    var quota = (state.config.plans.find(function (p) { return p.id === state.me.plan; }) || {}).links || state.config.monthly_links;
+    return { items: items.concat(prev), quota: quota, left: Math.max(0, quota - items.length - prev.length) };
   }
 
   // --- account tab ---------------------------------------------------------------
@@ -553,12 +659,14 @@
         ? '<label class="check off" title="' + esc(c.note_fa) + '"><input type="checkbox" disabled> ' + esc(c.fa) + " (محدود)</label>"
         : '<label class="check"><input type="checkbox" name="cat" value="' + esc(c.key) + '"' + (on ? " checked" : "") + "> " + esc(c.fa) + "</label>";
     }).join("");
+    var current = cfg.plans.find(function (p) { return p.id === me.plan; });
     var status = me.active
-      ? (me.is_admin ? "مدیر سایت: دسترسی کامل." : "اشتراکت تا " + esc(faDate(me.paid_until)) + " فعاله.")
+      ? (me.is_admin ? "مدیر سایت: دسترسی کامل." : "اشتراک" + (current ? " «" + esc(current.name_fa) + "»" : "") + " تا " + esc(faDate(me.paid_until)) + " فعاله.")
       : "اشتراک فعالی نداری.";
     var plans = cfg.plans.map(function (p) {
-      return '<div class="plan"><div class="label">' + esc(p.name_fa) + '</div><div class="price">' + toman(p.price_toman) + ' <small>تومان</small></div>' +
-        '<button type="button" class="btn" data-plan="' + esc(p.id) + '"' + (cfg.online_payment ? "" : " disabled") + ">" + (me.active ? "تمدید" : "خرید") + " با درگاه</button></div>";
+      return '<div class="plan' + (current && current.id === p.id ? " current" : "") + '"><div class="label">' + esc(p.name_fa) + '</div><div class="price">' + toman(p.price_toman) + ' <small>تومان در ماه</small></div>' +
+        '<div class="hint" style="color:var(--ink-soft);font-size:13px">' + toman(p.links) + " تحلیل محصول در ماه، به‌علاوه‌ی شکار روزانه و شکارهای اختصاصی</div>" +
+        '<button type="button" class="btn" data-plan="' + esc(p.id) + '"' + (cfg.online_payment ? "" : " disabled") + ">" + (current && current.id === p.id ? "تمدید" : "خرید") + " با درگاه</button></div>";
     }).join("");
     return '<div class="stack">' +
       '<section class="panel"><h2 class="section-title">اشتراک</h2><p class="section-sub">' + status + "</p>" +

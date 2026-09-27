@@ -23,6 +23,11 @@ SYSTEM = (
     "says what the product is. Keep pack counts and sizes (for example «۲ عددی»), keep "
     "brand names as they are, and drop marketing words. Answer for every id you are given."
 )
+SYSTEM_TEXTS = (
+    "You translate short Chinese texts from 1688 wholesale product pages (titles, "
+    "attribute values, variant names) into short, plain Persian for Iranian sellers. Keep "
+    "numbers, units and model codes as they are. Answer for every id you are given."
+)
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -70,24 +75,31 @@ class PersianNamer:
 
     def translate(self, titles: dict[str, str]) -> dict[str, str]:
         """{key: title} -> {key: Persian name}. Failed batches are skipped, not fatal."""
-        names: dict[str, str] = {}
-        items = list(titles.items())
+        return self._batches(titles, SYSTEM)
+
+    def translate_texts(self, texts: dict[str, str]) -> dict[str, str]:
+        """{key: short Chinese text from a 1688 page} -> {key: Persian}."""
+        return self._batches(texts, SYSTEM_TEXTS)
+
+    def _batches(self, texts: dict[str, str], system: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        items = list(texts.items())
         for i in range(0, len(items), BATCH):
             chunk = dict(items[i : i + BATCH])
             try:
-                names.update(self._ask(chunk))
+                out.update(self._ask(chunk, system))
             except Exception:
-                log.exception("Naming %d products in Persian failed", len(chunk))
-        return names
+                log.exception("Persian translation of %d texts failed", len(chunk))
+        return out
 
-    def _ask(self, chunk: dict[str, str]) -> dict[str, str]:
+    def _ask(self, chunk: dict[str, str], system: str = "") -> dict[str, str]:
         output_config: dict[str, Any] = {"format": {"type": "json_schema", "schema": SCHEMA}}
         if _supports_effort(self.model):
             output_config["effort"] = "low"
         params: dict[str, Any] = {
             "model": self.model,
             "max_tokens": 8000,
-            "system": SYSTEM,
+            "system": system or SYSTEM,
             "messages": [
                 {
                     "role": "user",

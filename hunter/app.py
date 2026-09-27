@@ -6,13 +6,16 @@ get products of your own and analyse any product.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,11 +28,12 @@ from .db import Database, is_active
 from .engine import Hunter
 from .links import link_key
 from .models import MarketListing, SupplierOffer
-from .payments import DemoGateway, Gateway, PaymentError, Plan, Zarinpal, default_plans
+from .payments import DemoGateway, Gateway, PaymentError, Plan, Zarinpal, make_plans
 from .pricing import PricingConfig, Unprofitable, price_product
 from .scoring import assess
 from .sources.base import LinkError
 from .sources.sample import SampleData
+from .offers import offer_view
 from .translate import PersianNamer, name_candidates
 from .wiring import link_hunter
 
@@ -40,6 +44,7 @@ FONTS = Path(__file__).resolve().parent.parent / "static" / "fonts"
 COOKIE = "hunter_session"
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 LINK = re.compile(r"^https?://\S+$")
+IMAGE_HOSTS = ("alicdn.com", "1688.com", "media-amazon.com", "ssl-images-amazon.com", "kwcdn.com")
 
 
 @dataclass
@@ -48,15 +53,17 @@ class Settings:
     public_url: str = "http://localhost:8100"  # where the site is reached; for the payment callback
     brand: str = "شکارچی"
     gateway: Gateway | None = None  # None: no online payment, an admin activates sellers
-    plans: list[Plan] = field(default_factory=lambda: default_plans(1_000_000, 2_500_000))
+    plans: list[Plan] = field(default_factory=lambda: make_plans(234_500))
     pricing: PricingConfig = field(default_factory=PricingConfig)
     per_product: int = 3  # sellers per product
     picks_per_seller: int = 8
     teaser_size: int = 3
     link_hunter: Hunter | None = None  # analyses the product links sellers paste
-    monthly_links: int = 30  # links a seller may send per 30 days (each one costs API calls)
+    monthly_links: int = 30  # analyses per 30 days for a seller without a plan (e.g. granted)
     links_per_request: int = 10
     cache_hours: float = 72  # a product analysed this recently is answered from the cache
+    offer_cache_hours: float = 24 * 7  # 1688 offer pages shown on the site
+    image_client: httpx.Client | None = None  # for the image proxy (tests pass a fake)
     namer: PersianNamer | None = None  # Persian product names with Claude
 
     @property
@@ -77,9 +84,9 @@ class Settings:
             public_url=env("HUNTER_PUBLIC_URL", cls.public_url).rstrip("/"),
             brand=env("HUNTER_BRAND", cls.brand),
             gateway=gateway,
-            plans=default_plans(
-                int(env("HUNTER_PRICE_MONTHLY_TOMAN", "1000000")),
-                int(env("HUNTER_PRICE_QUARTERLY_TOMAN", "2500000")),
+            plans=make_plans(
+                float(env("HUNTER_TOMAN_PER_USD", "234500")),
+                json.loads(env("HUNTER_PLANS")) if env("HUNTER_PLANS") else None,
             ),
             pricing=PricingConfig.from_env(),
             per_product=int(env("HUNTER_SELLERS_PER_PRODUCT", "3")),
@@ -145,6 +152,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "categories": user["categories"],
         "budget_usd": user["budget_usd"],
         "paid_until": user["paid_until"],
+        "plan": user.get("plan"),
         "is_admin": bool(user["is_admin"]),
         "active": is_active(user),
     }
@@ -169,6 +177,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     db.fail_unfinished_analyses()
     throttle = auth.Throttle()
     app = FastAPI(title=settings.brand, docs_url=None, redoc_url=None)
+    image_client = settings.image_client or httpx.Client(timeout=20, follow_redirects=False)
     app.state.settings = settings
     app.state.db = db
 
@@ -460,8 +469,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.cache([link_key(u) for u in urls if u], result)
             db.set_analysis(analysis_id, "done", result=result)
 
-    def links_left(user_id: int) -> int:
-        return max(0, settings.monthly_links - db.analyses_since(user_id, 30))
+    def quota(user: dict[str, Any]) -> int:
+        plan = next((p for p in settings.plans if p.id == user.get("plan")), None)
+        return plan.links if plan else settings.monthly_links
+
+    def links_left(user: dict[str, Any]) -> int:
+        return max(0, quota(user) - db.analyses_since(user["id"], 30))
 
     @app.post("/api/analyses")
     def send_links(body: Links, background: BackgroundTasks, user=Depends(require_active)):
@@ -472,15 +485,71 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "no_links")
         if len(urls) > settings.links_per_request:
             raise HTTPException(422, "too_many_links")
-        if len(urls) > links_left(user["id"]):
+        if len(urls) > links_left(user):
             raise HTTPException(429, "monthly_limit")
         ids = db.queue_analyses(user["id"], urls)
         background.add_task(run_analyses, list(zip(ids, urls)))
-        return {"queued": len(ids), "left": links_left(user["id"])}
+        return {"queued": len(ids), "left": links_left(user)}
 
     @app.get("/api/analyses")
     def my_analyses(user=Depends(require_active)):
-        return {"items": db.analyses(user["id"]), "left": links_left(user["id"])}
+        return {"items": db.analyses(user["id"]), "left": links_left(user), "quota": quota(user)}
+
+    # --- a 1688 offer shown on our site ------------------------------------------
+
+    def known_offer_urls(user: dict[str, Any]) -> set[str]:
+        """Offers the site itself found for this seller: only these are fetched, so
+        nobody can make us pay for looking up arbitrary pages."""
+        found = []
+        latest = db.latest_hunt()
+        if latest:
+            found += latest[1]["candidates"]
+        found += [a["result"] for a in db.analyses(user["id"], 200) if a["result"]]
+        return {o["url"] for c in found for o in [c["offer"], *c.get("alternatives", [])]}
+
+    @app.get("/api/offer")
+    def offer(url: str, user=Depends(require_active)):
+        supplier = settings.link_hunter.supplier if settings.link_hunter else None
+        if supplier is None or not hasattr(supplier, "offer_detail"):
+            raise HTTPException(503, "details_not_configured")
+        if url not in known_offer_urls(user):
+            raise HTTPException(404, "offer_not_found")
+        cached = db.cached_offer(url, settings.offer_cache_hours)
+        if cached is not None:
+            return cached
+        try:
+            detail = supplier.offer_detail(url)
+        except LinkError as e:
+            raise HTTPException(503, str(e)) from None
+        except Exception:
+            log.exception("Reading 1688 offer %s failed", url)
+            raise HTTPException(502, "offer_error") from None
+        if detail is None:
+            raise HTTPException(404, "offer_not_found")
+        view = offer_view(detail, settings.namer, db)
+        db.cache_offer(url, view)
+        return view
+
+    @app.get("/img", include_in_schema=False)
+    def image(u: str, user=Depends(require_user)):
+        """Product pictures through our server: Amazon's, Temu's and 1688's image hosts
+        are often unreachable from Iran. Only those hosts, only images."""
+        parts = urlsplit(u)
+        host = (parts.hostname or "").lower()
+        if parts.scheme != "https" or not any(
+            host == h or host.endswith("." + h) for h in IMAGE_HOSTS
+        ):
+            raise HTTPException(400, "not_an_image_host")
+        try:
+            r = image_client.get(u)
+        except httpx.HTTPError:
+            raise HTTPException(502, "image_error") from None
+        kind = r.headers.get("content-type", "")
+        if r.status_code != 200 or not kind.startswith("image/") or len(r.content) > 8_000_000:
+            raise HTTPException(502, "image_error")
+        return Response(
+            r.content, media_type=kind, headers={"Cache-Control": "private, max-age=604800"}
+        )
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     if FONTS.is_dir():

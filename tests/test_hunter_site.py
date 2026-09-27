@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from hunter.app import Settings, create_app
 from hunter.db import Database
 from hunter.engine import Hunter
-from hunter.payments import DemoGateway, PaymentError, Zarinpal
+from hunter.payments import DemoGateway, PaymentError, Zarinpal, make_plans
 from hunter.preview import build_preview
 from hunter.sources.sample import SampleData
 
@@ -48,7 +48,7 @@ def signup(client, email="seller@example.com", **extra):
     return r.json()
 
 
-def subscribe(client, plan="monthly"):
+def subscribe(client, plan="pro"):
     r = client.post("/api/pay", json={"plan": plan})
     assert r.status_code == 200, r.text
     return client.get(
@@ -61,7 +61,8 @@ def test_pages_and_config(client):
     assert client.get("/static/app.js").status_code == 200
     cfg = client.get("/api/config").json()  # would fail on float('inf') in the settings
     assert cfg["online_payment"] is True
-    assert {p["id"] for p in cfg["plans"]} == {"monthly", "quarterly"}
+    assert {p["id"]: p["links"] for p in cfg["plans"]} == {"basic": 30, "pro": 100, "business": 300}
+    assert all(p["price_toman"] % 10_000 == 0 for p in cfg["plans"])
     assert cfg["pricing"]["last_mile_usd"][-1][0] is None
     assert any(c["restricted"] for c in cfg["categories"])
 
@@ -143,7 +144,7 @@ def test_paying_unlocks_everything(client):
 
 def test_a_replayed_callback_does_not_extend_twice(client, settings):
     signup(client)
-    r = client.post("/api/pay", json={"plan": "monthly"})
+    r = client.post("/api/pay", json={"plan": "pro"})
     callback = r.json()["redirect_url"].replace("http://testserver", "")
     client.get(callback, follow_redirects=False)
     first = client.get("/api/me").json()["paid_until"]
@@ -153,7 +154,7 @@ def test_a_replayed_callback_does_not_extend_twice(client, settings):
 
 def test_cancelled_or_unknown_payments_do_nothing(client):
     signup(client)
-    r = client.post("/api/pay", json={"plan": "monthly"})
+    r = client.post("/api/pay", json={"plan": "pro"})
     authority = r.json()["redirect_url"].split("Authority=")[1].split("&")[0]
     r = client.get(f"/pay/callback?Authority={authority}&Status=NOK", follow_redirects=False)
     assert r.headers["location"] == "/#pay-cancelled"
@@ -168,7 +169,7 @@ def test_without_a_gateway_payment_is_offline(settings):
     with TestClient(create_app(settings)) as c:
         signup(c)
         assert c.get("/api/config").json()["online_payment"] is False
-        assert c.post("/api/pay", json={"plan": "monthly"}).status_code == 503
+        assert c.post("/api/pay", json={"plan": "pro"}).status_code == 503
 
 
 def test_admin_grant_activates_a_seller(client, settings):
@@ -318,7 +319,7 @@ def test_payment_verified_by_zarinpal_through_the_site(settings):
     settings.gateway = zarinpal(handler)
     with TestClient(create_app(settings)) as c:
         signup(c)
-        r = c.post("/api/pay", json={"plan": "quarterly"})
+        r = c.post("/api/pay", json={"plan": "business"})
         assert r.json()["redirect_url"].endswith("/pg/StartPay/A77")
         assert (
             c.get("/pay/callback?Authority=A77&Status=OK", follow_redirects=False).headers[
@@ -326,7 +327,7 @@ def test_payment_verified_by_zarinpal_through_the_site(settings):
             ]
             == "/#paid"
         )
-        assert amounts == [settings.plans[1].amount_rial]  # verified for the price we charge
+        assert amounts == [settings.plans[2].amount_rial]  # verified for the price we charge
         assert c.get("/api/me").json()["active"] is True
 
 
@@ -369,7 +370,7 @@ def link_settings(tmp_path):
         gateway=DemoGateway(),
         public_url="http://testserver",
         link_hunter=CountingHunter(),
-        monthly_links=5,
+        plans=make_plans(234_500, [{"id": "pro", "name_fa": "x", "price_usd": 15, "links": 5}]),
     )
 
 
@@ -377,7 +378,7 @@ def test_sellers_send_links_and_get_full_analyses(link_settings):
     with TestClient(create_app(link_settings)) as c:
         cfg = c.get("/api/config").json()
         assert cfg["links"] is True and len(cfg["example_links"]) == 4
-        assert cfg["monthly_links"] == 5
+        assert cfg["plans"][0]["links"] == 5
         signup(c)
         assert c.post("/api/analyses", json={"urls": cfg["example_links"][:1]}).status_code == 402
         subscribe(c)
@@ -399,7 +400,9 @@ def test_sellers_send_links_and_get_full_analyses(link_settings):
 
 def test_a_product_is_only_analysed_once(link_settings):
     hunter = link_settings.link_hunter
-    link_settings.monthly_links = 10
+    link_settings.plans = make_plans(
+        234_500, [{"id": "pro", "name_fa": "x", "price_usd": 15, "links": 10}]
+    )
     with TestClient(create_app(link_settings)) as c:
         signup(c)
         subscribe(c)
@@ -484,7 +487,9 @@ def test_links_are_off_without_sources(client):
 
 
 def test_too_many_links_at_once(link_settings):
-    link_settings.monthly_links = 100
+    link_settings.plans = make_plans(
+        234_500, [{"id": "pro", "name_fa": "x", "price_usd": 15, "links": 100}]
+    )
     with TestClient(create_app(link_settings)) as c:
         signup(c)
         subscribe(c)
@@ -516,3 +521,158 @@ def test_manual_analysis_compares_with_amazon(client):
         },
     ).json()
     assert a["pricing"]["amazon_usd"] == 16.99 and a["pricing"]["vs_amazon"] < 0.7
+
+
+# --- plans, new-today, the in-site 1688 view and the image proxy ------------------------
+
+
+def test_each_plan_has_its_own_quota(link_settings):
+    link_settings.plans = make_plans(
+        234_500,
+        [
+            {"id": "basic", "name_fa": "پایه", "price_usd": 6, "links": 2},
+            {"id": "pro", "name_fa": "حرفه‌ای", "price_usd": 15, "links": 4},
+        ],
+    )
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c, "basic")
+        me = c.get("/api/me").json()
+        assert me["plan"] == "basic"
+        assert c.get("/api/analyses").json()["quota"] == 2
+        subscribe(c, "pro")  # upgrading switches the quota
+        assert c.get("/api/analyses").json()["quota"] == 4
+
+
+def test_plans_are_priced_from_dollars():
+    basic, pro, business = make_plans(234_500)
+    assert (basic.price_toman, pro.price_toman, business.price_toman) == (
+        1_410_000,
+        3_520_000,
+        9_380_000,
+    )
+    assert (basic.links, pro.links, business.links) == (30, 100, 300)
+    assert make_plans(300_000)[0].price_toman == 1_800_000
+
+
+def test_grant_with_a_plan_and_old_databases_get_the_column(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as old:  # a users table from before plans had tiers
+        old.execute(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,"
+            " phone TEXT NOT NULL DEFAULT '', password_hash TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0,"
+            " categories TEXT NOT NULL DEFAULT '[]', budget_usd REAL NOT NULL DEFAULT 1000, paid_until TEXT,"
+            " created_at TEXT NOT NULL)"
+        )
+    db = Database(path)
+    db.create_user("a@b.co", "a", "", "x")
+    assert db.grant("a@b.co", 30, "business")
+    assert db.user_by_email("a@b.co")["plan"] == "business"
+
+
+def test_new_finds_are_marked_against_the_previous_hunt(tmp_path, sample_hunt):
+    import copy
+
+    db = Database(tmp_path / "n.db")
+    first = copy.deepcopy(sample_hunt)
+    db.save_hunt(first)
+    assert all(c["is_new"] for c in first["candidates"])
+    second = copy.deepcopy(sample_hunt)
+    second["candidates"][0]["offer"]["id"] = "a-new-offer"
+    db.save_hunt(second)
+    assert [c["is_new"] for c in second["candidates"]].count(True) == 1
+    assert db.latest_hunt()[1]["candidates"][0]["is_new"] is True
+
+
+def offer_url(settings):
+    return Database(settings.db_path).latest_hunt()[1]["candidates"][0]["offer"]["url"]
+
+
+def test_1688_offers_are_shown_on_our_site(link_settings, sample_hunt):
+    Database(link_settings.db_path).save_hunt(sample_hunt)
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c)
+        gap = next(x for x in sample_hunt["candidates"] if x["id"] == "temu:s-gap-filler")
+        v = c.get("/api/offer", params={"url": gap["offer"]["url"]}).json()
+        assert v["offer"]["shop_name"] == gap["offer"]["shop_name"]
+        assert ["جنس", "چرم مصنوعی (PU)"] in v["attributes_fa"]  # glossary, no Claude needed
+        assert "ارسال ظرف ۴۸ ساعت" in v["badges_fa"]
+        assert v["level"]["key"] in ("gold", "silver", "bronze") and v["skus_fa"]
+        alt = c.get("/api/offer", params={"url": gap["alternatives"][0]["url"]})
+        assert alt.status_code == 200  # a backup supplier the site found is fine too
+        r = c.get("/api/offer", params={"url": "https://detail.1688.com/offer/anything.html"})
+        assert r.status_code == 404  # but not any page someone asks for
+
+
+def test_offer_views_are_cached(link_settings, sample_hunt):
+    Database(link_settings.db_path).save_hunt(sample_hunt)
+    supplier = link_settings.link_hunter.supplier
+    calls = []
+    real = supplier.offer_detail
+    supplier.offer_detail = lambda url: calls.append(url) or real(url)
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c)
+        url = offer_url(link_settings)
+        first = c.get("/api/offer", params={"url": url}).json()
+        assert c.get("/api/offer", params={"url": url}).json() == first
+        assert calls == [url]
+
+
+def test_offer_view_needs_a_subscription_and_a_source(settings, link_settings, sample_hunt):
+    with TestClient(create_app(settings)) as c:  # no link hunter: nothing reads 1688
+        signup(c)
+        assert c.get("/api/offer", params={"url": "x"}).status_code == 402
+        subscribe(c)
+        r = c.get("/api/offer", params={"url": offer_url(settings)})
+        assert r.status_code == 503 and r.json()["detail"] == "details_not_configured"
+
+
+def test_offer_view_translates_chinese_with_claude(link_settings, sample_hunt):
+    class Namer:
+        def translate_texts(self, texts):
+            return {k: "فا:" + v for k, v in texts.items()}
+
+    Database(link_settings.db_path).save_hunt(sample_hunt)
+    link_settings.namer = Namer()
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c)
+        perch = next(x for x in sample_hunt["candidates"] if x["id"] == "temu:s-cat-perch")
+        v = c.get("/api/offer", params={"url": perch["offer"]["url"]}).json()
+        assert v["title_fa"].startswith("فا:")
+        assert ["مناسب برای", "فا:猫"] in v["attributes_fa"]
+        assert v["skus_fa"][0]["name_fa"].startswith("فا:")
+
+
+def test_image_proxy_only_fetches_product_pictures(link_settings):
+    fetched = []
+
+    def handler(request):
+        fetched.append(str(request.url))
+        if "html" in request.url.path:
+            return httpx.Response(200, text="<html>", headers={"content-type": "text/html"})
+        return httpx.Response(200, content=b"\x89PNG", headers={"content-type": "image/png"})
+
+    link_settings.image_client = httpx.Client(transport=httpx.MockTransport(handler))
+    with TestClient(create_app(link_settings)) as c:
+        assert c.get("/img", params={"u": "https://cbu01.alicdn.com/a.png"}).status_code == 401
+        signup(c)
+        r = c.get("/img", params={"u": "https://cbu01.alicdn.com/a.png"})
+        assert (
+            r.status_code == 200
+            and r.content == b"\x89PNG"
+            and r.headers["content-type"] == "image/png"
+        )
+        for bad in (
+            "http://cbu01.alicdn.com/a.png",
+            "https://evil.example/a.png",
+            "https://alicdn.com.evil.example/a.png",
+            "https://127.0.0.1/a.png",
+        ):
+            assert c.get("/img", params={"u": bad}).status_code == 400
+        assert c.get("/img", params={"u": "https://img.alicdn.com/page.html"}).status_code == 502
+        assert fetched == ["https://cbu01.alicdn.com/a.png", "https://img.alicdn.com/page.html"]

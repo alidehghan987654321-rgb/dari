@@ -15,7 +15,8 @@ from .allocate import choose_picks
 from .app import example_links, pricing_settings, public_user
 from .categories import CATEGORIES
 from .engine import Hunter
-from .payments import default_plans
+from .offers import offer_view
+from .payments import make_plans
 from .pricing import PricingConfig
 from .sources.sample import SampleData
 
@@ -30,6 +31,16 @@ def _between(text: str, start: str, end: str) -> str:
     return text.split(start, 1)[1].split(end, 1)[0]
 
 
+class _NoStore:
+    """No database behind the preview: nothing remembered, nothing translated."""
+
+    def names(self, keys):
+        return {}
+
+    def save_names(self, names):
+        pass
+
+
 def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
     pricing = pricing or PricingConfig()
     html = (STATIC / "index.html").read_text(encoding="utf-8")
@@ -40,6 +51,15 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
 
     sample = SampleData()
     candidates = hunt["candidates"]
+    # What "new today" looks like (a real site compares with yesterday's hunt).
+    for c in [c for c in candidates if c["verdict"] == "green"][:3]:
+        c["is_new"] = True
+    offers = {o["url"] for c in candidates for o in [c["offer"], *c.get("alternatives", [])]}
+    details = {
+        url: offer_view(detail, None, _NoStore())
+        for url in offers
+        if (detail := sample.offer_detail(url))
+    }
     counts: dict[str, int] = {}
     for c in candidates:
         counts[c["verdict"]] = counts.get(c["verdict"], 0) + 1
@@ -56,13 +76,14 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
             "budget_usd": budget,
             "paid_until": "2099-01-01T00:00:00+00:00",
             "is_admin": 0,
+            "plan": "pro",
         }
     )
     demo = {
         "config": {
             "brand": "شکارچی",
             "online_payment": True,
-            "plans": [p.__dict__ for p in default_plans(1_000_000, 2_500_000)],
+            "plans": [p.__dict__ for p in make_plans(234_500)],
             "categories": [
                 {"key": c.key, "fa": c.fa, "restricted": c.restricted, "note_fa": c.note_fa}
                 for c in CATEGORIES.values()
@@ -84,6 +105,7 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
             "locked": False,
             "candidates": candidates,
         },
+        "details": details,
         "picks": {
             "hunt_id": 1,
             "budget_usd": budget,

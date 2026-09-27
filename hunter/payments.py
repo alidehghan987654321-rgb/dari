@@ -30,16 +30,40 @@ class Plan:
     name_fa: str
     days: int
     price_toman: int
+    links: int  # product analyses per 30 days
+    price_usd: float = 0.0
 
     @property
     def amount_rial(self) -> int:
         return self.price_toman * 10
 
 
-def default_plans(monthly_toman: int, quarterly_toman: int) -> list[Plan]:
+# Tiers priced in dollars (the costs are in dollars) and turned into toman with the day's
+# rate, so a change in the rate is one setting. Each costs about 3x what its analyses
+# cost us at most (no cache hits), see hunter/README.md.
+PLAN_TIERS = [
+    {"id": "basic", "name_fa": "پایه", "days": 30, "price_usd": 6, "links": 30},
+    {"id": "pro", "name_fa": "حرفه‌ای", "days": 30, "price_usd": 15, "links": 100},
+    {"id": "business", "name_fa": "تجاری", "days": 30, "price_usd": 40, "links": 300},
+]
+
+
+def to_toman(usd: float, toman_per_usd: float) -> int:
+    """A dollar price in toman, rounded to 10,000."""
+    return max(10_000, round(usd * toman_per_usd / 10_000) * 10_000)
+
+
+def make_plans(toman_per_usd: float, tiers: list[dict] | None = None) -> list[Plan]:
     return [
-        Plan("monthly", "اشتراک یک‌ماهه", 30, monthly_toman),
-        Plan("quarterly", "اشتراک سه‌ماهه", 90, quarterly_toman),
+        Plan(
+            id=t["id"],
+            name_fa=t["name_fa"],
+            days=int(t.get("days", 30)),
+            price_toman=to_toman(t["price_usd"], toman_per_usd),
+            links=int(t["links"]),
+            price_usd=float(t["price_usd"]),
+        )
+        for t in (tiers or PLAN_TIERS)
     ]
 
 

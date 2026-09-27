@@ -188,3 +188,38 @@ def assess(
         verdict = "red"
 
     return Assessment(max(0, min(score, 100)), verdict, pros, cons, flags)
+
+
+def supplier_level(offer: SupplierOffer) -> dict:
+    """A plain-language level for a 1688 shop, from what 1688 shows about it.
+
+    Points: factory 2, years on 1688 (5+ 2, 2+ 1), rating (4.7+ 2, 4.5+ 1),
+    repurchase rate (30%+ 2, 15%+ 1), sales of this offer (1000+ 2, 100+ 1).
+    """
+    points, known = 0, 0
+    if offer.is_factory is not None:
+        known += 1
+        points += 2 if offer.is_factory else 0
+    if offer.years is not None:
+        known += 1
+        points += 2 if offer.years >= 5 else 1 if offer.years >= 2 else 0
+    if offer.rating is not None:
+        known += 1
+        points += 2 if offer.rating >= 4.7 else 1 if offer.rating >= 4.5 else 0
+    if offer.repurchase_rate is not None:
+        known += 1
+        points += 2 if offer.repurchase_rate >= 0.3 else 1 if offer.repurchase_rate >= 0.15 else 0
+    if offer.sales is not None:
+        known += 1
+        points += 2 if offer.sales >= 1000 else 1 if offer.sales >= 100 else 0
+    if known < 2:
+        return {"key": "unknown", "fa": "نامشخص", "points": points, "of": known * 2}
+    share = points / (known * 2)
+    key, fa = (
+        ("gold", "طلایی")
+        if share >= 0.75
+        else ("silver", "نقره‌ای")
+        if share >= 0.5
+        else ("bronze", "برنزی")
+    )
+    return {"key": key, "fa": fa, "points": points, "of": known * 2}

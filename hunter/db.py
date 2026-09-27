@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
     categories TEXT NOT NULL DEFAULT '[]',
     budget_usd REAL NOT NULL DEFAULT 1000,
     paid_until TEXT,
+    plan TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -63,6 +64,11 @@ CREATE TABLE IF NOT EXISTS link_cache (
     result TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS offer_cache (
+    url TEXT PRIMARY KEY,  -- a 1688 offer page, as shown on our site
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS names_fa (
     key TEXT PRIMARY KEY,  -- source:id of a listing
     name TEXT NOT NULL
@@ -92,6 +98,10 @@ class Database:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with self.tx() as db:
             db.executescript(SCHEMA)
+            # Databases made before plans had tiers.
+            columns = {r["name"] for r in db.execute("PRAGMA table_info(users)")}
+            if "plan" not in columns:
+                db.execute("ALTER TABLE users ADD COLUMN plan TEXT")
 
     @contextmanager
     def tx(self):
@@ -147,11 +157,13 @@ class Database:
         db.execute("UPDATE users SET paid_until = ? WHERE id = ?", (until, user_id))
         return until
 
-    def grant(self, email: str, days: int) -> str | None:
+    def grant(self, email: str, days: int, plan: str | None = None) -> str | None:
         with self.tx() as db:
             row = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
             if not row:
                 return None
+            if plan:
+                db.execute("UPDATE users SET plan = ? WHERE id = ?", (plan, row["id"]))
             return self.extend_subscription(db, row["id"], days)
 
     def make_admin(self, email: str) -> bool:
@@ -225,6 +237,7 @@ class Database:
                 "UPDATE payments SET status = 'paid', ref_id = ?, paid_at = ? WHERE id = ?",
                 (ref_id, iso(now()), payment_id),
             )
+            db.execute("UPDATE users SET plan = ? WHERE id = ?", (row["plan"], row["user_id"]))
             self.extend_subscription(db, row["user_id"], row["days"])
             return True
 
@@ -234,6 +247,10 @@ class Database:
         """Store a hunt, and remember each find under its links (the listing's and the
         same product's on other markets), so a seller pasting one of them gets the answer
         without new API calls."""
+        previous = self.latest_hunt()
+        seen = {c["offer"]["id"] for c in previous[1]["candidates"]} if previous else set()
+        for c in data.get("candidates", []):
+            c["is_new"] = c["offer"]["id"] not in seen
         with self.tx() as db:
             cur = db.execute(
                 "INSERT INTO hunts (created_at, data) VALUES (?, ?)",
@@ -343,6 +360,21 @@ class Database:
             db.executemany(
                 "INSERT OR REPLACE INTO link_cache (key, result, created_at) VALUES (?, ?, ?)",
                 [(k, text, iso(now())) for k in dict.fromkeys(keys)],
+            )
+
+    def cached_offer(self, url: str, max_age_hours: float) -> dict | None:
+        with self.tx() as db:
+            row = db.execute(
+                "SELECT data FROM offer_cache WHERE url = ? AND created_at > ?",
+                (url, iso(now() - timedelta(hours=max_age_hours))),
+            ).fetchone()
+        return json.loads(row["data"]) if row else None
+
+    def cache_offer(self, url: str, data: dict) -> None:
+        with self.tx() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO offer_cache (url, data, created_at) VALUES (?, ?, ?)",
+                (url, json.dumps(data, ensure_ascii=False), iso(now())),
             )
 
     def names(self, keys: list[str]) -> dict[str, str]:

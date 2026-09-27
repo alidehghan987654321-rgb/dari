@@ -662,3 +662,67 @@ def test_each_product_is_named_once(tmp_path):
 def test_no_anthropic_key_no_names(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert PersianNamer.from_env() is None
+
+
+# --- 1688 offer pages, supplier level, Keepa running out of tokens ----------------------
+
+from hunter.scoring import supplier_level  # noqa: E402
+from hunter.sources.apify import offer_detail  # noqa: E402
+
+
+def test_1688_offer_pages_are_read():
+    d = offer_detail(
+        {
+            "subject": "猫咪吸盘吊床",
+            "price": "21.00",
+            "companyName": "义乌某宠物用品厂",
+            "images": [
+                {"fullPathImageURI": "https://cbu01.alicdn.com/1.jpg"},
+                "https://cbu01.alicdn.com/2.jpg",
+            ],
+            "attributes": [{"name": "材质", "value": "聚酯纤维"}, {"name": "", "value": "x"}],
+            "skuList": [{"specAttrs": ["灰色", "承重18kg"], "price": "21", "amountOnSale": 4200}],
+            "serviceTags": ["48小时发货", {"text": "一件代发"}],
+        },
+        "https://detail.1688.com/offer/1.html",
+    )
+    assert d.offer.url == "https://detail.1688.com/offer/1.html" and d.offer.is_factory
+    assert d.images == ["https://cbu01.alicdn.com/1.jpg", "https://cbu01.alicdn.com/2.jpg"]
+    assert d.attributes == [["材质", "聚酯纤维"]]
+    assert d.skus == [{"name": "灰色 / 承重18kg", "price_cny": 21.0, "stock": 4200}]
+    assert d.badges == ["48小时发货", "一件代发"]
+    assert offer_detail({"title": "no price"}, "u") is None
+    attrs = offer_detail({"title": "x", "price": 1, "attributes": {"颜色": "黑色"}}, "u").attributes
+    assert attrs == [["颜色", "黑色"]]
+
+
+def test_offer_details_need_their_actor():
+    apify = Apify(
+        "T",
+        client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[]))),
+    )
+    with pytest.raises(LinkError, match="details_not_configured"):
+        Supplier1688(apify, "me/1688").offer_detail("https://detail.1688.com/offer/1.html")
+    assert Supplier1688(apify, "me/1688", detail_actor="me/detail").offer_detail("u") is None
+
+
+def test_supplier_levels():
+    best = offer(is_factory=True, years=9, rating=4.9, repurchase_rate=0.4, sales=5000)
+    worst = offer(is_factory=False, years=1, rating=4.0, repurchase_rate=0.05, sales=10)
+    assert supplier_level(best)["key"] == "gold"
+    assert supplier_level(worst)["key"] == "bronze"
+    assert supplier_level(offer(sales=None))["key"] == "unknown"
+    sample = SampleData()
+    assert all(c.level["key"] for c in Hunter([sample], sample).hunt().candidates)
+
+
+def test_keepa_waits_when_out_of_tokens():
+    answers = [
+        httpx.Response(429, json={"refillIn": 3000}),
+        httpx.Response(200, json={"products": []}),
+    ]
+    keepa = Keepa("K", client=httpx.Client(transport=httpx.MockTransport(lambda r: answers.pop(0))))
+    waits = []
+    keepa.sleep = waits.append
+    assert keepa._get("product", asin="B0CJRVK5Q1") == {"products": []}
+    assert waits == [3.0]

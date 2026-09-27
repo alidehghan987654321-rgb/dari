@@ -49,6 +49,22 @@ class SupplierOffer:
 
 
 @dataclass
+class OfferDetail:
+    """Everything on a 1688 offer page, to show inside our site (sellers in Iran can't
+    open or sign up on 1688)."""
+
+    offer: SupplierOffer  # price, MOQ, shop and its record
+    images: list[str] = field(default_factory=list)
+    attributes: list[list[str]] = field(default_factory=list)  # [[name, value], ...]
+    skus: list[dict] = field(default_factory=list)  # {"name", "price_cny", "stock"}
+    badges: list[str] = field(default_factory=list)  # shop and service badges, as on 1688
+    title_fa: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class Pricing:
     """Every cost of one sold unit, at the recommended selling price."""
 
@@ -97,6 +113,8 @@ class Candidate:
     starter_capital_usd: float = 0.0
     alternatives: list[SupplierOffer] = field(default_factory=list)  # other shops for the same item
     matches: list[MarketListing] = field(default_factory=list)  # the product on the other markets
+    level: dict = field(default_factory=dict)  # the supplier's level, see scoring.supplier_level
+    is_new: bool = False  # not in the previous daily hunt
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

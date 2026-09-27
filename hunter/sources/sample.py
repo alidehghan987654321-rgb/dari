@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ..categories import Category
-from ..models import MarketListing, SupplierOffer
+from ..models import MarketListing, OfferDetail, SupplierOffer
 
 SAMPLE_FILE = Path(__file__).resolve().parent.parent / "data" / "sample.json"
 
@@ -38,6 +38,7 @@ class SampleData:
             image: [SupplierOffer(**o) for o in offers]
             for image, offers in data["offers_by_image"].items()
         }
+        self.details = data.get("details_by_offer", {})
 
     def trending(self, category: Category, limit: int) -> list[MarketListing]:
         found = [x for x in self.listings if x.category == category.key]
@@ -70,3 +71,18 @@ class SampleData:
 
     def by_keyword(self, query: str, limit: int) -> list[SupplierOffer]:
         return []
+
+    def offer_detail(self, url: str) -> OfferDetail | None:
+        offer = next((o for offers in self.offers.values() for o in offers if o.url == url), None)
+        if offer is None:
+            return None
+        extra = self.details.get(offer.id, {})
+        years = [f"诚信通 {offer.years}年"] if offer.years else []
+        origin = [["产地", offer.location]] if offer.location else []
+        return OfferDetail(
+            offer=replace(offer),
+            images=[offer.image_url] if offer.image_url else [],
+            attributes=extra.get("attributes") or origin,
+            skus=extra.get("skus", []),
+            badges=extra.get("badges") or years,
+        )

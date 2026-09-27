@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from .categories import Category, classify, find_category, hunt_categories, pack_qty
 from .models import Candidate, MarketListing, SupplierOffer
 from .pricing import PricingConfig, Unprofitable, price_product
-from .scoring import assess
+from .scoring import assess, supplier_level
 from .sources import MarketSource, SupplierSource
 from .sources.base import LinkError
 
@@ -198,6 +198,7 @@ class Hunter:
             starter_capital_usd=round(starter_qty * pricing.landed_usd, 2),
             alternatives=ranked[1:3],
             matches=matches,
+            level=supplier_level(offer),
         )
 
     def find_matches(self, listing: MarketListing) -> list[MarketListing]:

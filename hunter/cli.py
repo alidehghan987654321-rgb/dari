@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from .categories import find_category, hunt_categories
 from .db import Database
 from .engine import Hunter
+from .payments import PLAN_TIERS
 from .pricing import PricingConfig
 from .sources.sample import SampleData
 from .translate import PersianNamer, name_candidates
@@ -89,7 +90,7 @@ def cmd_serve(args) -> int:
 
 
 def cmd_grant(args) -> int:
-    until = Database(args.db).grant(args.email.lower(), args.days)
+    until = Database(args.db).grant(args.email.lower(), args.days, args.plan)
     if not until:
         print(f"No seller with email {args.email}", file=sys.stderr)
         return 1
@@ -147,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("grant", help="activate or extend a seller's subscription")
     p.add_argument("email")
     p.add_argument("--days", type=int, default=30)
+    p.add_argument("--plan", choices=[t["id"] for t in PLAN_TIERS], default="basic")
     p.add_argument("--db", default=db_default)
     p.set_defaults(func=cmd_grant)
 

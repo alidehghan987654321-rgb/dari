@@ -8,6 +8,7 @@ the rating as 0-50, weights in grams; -1 means "no data".
 from __future__ import annotations
 
 import logging
+import time
 from urllib.parse import urlsplit
 
 import httpx
@@ -41,11 +42,21 @@ class Keepa:
         self.key = key
         self.domain = domain  # 1 = amazon.com
         self.http = client or httpx.Client(timeout=120)
+        self.sleep = time.sleep
 
     def _get(self, endpoint: str, **params) -> dict:
-        r = self.http.get(
-            f"{API}/{endpoint}", params={"key": self.key, "domain": self.domain, **params}
-        )
+        for _ in range(4):
+            r = self.http.get(
+                f"{API}/{endpoint}", params={"key": self.key, "domain": self.domain, **params}
+            )
+            if r.status_code != 429:
+                break
+            # Out of tokens: Keepa says when the bucket refills (in ms).
+            try:
+                wait_ms = r.json().get("refillIn") or 5000
+            except ValueError:
+                wait_ms = 5000
+            self.sleep(min(max(wait_ms / 1000, 1), 60))
         r.raise_for_status()
         data = r.json()
         if "error" in data:
