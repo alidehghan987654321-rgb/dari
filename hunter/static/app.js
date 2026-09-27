@@ -422,7 +422,7 @@
           '<div class="field"><label for="links">لینک محصول‌های Temu یا آمازون (هر خط یه لینک، حداکثر ' + toman(cfg.links_per_request) + " تا)</label>" +
           '<textarea class="input" id="links" placeholder="https://www.temu.com/...&#10;https://www.amazon.com/dp/..."></textarea>' +
           '<span class="hint">برای هر لینک، موتور همون محصول رو در 1688 پیدا می‌کنه، تأمین‌کننده رو مشخص می‌کنه، با Temu و آمازون مقایسه می‌کنه و قیمت فروش پیشنهاد می‌ده. ' +
-          (jobs ? "امروز " + toman(jobs.left_today) + " تحلیل دیگه داری." : "") + "</span></div>" +
+          (jobs ? "این ماه " + toman(jobs.left) + " تحلیل دیگه داری (از " + toman(cfg.monthly_links) + " تا). محصولی که قبلاً تحلیل شده فوری و بدون هزینه جواب می‌گیره." : "") + "</span></div>" +
           examples +
           '<div class="error" id="links-error"></div><button class="btn" type="submit">تحلیل کن</button>' +
         "</form>" +
@@ -454,7 +454,8 @@
     if (!items.length) return "";
     return '<h2 class="section-title" style="font-size:16px">تحلیل‌های من</h2>' + items.map(function (j) {
       var st = STATUS[j.status] || STATUS.queued;
-      var head = '<div class="job"><span class="url">' + esc(j.url) + '</span><span class="pill ' + st[0] + '"><span class="dot"></span>' + st[1] + "</span></div>";
+      var cached = j.result && j.result.from_cache ? '<span class="pill neutral">از قبل تحلیل شده بود</span>' : "";
+      var head = '<div class="job"><span class="url">' + esc(j.url) + "</span>" + cached + '<span class="pill ' + st[0] + '"><span class="dot"></span>' + st[1] + "</span></div>";
       if (j.status === "done" && j.result) return '<div>' + head + '<div class="job-result grid">' + cardHTML(j.result) + "</div></div>";
       if (j.status === "failed") return '<div>' + head + '<p class="error" style="margin:4px 4px 0">' + esc(LINK_ERRORS[j.error] || j.error || "") + "</p></div>";
       return head;
@@ -500,7 +501,7 @@
         $("links").value = "";
         return loadJobs();
       }).then(function () { render(); }, function (e) {
-        $("links-error").textContent = e.code === "daily_limit" ? "سقف تحلیل امروزت پر شده؛ فردا دوباره امتحان کن."
+        $("links-error").textContent = e.code === "monthly_limit" ? "سهمیه‌ی تحلیل این ماهت کافی نیست؛ لینک کمتری بفرست یا بعداً امتحان کن."
           : e.code === "too_many_links" ? "حداکثر " + toman(state.config.links_per_request) + " لینک در هر بار." : errText(e);
       });
     };
@@ -538,7 +539,8 @@
       var c = known[u];
       return c ? { url: u, status: "done", result: c } : { url: u, status: "failed", error: /temu\.com|amazon\./.test(u) ? "listing_not_found" : "unsupported_link" };
     });
-    return { items: items.concat((state.jobs && state.jobs.items) || []), left_today: state.config.daily_links };
+    var prev = (state.jobs && state.jobs.items) || [];
+    return { items: items.concat(prev), left: Math.max(0, state.config.monthly_links - items.length - prev.length) };
   }
 
   // --- account tab ---------------------------------------------------------------

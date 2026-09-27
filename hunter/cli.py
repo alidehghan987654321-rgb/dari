@@ -24,6 +24,7 @@ from .db import Database
 from .engine import Hunter
 from .pricing import PricingConfig
 from .sources.sample import SampleData
+from .translate import PersianNamer, name_candidates
 from .wiring import live_sources
 
 log = logging.getLogger("hunter")
@@ -55,7 +56,9 @@ def cmd_hunt(args) -> int:
     result = hunter.hunt(cats, args.per_category)
     result.sample, result.note = args.sample, note
     data = result.to_dict()
-    hunt_id = Database(args.db).save_hunt(data)
+    db = Database(args.db)
+    name_candidates(data["candidates"], PersianNamer.from_env(), db)
+    hunt_id = db.save_hunt(data)
     if args.json:
         Path(args.json).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     counts = {v: sum(c.verdict == v for c in result.candidates) for v in ("green", "yellow", "red")}

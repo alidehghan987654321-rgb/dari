@@ -83,20 +83,22 @@ class Hunter:
         best: dict[str, Candidate] = {}  # by 1688 offer: two listings can find the same one
 
         for category in categories or hunt_categories():
+            listings: list[MarketListing] = []
             for market in self.markets:
                 try:
-                    listings = market.trending(category, per_category)
+                    listings += market.trending(category, per_category)
                 except Exception:
                     log.exception("%s: couldn't list %s", market.name, category.key)
                     skipped["market_error"] = skipped.get("market_error", 0) + 1
-                    continue
-                for listing in listings:
-                    listing.category = listing.category or category.key
-                    candidate = self.evaluate(listing, category, skipped)
-                    if candidate:
-                        kept = best.get(candidate.offer.id)
-                        if kept is None or candidate.score > kept.score:
-                            best[candidate.offer.id] = candidate
+            # One 1688 image search for the whole category instead of one per product.
+            offers = self.prefetch_offers([x.image_url for x in listings if x.image_url])
+            for listing in listings:
+                listing.category = listing.category or category.key
+                candidate = self.evaluate(listing, category, skipped, offers.get(listing.image_url))
+                if candidate:
+                    kept = best.get(candidate.offer.id)
+                    if kept is None or candidate.score > kept.score:
+                        best[candidate.offer.id] = candidate
 
         ranked = sorted(
             best.values(),
@@ -109,14 +111,29 @@ class Hunter:
             skipped=skipped,
         )
 
+    def prefetch_offers(self, image_urls: list[str]) -> dict[str, list[SupplierOffer]]:
+        """1688 offers for many pictures in one search, where the source can do that."""
+        if not image_urls or not hasattr(self.supplier, "by_images"):
+            return {}
+        try:
+            return self.supplier.by_images(list(dict.fromkeys(image_urls)), 10)
+        except Exception:
+            log.exception("Batched 1688 search failed; searching one by one")
+            return {}
+
     def evaluate(
-        self, listing: MarketListing, category: Category, skipped: dict[str, int]
+        self,
+        listing: MarketListing,
+        category: Category,
+        skipped: dict[str, int],
+        offers: list[SupplierOffer] | None = None,
     ) -> Candidate | None:
         def skip(reason: str) -> None:
             skipped[reason] = skipped.get(reason, 0) + 1
 
         try:
-            offers = self.supplier.by_image(listing.image_url, 10)
+            if offers is None:
+                offers = self.supplier.by_image(listing.image_url, 10)
             if not offers:
                 offers = self.supplier.by_keyword(f"{category.zh_query} {listing.title[:40]}", 10)
         except Exception:

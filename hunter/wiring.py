@@ -20,6 +20,7 @@ def live_sources() -> tuple[list, object | None]:
         markets.append(Keepa(env("KEEPA_API_KEY")))
     if env("APIFY_TOKEN"):
         from .sources.apify import (
+            DEFAULT_1688_BATCH_INPUT,
             DEFAULT_1688_IMAGE_INPUT,
             DEFAULT_1688_KEYWORD_INPUT,
             DEFAULT_TEMU_INPUT,
@@ -48,6 +49,7 @@ def live_sources() -> tuple[list, object | None]:
                 env("HUNTER_1688_KEYWORD_ACTOR", ""),
                 env("HUNTER_1688_IMAGE_INPUT") or DEFAULT_1688_IMAGE_INPUT,
                 env("HUNTER_1688_KEYWORD_INPUT") or DEFAULT_1688_KEYWORD_INPUT,
+                env("HUNTER_1688_BATCH_INPUT", DEFAULT_1688_BATCH_INPUT),
             )
     return markets, supplier
 

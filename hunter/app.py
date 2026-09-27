@@ -23,12 +23,14 @@ from .allocate import choose_picks
 from .categories import CATEGORIES, classify, pack_qty
 from .db import Database, is_active
 from .engine import Hunter
+from .links import link_key
 from .models import MarketListing, SupplierOffer
 from .payments import DemoGateway, Gateway, PaymentError, Plan, Zarinpal, default_plans
 from .pricing import PricingConfig, Unprofitable, price_product
 from .scoring import assess
 from .sources.base import LinkError
 from .sources.sample import SampleData
+from .translate import PersianNamer, name_candidates
 from .wiring import link_hunter
 
 log = logging.getLogger(__name__)
@@ -52,8 +54,10 @@ class Settings:
     picks_per_seller: int = 8
     teaser_size: int = 3
     link_hunter: Hunter | None = None  # analyses the product links sellers paste
-    daily_links: int = 20  # links a seller may send per day (each one costs API calls)
+    monthly_links: int = 30  # links a seller may send per 30 days (each one costs API calls)
     links_per_request: int = 10
+    cache_hours: float = 72  # a product analysed this recently is answered from the cache
+    namer: PersianNamer | None = None  # Persian product names with Claude
 
     @property
     def secure_cookies(self) -> bool:
@@ -80,7 +84,9 @@ class Settings:
             pricing=PricingConfig.from_env(),
             per_product=int(env("HUNTER_SELLERS_PER_PRODUCT", "3")),
             link_hunter=link_hunter(),
-            daily_links=int(env("HUNTER_DAILY_LINKS", "20")),
+            monthly_links=int(env("HUNTER_MONTHLY_LINKS", "30")),
+            cache_hours=float(env("HUNTER_CACHE_HOURS", "72")),
+            namer=PersianNamer.from_env(),
         )
 
 
@@ -219,7 +225,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "pricing": pricing_settings(settings.pricing),
             "links": settings.link_hunter is not None,
             "links_per_request": settings.links_per_request,
-            "daily_links": settings.daily_links,
+            "monthly_links": settings.monthly_links,
             "example_links": example_links(settings.link_hunter),
         }
 
@@ -434,16 +440,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def run_analyses(jobs: list[tuple[int, str]]) -> None:
         hunter = settings.link_hunter
         for analysis_id, url in jobs:
+            key = link_key(url)
+            cached = db.cached(key, settings.cache_hours)
+            if cached is not None:  # seen recently, maybe in the daily hunt: no API calls
+                db.set_analysis(analysis_id, "done", result={**cached, "from_cache": True})
+                continue
             db.set_analysis(analysis_id, "running")
             try:
-                found = hunter.analyze_url(url)
+                result = hunter.analyze_url(url).to_dict()
             except LinkError as e:
                 db.set_analysis(analysis_id, "failed", error=str(e))
+                continue
             except Exception:
                 log.exception("Analysis of %s failed", url)
                 db.set_analysis(analysis_id, "failed", error="analysis_error")
-            else:
-                db.set_analysis(analysis_id, "done", result=found.to_dict())
+                continue
+            name_candidates([result], settings.namer, db)
+            urls = [url, result["listing"]["url"], *(m["url"] for m in result["matches"])]
+            db.cache([link_key(u) for u in urls if u], result)
+            db.set_analysis(analysis_id, "done", result=result)
+
+    def links_left(user_id: int) -> int:
+        return max(0, settings.monthly_links - db.analyses_since(user_id, 30))
 
     @app.post("/api/analyses")
     def send_links(body: Links, background: BackgroundTasks, user=Depends(require_active)):
@@ -454,19 +472,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "no_links")
         if len(urls) > settings.links_per_request:
             raise HTTPException(422, "too_many_links")
-        used = db.analyses_today(user["id"])
-        if used + len(urls) > settings.daily_links:
-            raise HTTPException(429, "daily_limit")
+        if len(urls) > links_left(user["id"]):
+            raise HTTPException(429, "monthly_limit")
         ids = db.queue_analyses(user["id"], urls)
         background.add_task(run_analyses, list(zip(ids, urls)))
-        return {"queued": len(ids), "left_today": settings.daily_links - used - len(urls)}
+        return {"queued": len(ids), "left": links_left(user["id"])}
 
     @app.get("/api/analyses")
     def my_analyses(user=Depends(require_active)):
-        return {
-            "items": db.analyses(user["id"]),
-            "left_today": max(0, settings.daily_links - db.analyses_today(user["id"])),
-        }
+        return {"items": db.analyses(user["id"]), "left": links_left(user["id"])}
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     if FONTS.is_dir():

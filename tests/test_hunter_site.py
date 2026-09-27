@@ -347,44 +347,132 @@ def test_preview_is_self_contained(sample_hunt):
 # --- product links sellers send -----------------------------------------------------------
 
 
+class CountingHunter(Hunter):
+    """The sample hunter, counting the links it really had to analyse (API calls)."""
+
+    def __init__(self):
+        sample = SampleData()
+        super().__init__([sample], sample)
+        self.analysed = []
+
+    def analyze_url(self, url):
+        self.analysed.append(url)
+        return super().analyze_url(url)
+
+
 @pytest.fixture
-def link_settings(settings):
-    sample = SampleData()
-    settings.link_hunter = Hunter([sample], sample)
-    settings.daily_links = 5
-    return settings
+def link_settings(tmp_path):
+    """A site whose link analysis runs on the sample data, with no hunt stored yet (so
+    nothing is cached)."""
+    return Settings(
+        db_path=str(tmp_path / "links.db"),
+        gateway=DemoGateway(),
+        public_url="http://testserver",
+        link_hunter=CountingHunter(),
+        monthly_links=5,
+    )
 
 
 def test_sellers_send_links_and_get_full_analyses(link_settings):
     with TestClient(create_app(link_settings)) as c:
         cfg = c.get("/api/config").json()
         assert cfg["links"] is True and len(cfg["example_links"]) == 4
+        assert cfg["monthly_links"] == 5
         signup(c)
         assert c.post("/api/analyses", json={"urls": cfg["example_links"][:1]}).status_code == 402
         subscribe(c)
         urls = cfg["example_links"][:2] + ["https://www.temu.com/nope.html", "not a link"]
         r = c.post("/api/analyses", json={"urls": urls})
-        assert r.status_code == 200 and r.json() == {"queued": 3, "left_today": 2}
+        assert r.status_code == 200 and r.json() == {"queued": 3, "left": 2}
         items = c.get("/api/analyses").json()["items"]
         assert [i["status"] for i in items] == ["failed", "done", "done"]  # newest first
         assert items[0]["error"] == "listing_not_found"
         found = items[2]["result"]
         assert found["offer"]["shop_name"] and found["pricing"]["amazon_usd"]
         assert {m["source"] for m in found["matches"]} == {"amazon"}
-        assert (
-            c.post(
-                "/api/analyses",
-                json={
-                    "urls": [
-                        "https://www.temu.com/a",
-                        "https://www.temu.com/b",
-                        "https://www.temu.com/c",
-                    ]
-                },
-            ).status_code
-            == 429
-        )
+        assert not found.get("from_cache")
+        more = ["https://www.temu.com/a", "https://www.temu.com/b", "https://www.temu.com/c"]
+        r = c.post("/api/analyses", json={"urls": more})
+        assert r.status_code == 429 and r.json()["detail"] == "monthly_limit"
         assert c.post("/api/analyses", json={"urls": ["nothing here"]}).status_code == 422
+
+
+def test_a_product_is_only_analysed_once(link_settings):
+    hunter = link_settings.link_hunter
+    link_settings.monthly_links = 10
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c)
+        temu = next(x.url for x in hunter.markets[0].listings if x.id == "s-cat-perch")
+        amazon = hunter.markets[0].amazon["s-cat-perch"].url  # the same product on Amazon
+        c.post("/api/analyses", json={"urls": [temu]})
+        c.post("/api/analyses", json={"urls": [temu, amazon]})
+        items = c.get("/api/analyses").json()["items"]
+        assert hunter.analysed == [temu]  # one real analysis, two answers from the cache
+        assert [bool(i["result"].get("from_cache")) for i in items] == [True, True, False]
+        assert items[0]["result"]["offer"]["id"] == items[2]["result"]["offer"]["id"]
+
+
+def test_links_in_the_daily_hunt_cost_nothing(link_settings, sample_hunt):
+    Database(link_settings.db_path).save_hunt(sample_hunt)
+    hunter = link_settings.link_hunter
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c)
+        links = c.get("/api/config").json()["example_links"]
+        c.post("/api/analyses", json={"urls": links})
+        items = c.get("/api/analyses").json()["items"]
+        assert hunter.analysed == []
+        assert all(i["status"] == "done" and i["result"]["from_cache"] for i in items)
+
+
+def test_old_cache_entries_are_analysed_again(link_settings):
+    link_settings.cache_hours = 0
+    hunter = link_settings.link_hunter
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c)
+        url = c.get("/api/config").json()["example_links"][0]
+        c.post("/api/analyses", json={"urls": [url]})
+        c.post("/api/analyses", json={"urls": [url]})
+        assert hunter.analysed == [url, url]
+
+
+def test_the_quota_counts_the_last_30_days(link_settings):
+    db = Database(link_settings.db_path)
+    with TestClient(create_app(link_settings)) as c:
+        me = signup(c)
+        subscribe(c)
+        ids = db.queue_analyses(me["id"], ["https://www.temu.com/old"] * 5)
+        with db.tx() as conn:  # sent 31 days ago: no longer counted
+            conn.execute(
+                "UPDATE analyses SET created_at = '2000-01-01T00:00:00+00:00' WHERE id IN (?, ?)",
+                ids[:2],
+            )
+        assert c.get("/api/analyses").json()["left"] == 2
+
+
+def test_analysed_links_get_persian_names(link_settings):
+    class Namer:
+        calls = []
+
+        def translate(self, titles):
+            self.calls.append(titles)
+            return {k: "نام فارسی" for k in titles}
+
+    hunter = link_settings.link_hunter
+    # A product without a Persian name, as live data would be.
+    for x in hunter.markets[0].listings + list(hunter.markets[0].amazon.values()):
+        x.title_fa = ""
+    link_settings.namer = Namer()
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c)
+        urls = c.get("/api/config").json()["example_links"][:2]
+        c.post("/api/analyses", json={"urls": urls})
+        items = c.get("/api/analyses").json()["items"]
+        assert [i["result"]["title_fa"] for i in items] == ["نام فارسی", "نام فارسی"]
+        assert len(Namer.calls) == 2 and all(len(t) == 1 for t in Namer.calls)
 
 
 def test_links_are_off_without_sources(client):
@@ -396,7 +484,7 @@ def test_links_are_off_without_sources(client):
 
 
 def test_too_many_links_at_once(link_settings):
-    link_settings.daily_links = 100
+    link_settings.monthly_links = 100
     with TestClient(create_app(link_settings)) as c:
         signup(c)
         subscribe(c)

@@ -29,13 +29,21 @@ DEFAULT_TEMU_INPUT = '{"searchQueries": ["{query}"], "maxItems": {limit}}'
 DEFAULT_1688_IMAGE_INPUT = '{"imageUrls": ["{image_url}"], "maxItems": {limit}}'
 DEFAULT_1688_KEYWORD_INPUT = '{"keywords": ["{query}"], "maxItems": {limit}}'
 DEFAULT_TEMU_PRODUCT_INPUT = '{"startUrls": [{"url": "{url}"}], "maxItems": 1}'
+DEFAULT_1688_BATCH_INPUT = '{"imageUrls": {image_urls}, "maxItems": {limit}}'
+# Where a batched image search says which of the pictures a result belongs to.
+SOURCE_IMAGE_FIELDS = (
+    "queryImage", "searchImage", "searchImageUrl", "inputImage", "inputImageUrl",
+    "sourceImage", "sourceImageUrl", "input.imageUrl", "query.imageUrl",
+)  # fmt: skip
+MATCH_RESULTS = 5  # results asked for when looking a product up on Temu (each one is paid for)
 
 
 def fill(template: str, **values: Any) -> dict:
-    """Fill a JSON input template; string values are JSON-escaped."""
+    """Fill a JSON input template. Strings go inside the template's quotes (escaped);
+    numbers and lists go in as JSON."""
     text = template
     for key, value in values.items():
-        encoded = json.dumps(value) if isinstance(value, str) else str(value)
+        encoded = json.dumps(value, ensure_ascii=False)
         if isinstance(value, str):
             encoded = encoded[1:-1]  # the template supplies the quotes
         text = text.replace("{" + key + "}", encoded)
@@ -83,7 +91,9 @@ class TemuMarket:
         terms = search_terms(listing.title)
         if not terms:
             return None
-        items = self.apify.run(self.actor, fill(self.input_template, query=terms, limit=10))
+        items = self.apify.run(
+            self.actor, fill(self.input_template, query=terms, limit=MATCH_RESULTS)
+        )
         return best_match(listing, [x for x in (temu_listing(i, "") for i in items) if x])
 
     def handles(self, url: str) -> bool:
@@ -141,12 +151,33 @@ class Supplier1688:
         keyword_actor: str = "",
         image_input: str = DEFAULT_1688_IMAGE_INPUT,
         keyword_input: str = DEFAULT_1688_KEYWORD_INPUT,
+        batch_input: str = DEFAULT_1688_BATCH_INPUT,
     ):
         self.apify = apify
         self.image_actor = image_actor
         self.keyword_actor = keyword_actor
         self.image_input = image_input
         self.keyword_input = keyword_input
+        self.batch_input = batch_input  # "" turns batching off
+
+    def by_images(self, image_urls: list[str], limit: int) -> dict[str, list[SupplierOffer]]:
+        """One actor run for many pictures (one run fee instead of one per picture).
+
+        Only works if the actor says which picture each result is for; if it doesn't,
+        nothing is returned and the hunt searches picture by picture.
+        """
+        if not self.batch_input or not image_urls:
+            return {}
+        payload = fill(self.batch_input, image_urls=image_urls, limit=limit * len(image_urls))
+        found: dict[str, list[SupplierOffer]] = {}
+        for item in self.apify.run(self.image_actor, payload):
+            source = pick(item, *SOURCE_IMAGE_FIELDS)
+            offer = offer_1688(item)
+            if source in image_urls and offer and len(found.get(source, [])) < limit:
+                found.setdefault(source, []).append(offer)
+        if not found:
+            log.warning("The 1688 actor doesn't tag results with their picture; no batching")
+        return found
 
     def by_image(self, image_url: str, limit: int) -> list[SupplierOffer]:
         if not image_url:

@@ -1,0 +1,4 @@
+# The product hunter uses the main requirements (FastAPI, httpx, ...) plus, optionally,
+# the Claude SDK for Persian product names (only used when ANTHROPIC_API_KEY is set).
+-r ../requirements.txt
+anthropic>=1.8

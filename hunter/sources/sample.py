@@ -62,6 +62,9 @@ class SampleData:
         found = next((x for x in self._all() if x.url == url.strip()), None)
         return replace(found) if found else None
 
+    def by_images(self, image_urls: list[str], limit: int) -> dict[str, list[SupplierOffer]]:
+        return {u: self.offers[u][:limit] for u in image_urls if u in self.offers}
+
     def by_image(self, image_url: str, limit: int) -> list[SupplierOffer]:
         return self.offers.get(image_url, [])[:limit]
 

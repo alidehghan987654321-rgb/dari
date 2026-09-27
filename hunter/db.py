@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .links import link_key
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
@@ -56,6 +58,15 @@ CREATE TABLE IF NOT EXISTS analyses (
     finished_at TEXT
 );
 CREATE INDEX IF NOT EXISTS analyses_user ON analyses (user_id, id);
+CREATE TABLE IF NOT EXISTS link_cache (
+    key TEXT PRIMARY KEY,  -- hunter.links.link_key
+    result TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS names_fa (
+    key TEXT PRIMARY KEY,  -- source:id of a listing
+    name TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS picks (
     hunt_id INTEGER NOT NULL REFERENCES hunts(id),
     candidate_id TEXT NOT NULL,
@@ -220,12 +231,19 @@ class Database:
     # --- hunts and picks -------------------------------------------------------
 
     def save_hunt(self, data: dict) -> int:
+        """Store a hunt, and remember each find under its links (the listing's and the
+        same product's on other markets), so a seller pasting one of them gets the answer
+        without new API calls."""
         with self.tx() as db:
             cur = db.execute(
                 "INSERT INTO hunts (created_at, data) VALUES (?, ?)",
                 (iso(now()), json.dumps(data, ensure_ascii=False)),
             )
-            return cur.lastrowid
+            hunt_id = cur.lastrowid
+        for c in data.get("candidates", []):
+            urls = [c["listing"]["url"], *(m["url"] for m in c.get("matches", []))]
+            self.cache([link_key(u) for u in urls if u], c)
+        return hunt_id
 
     def latest_hunt(self) -> tuple[int, dict] | None:
         with self.tx() as db:
@@ -273,8 +291,8 @@ class Database:
                 for url in urls
             ]
 
-    def analyses_today(self, user_id: int) -> int:
-        since = iso(now() - timedelta(days=1))
+    def analyses_since(self, user_id: int, days: int = 30) -> int:
+        since = iso(now() - timedelta(days=days))
         with self.tx() as db:
             row = db.execute(
                 "SELECT COUNT(*) AS n FROM analyses WHERE user_id = ? AND created_at > ?",
@@ -310,6 +328,37 @@ class Database:
             item["result"] = json.loads(item["result"]) if item["result"] else None
             out.append(item)
         return out
+
+    def cached(self, key: str, max_age_hours: float) -> dict | None:
+        with self.tx() as db:
+            row = db.execute(
+                "SELECT result FROM link_cache WHERE key = ? AND created_at > ?",
+                (key, iso(now() - timedelta(hours=max_age_hours))),
+            ).fetchone()
+        return json.loads(row["result"]) if row else None
+
+    def cache(self, keys: list[str], result: dict) -> None:
+        text = json.dumps(result, ensure_ascii=False)
+        with self.tx() as db:
+            db.executemany(
+                "INSERT OR REPLACE INTO link_cache (key, result, created_at) VALUES (?, ?, ?)",
+                [(k, text, iso(now())) for k in dict.fromkeys(keys)],
+            )
+
+    def names(self, keys: list[str]) -> dict[str, str]:
+        if not keys:
+            return {}
+        with self.tx() as db:
+            rows = db.execute(
+                f"SELECT key, name FROM names_fa WHERE key IN ({','.join('?' * len(keys))})", keys
+            ).fetchall()
+        return {r["key"]: r["name"] for r in rows}
+
+    def save_names(self, names: dict[str, str]) -> None:
+        with self.tx() as db:
+            db.executemany(
+                "INSERT OR REPLACE INTO names_fa (key, name) VALUES (?, ?)", list(names.items())
+            )
 
     def fail_unfinished_analyses(self) -> int:
         """After a restart, links that were still waiting can't finish: mark them failed so

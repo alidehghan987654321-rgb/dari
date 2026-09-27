@@ -71,7 +71,7 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
             "pricing": pricing_settings(pricing),
             "links": True,
             "links_per_request": 10,
-            "daily_links": 20,
+            "monthly_links": 30,
             "example_links": example_links(Hunter([sample], sample)),
         },
         "me": me,

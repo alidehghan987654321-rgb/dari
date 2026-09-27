@@ -352,7 +352,7 @@ def test_apify_runs_the_actor_with_the_filled_input():
 
 # --- suppliers, Amazon/Temu matching and pasted links ------------------------------------
 
-from hunter.categories import CATEGORIES  # noqa: E402
+from hunter.categories import CATEGORIES, hunt_categories  # noqa: E402
 from hunter.engine import rank_offers  # noqa: E402
 from hunter.matching import best_match, search_terms, similarity  # noqa: E402
 from hunter.sources.apify import TemuMarket  # noqa: E402
@@ -502,3 +502,163 @@ def test_1688_shop_details_are_read():
 
 def test_keepa_domains_cover_the_default():
     assert CATEGORIES["car"].amazon_category_id == 15684181
+
+
+# --- cost savers: link keys, batched 1688 search, Persian names --------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from hunter.db import Database  # noqa: E402
+from hunter.links import link_key  # noqa: E402
+from hunter.translate import PersianNamer, name_candidates  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "url,key",
+    [
+        ("https://www.amazon.com/Car-Seat/dp/B0CJRVK5Q1/ref=sr_1?th=1", "amazon:amazon.com:B0CJRVK5Q1"),
+        ("https://amazon.com/gp/product/B0CJRVK5Q1", "amazon:amazon.com:B0CJRVK5Q1"),
+        ("https://www.temu.com/car-seat-filler-g-601099517512363.html?_x_ads=1", "temu:601099517512363"),
+        ("https://www.temu.com/goods.html?goods_id=601099517512363&refer=x", "temu:601099517512363"),
+        ("https://www.temu.com/search_result.html?search_key=cat", "temu.com/search_result.html?search_key=cat"),
+    ],
+)  # fmt: skip
+def test_link_keys_ignore_tracking(url, key):
+    assert link_key(url) == key
+
+
+def test_the_hunt_searches_1688_once_per_category():
+    sample = SampleData()
+
+    class Batched:
+        def __init__(self):
+            self.batches, self.singles = [], 0
+
+        def by_images(self, urls, limit):
+            self.batches.append(urls)
+            return sample.by_images(urls, limit)
+
+        def by_image(self, url, limit):
+            self.singles += 1
+            return sample.by_image(url, limit)
+
+        def by_keyword(self, q, limit):
+            return []
+
+    supplier = Batched()
+    result = Hunter([sample], supplier).hunt()
+    assert supplier.singles == 0 and result.candidates
+    assert len(supplier.batches) == len(hunt_categories())
+    assert all(len(set(b)) == len(b) for b in supplier.batches)
+
+
+def test_batched_1688_search_maps_results_to_pictures():
+    def handler(request):
+        body = json.loads(request.content)
+        assert body == {"imageUrls": ["https://i/a.jpg", "https://i/b.jpg"], "maxItems": 20}
+        return httpx.Response(200, json=[
+            {"queryImage": "https://i/a.jpg", "title": "a1", "price": 5, "url": "https://1688/a1"},
+            {"queryImage": "https://i/b.jpg", "title": "b1", "price": 7, "url": "https://1688/b1"},
+            {"queryImage": "https://i/a.jpg", "title": "a2", "price": 6, "url": "https://1688/a2"},
+        ])  # fmt: skip
+
+    apify = Apify("T", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    got = Supplier1688(apify, "me/1688").by_images(["https://i/a.jpg", "https://i/b.jpg"], 10)
+    assert {k: [o.title for o in v] for k, v in got.items()} == {
+        "https://i/a.jpg": ["a1", "a2"],
+        "https://i/b.jpg": ["b1"],
+    }
+
+
+def test_untagged_batch_results_fall_back_to_one_search_per_picture():
+    def handler(request):
+        return httpx.Response(200, json=[{"title": "x", "price": 5, "url": "https://1688/x"}])
+
+    apify = Apify("T", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    supplier = Supplier1688(apify, "me/1688")
+    assert supplier.by_images(["https://i/a.jpg"], 10) == {}
+    assert Supplier1688(apify, "me/1688", batch_input="").by_images(["https://i/a.jpg"], 10) == {}
+
+
+def test_fill_puts_lists_in_as_json():
+    assert fill('{"imageUrls": {image_urls}}', image_urls=["a", 'b"c']) == {
+        "imageUrls": ["a", 'b"c']
+    }
+
+
+class FakeClaude:
+    """Records requests; answers with Persian names for every id asked."""
+
+    def __init__(self, stop_reason="end_turn", text=None):
+        self.requests = []
+        self.stop_reason, self.text = stop_reason, text
+        self.messages = SimpleNamespace(create=self._create)
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._beta_create))
+
+    def _answer(self, params):
+        items = json.loads(params["messages"][0]["content"])
+        text = self.text or json.dumps(
+            {"items": [{"id": x["id"], "fa": "اسم " + x["id"]} for x in items]}
+        )
+        return SimpleNamespace(
+            stop_reason=self.stop_reason,
+            content=[SimpleNamespace(type="thinking", thinking=""), SimpleNamespace(type="text", text=text)],
+        )  # fmt: skip
+
+    def _create(self, **params):
+        self.requests.append(("plain", params))
+        return self._answer(params)
+
+    def _beta_create(self, **params):
+        self.requests.append(("beta", params))
+        return self._answer(params)
+
+
+def test_persian_names_in_batches_with_json_output():
+    claude = FakeClaude()
+    names = PersianNamer(claude, "claude-opus-5").translate(
+        {f"temu:{i}": f"Item {i}" for i in range(30)}
+    )
+    assert len(names) == 30 and names["temu:7"] == "اسم temu:7"
+    kind, params = claude.requests[0]
+    assert kind == "beta" and len(claude.requests) == 2  # 25 + 5, with the server-side fallback
+    assert params["fallbacks"] == [{"model": "claude-opus-4-8"}]
+    assert params["output_config"]["effort"] == "low"
+    assert params["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_a_cheaper_model_skips_effort_and_fallback():
+    claude = FakeClaude()
+    PersianNamer(claude, "claude-haiku-4-5").translate({"temu:1": "Lamp"})
+    kind, params = claude.requests[0]
+    assert kind == "plain" and "effort" not in params["output_config"] and "fallbacks" not in params
+
+
+def test_refusals_and_bad_answers_leave_titles_alone():
+    assert (
+        PersianNamer(FakeClaude(stop_reason="refusal"), "claude-opus-5").translate({"a": "x"}) == {}
+    )
+    assert PersianNamer(FakeClaude(text="not json"), "claude-opus-5").translate({"a": "x"}) == {}
+    odd = json.dumps({"items": [{"id": "someone-else", "fa": "?"}, {"id": "a", "fa": "  "}]})
+    assert PersianNamer(FakeClaude(text=odd), "claude-opus-5").translate({"a": "x"}) == {}
+
+
+def test_each_product_is_named_once(tmp_path):
+    db = Database(tmp_path / "n.db")
+    claude = FakeClaude()
+    namer = PersianNamer(claude, "claude-opus-5")
+    first = [{"listing": {"source": "temu", "id": "1", "title": "Lamp"}, "title_fa": ""},
+             {"listing": {"source": "temu", "id": "2", "title": "Mat"}, "title_fa": "زیرانداز"}]  # fmt: skip
+    name_candidates(first, namer, db)
+    assert first[0]["title_fa"] == "اسم temu:1" and first[1]["title_fa"] == "زیرانداز"
+    again = [{"listing": {"source": "temu", "id": "1", "title": "Lamp"}, "title_fa": ""}]
+    name_candidates(again, namer, db)
+    assert again[0]["title_fa"] == "اسم temu:1" and len(claude.requests) == 1
+    name_candidates(
+        [{"listing": {"source": "temu", "id": "3", "title": "Cup"}}], None, db
+    )  # no key: fine
+
+
+def test_no_anthropic_key_no_names(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert PersianNamer.from_env() is None

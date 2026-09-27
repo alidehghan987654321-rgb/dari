@@ -8,12 +8,12 @@ the rating as 0-50, weights in grams; -1 means "no data".
 from __future__ import annotations
 
 import logging
-import re
 from urllib.parse import urlsplit
 
 import httpx
 
 from ..categories import Category
+from ..links import ASIN
 from ..matching import best_match, search_terms
 from ..models import MarketListing
 from .base import LinkError
@@ -29,7 +29,6 @@ DOMAINS = {
     "amazon.ca": 6, "amazon.it": 8, "amazon.es": 9, "amazon.in": 10, "amazon.com.mx": 11,
     "amazon.com.br": 12,
 }  # fmt: skip
-ASIN = re.compile(r"/(?:dp|gp/product|gp/aw/d|product)/([A-Z0-9]{10})(?:[/?#]|$)")
 
 # Indexes into stats.current (Keepa's csv types).
 AMAZON, NEW, RATING, COUNT_REVIEWS, BUY_BOX_SHIPPING = 0, 1, 16, 17, 18
