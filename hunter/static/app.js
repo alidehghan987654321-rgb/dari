@@ -182,7 +182,8 @@
     var me = state.me;
     f.innerHTML = '<div class="who" title="' + esc(me.email) + '">' + esc(me.name || me.email) + "</div>" +
       (me.active && me.paid_until && !me.is_admin ? "<div>اشتراک تا " + esc(faDate(me.paid_until)) + "</div>" : "") +
-      (DEMO ? '<span class="pill yellow">نسخه‌ی نمایشی</span>' : '<button type="button" class="btn ghost small" data-logout>خروج' + ic("logout") + "</button>");
+      (DEMO ? '<span class="pill yellow">نسخه‌ی نمایشی</span>' : "") +
+      '<button type="button" class="btn ghost small" data-logout>' + (DEMO ? "دیدن صفحه‌ی بازدیدکننده" : "خروج") + ic("logout") + "</button>";
   }
 
   // --- product cards ----------------------------------------------------------------
@@ -419,6 +420,11 @@
   function landingHTML() {
     var cfg = state.config || {};
     var teaser = state.hunt && state.hunt.candidates || [];
+    if (DEMO) {
+      teaser = teaser.filter(function (c) { return c.verdict === "green"; }).slice(0, 3).map(function (c) {
+        return { id: c.id, category: c.category, title_fa: c.title_fa, verdict: c.verdict, score: c.score, locked: true };
+      });
+    }
     var steps = [
       ["hunt", "پرفروش‌ها رو پیدا می‌کنه", "هر روز پرفروش‌های Temu و آمازون در دسته‌های مجاز بررسی میشن؛ اسباب‌بازی، آرایشی، باتری‌دار و خوراکی کنار گذاشته میشن."],
       ["factory", "همون جنس رو در 1688 پیدا می‌کنه", "با جستجوی تصویری، تأمین‌کننده‌ی اصلی و چند جایگزین، با سطح، سابقه و قیمت پلکانی."],
@@ -518,6 +524,7 @@
       var f = ev.target, body = { email: f.email.value, password: f.password.value };
       if (state.authMode === "signup") { body.name = f.name.value; body.phone = f.phone.value; }
       $("auth-error").textContent = "";
+      if (DEMO) { state.me = DEMO.me; state.tab = "hunt"; render(); window.scrollTo(0, 0); return; }  // any details will do
       api("/api/" + state.authMode, { method: "POST", body: body }).then(function (me) {
         state.me = me; state.tab = me.active ? "hunt" : "account";
         return loadHunt();
@@ -787,7 +794,7 @@
       ? (me.is_admin ? "مدیر سایت: دسترسی کامل." : "اشتراک" + (current ? " «" + esc(current.name_fa) + "»" : "") + " تا " + esc(faDate(me.paid_until)) + " فعاله.")
       : "اشتراک فعالی نداری.";
     return '<div class="page-head"><div><span class="eyebrow">' + esc(me.email) + '</span><h1 class="section-title">حساب من</h1></div>' +
-      (DEMO ? "" : '<button type="button" class="btn ghost small" data-logout>خروج از حساب' + ic("logout") + "</button>") + "</div>" +
+      '<button type="button" class="btn ghost small" data-logout>' + (DEMO ? "دیدن صفحه‌ی بازدیدکننده" : "خروج از حساب") + ic("logout") + "</button></div>" +
       '<div class="stack">' +
       '<section class="panel"><h2 class="section-title">اشتراک</h2><p class="section-sub">' + status + "</p>" +
         '<div class="plans">' + plansHTML(true) + "</div>" +
@@ -1546,6 +1553,7 @@
     try { history.replaceState(null, "", tab === "calc" ? "#calc" : location.pathname + location.search); } catch (e) { /* sandboxed */ }
   }
   function logout() {
+    if (DEMO) { state.me = null; state.tab = "hunt"; render(); window.scrollTo(0, 0); return; }
     api("/api/logout", { method: "POST" }).then(function () {
       state.me = null; state.picks = null; state.analysis = null; state.jobs = undefined; state.tab = "hunt"; return loadHunt();
     }).then(render);
