@@ -1,0 +1,126 @@
+{
+  "note": "داده‌ی نمونه برای نمایش: قیمت‌ها در حد و اندازه‌ی واقعی این محصولاتن ولی به‌روز نیستن. برای داده‌ی زنده کلید Keepa یا Apify رو تنظیم کن.",
+  "listings": [
+    {"source": "temu", "id": "s-gap-filler", "category": "car",
+     "title": "2 Pack Car Seat Gap Filler, PU Leather Organizer with Storage Pocket",
+     "url": "https://www.temu.com/", "image_url": "sample://gap-filler",
+     "price_usd": 11.99, "sold_total": 60000, "reviews": 1800, "rating": 4.6},
+    {"source": "temu", "id": "s-cup-expander", "category": "car",
+     "title": "Car Cup Holder Expander with Adjustable Base for 32-40 oz Bottles",
+     "url": "https://www.temu.com/", "image_url": "sample://cup-expander",
+     "price_usd": 9.99, "sold_total": 48000, "reviews": 8200, "rating": 4.5, "weight_kg": 0.25},
+    {"source": "temu", "id": "s-car-vacuum", "category": "car",
+     "title": "Rechargeable Car Vacuum Cleaner, 8000Pa Handheld",
+     "url": "https://www.temu.com/", "image_url": "sample://car-vacuum",
+     "price_usd": 19.99, "sold_total": 24000, "reviews": 3500, "rating": 4.3, "weight_kg": 0.8},
+    {"source": "temu", "id": "s-stretch-lids", "category": "home_kitchen",
+     "title": "Silicone Stretch Lids, 12 Pack Reusable Food Covers",
+     "url": "https://www.temu.com/", "image_url": "sample://stretch-lids",
+     "price_usd": 5.99, "sold_total": 90000, "reviews": 25000, "rating": 4.4, "weight_kg": 0.3},
+    {"source": "temu", "id": "s-dish-rack", "category": "home_kitchen",
+     "title": "Expandable Over the Sink Dish Drying Rack, Stainless Steel",
+     "url": "https://www.temu.com/", "image_url": "sample://dish-rack",
+     "price_usd": 24.99, "sold_total": 18000, "reviews": 900, "rating": 4.5, "weight_kg": 1.6},
+    {"source": "temu", "id": "s-underbed-bags", "category": "storage",
+     "title": "Under Bed Storage Bags, 3 Pack Large Capacity with Clear Window",
+     "url": "https://www.temu.com/", "image_url": "sample://underbed-bags",
+     "price_usd": 15.99, "sold_total": 30000, "reviews": 420, "rating": 4.6},
+    {"source": "temu", "id": "s-acrylic-organizer", "category": "storage",
+     "title": "Acrylic Makeup Organizer with Drawers, Vanity Countertop Storage",
+     "url": "https://www.temu.com/", "image_url": "sample://acrylic-organizer",
+     "price_usd": 21.99, "sold_total": 14400, "reviews": 650, "rating": 4.5, "weight_kg": 1.3},
+    {"source": "temu", "id": "s-lick-mat", "category": "pets",
+     "title": "Dog Lick Mat 2 Pack with Suction Cups",
+     "url": "https://www.temu.com/", "image_url": "sample://lick-mat",
+     "price_usd": 5.49, "sold_total": 70000, "reviews": 12000, "rating": 4.5, "weight_kg": 0.25},
+    {"source": "temu", "id": "s-cat-perch", "category": "pets",
+     "title": "Cat Window Perch Hammock with Strong Suction Cups",
+     "url": "https://www.temu.com/", "image_url": "sample://cat-perch",
+     "price_usd": 19.99, "sold_total": 21600, "reviews": 380, "rating": 4.6, "weight_kg": 0.8},
+    {"source": "temu", "id": "s-packing-cubes", "category": "sports_travel",
+     "title": "Packing Cubes for Travel, 6 Set Luggage Organizers",
+     "url": "https://www.temu.com/", "image_url": "sample://packing-cubes",
+     "price_usd": 13.99, "sold_total": 42000, "reviews": 2400, "rating": 4.7, "weight_kg": 0.6},
+    {"source": "temu", "id": "s-acupressure", "category": "sports_travel",
+     "title": "Acupressure Mat and Pillow Set for Back and Neck Relief",
+     "url": "https://www.temu.com/", "image_url": "sample://acupressure",
+     "price_usd": 22.99, "sold_total": 9600, "reviews": 310, "rating": 4.4, "weight_kg": 1.1},
+    {"source": "temu", "id": "s-heatless-curler", "category": "beauty_tools",
+     "title": "Heatless Hair Curler Headband Set",
+     "url": "https://www.temu.com/", "image_url": "sample://heatless-curler",
+     "price_usd": 6.99, "sold_total": 84000, "reviews": 7000, "rating": 4.3, "weight_kg": 0.15},
+    {"source": "temu", "id": "s-phone-mount", "category": "phone_accessories",
+     "title": "Magnetic Car Phone Mount Compatible with MagSafe, 360 Rotation",
+     "url": "https://www.temu.com/", "image_url": "sample://phone-mount",
+     "price_usd": 11.49, "sold_total": 36000, "reviews": 2600, "rating": 4.4, "weight_kg": 0.15},
+    {"source": "temu", "id": "s-plant-spikes", "category": "garden",
+     "title": "Self Watering Plant Spikes, 12 Pack",
+     "url": "https://www.temu.com/", "image_url": "sample://plant-spikes",
+     "price_usd": 7.99, "sold_total": 12000, "reviews": 900, "rating": 4.2, "weight_kg": 0.2}
+  ],
+  "offers_by_image": {
+    "sample://gap-filler": [
+      {"id": "s1688-gap-a", "title": "汽车座椅缝隙收纳盒 皮革 多功能", "url": "https://s.1688.com/", "image_url": "", "price_cny": 10.93, "moq": 2, "sales": 632, "weight_kg": 0.2},
+      {"id": "s1688-gap-b", "title": "座椅缝隙收纳盒 皮革 悬挂式", "url": "https://s.1688.com/", "image_url": "", "price_cny": 6.65, "moq": 10, "sales": 7253, "weight_kg": 0.2},
+      {"id": "s1688-gap-c", "title": "座椅缝隙塞条 通用", "url": "https://s.1688.com/", "image_url": "", "price_cny": 1.9, "moq": 50, "sales": 300}
+    ],
+    "sample://cup-expander": [
+      {"id": "s1688-cup-a", "title": "车载水杯架扩展器 可调节底座", "url": "https://s.1688.com/", "image_url": "", "price_cny": 12.0, "moq": 2, "sales": 470},
+      {"id": "s1688-cup-b", "title": "汽车水杯架扩展 大容量", "url": "https://s.1688.com/", "image_url": "", "price_cny": 15.0, "moq": 5, "sales": 1200}
+    ],
+    "sample://car-vacuum": [
+      {"id": "s1688-vac-a", "title": "车载吸尘器 无线充电 大吸力", "url": "https://s.1688.com/", "image_url": "", "price_cny": 38.0, "moq": 2, "sales": 1200}
+    ],
+    "sample://stretch-lids": [
+      {"id": "s1688-lids-a", "title": "硅胶保鲜盖 12件套", "url": "https://s.1688.com/", "image_url": "", "price_cny": 6.5, "moq": 10, "sales": 5000}
+    ],
+    "sample://dish-rack": [
+      {"id": "s1688-rack-a", "title": "水槽沥水架 不锈钢 可伸缩", "url": "https://s.1688.com/", "image_url": "", "price_cny": 42.0, "moq": 2, "sales": 800},
+      {"id": "s1688-rack-b", "title": "伸缩沥水碗架", "url": "https://s.1688.com/", "image_url": "", "price_cny": 48.0, "moq": 2, "sales": 260}
+    ],
+    "sample://underbed-bags": [
+      {"id": "s1688-bed-a", "title": "床底收纳袋 可视窗 大容量", "url": "https://s.1688.com/", "image_url": "", "price_cny": 8.5, "moq": 10, "sales": 2600, "weight_kg": 0.3}
+    ],
+    "sample://acrylic-organizer": [
+      {"id": "s1688-acr-a", "title": "亚克力化妆品收纳盒 抽屉式", "url": "https://s.1688.com/", "image_url": "", "price_cny": 34.0, "moq": 2, "sales": 540}
+    ],
+    "sample://lick-mat": [
+      {"id": "s1688-lick-a", "title": "宠物舔食垫 吸盘", "url": "https://s.1688.com/", "image_url": "", "price_cny": 3.2, "moq": 20, "sales": 9000, "weight_kg": 0.12}
+    ],
+    "sample://cat-perch": [
+      {"id": "s1688-perch-a", "title": "猫咪吸盘吊床 窗户", "url": "https://s.1688.com/", "image_url": "", "price_cny": 21.0, "moq": 2, "sales": 1500},
+      {"id": "s1688-perch-b", "title": "猫窗台吊床 承重", "url": "https://s.1688.com/", "image_url": "", "price_cny": 26.0, "moq": 2, "sales": 300}
+    ],
+    "sample://packing-cubes": [
+      {"id": "s1688-cube-a", "title": "旅行收纳袋 6件套", "url": "https://s.1688.com/", "image_url": "", "price_cny": 17.0, "moq": 10, "sales": 3100}
+    ],
+    "sample://acupressure": [
+      {"id": "s1688-acu-a", "title": "针灸垫 按摩枕套装", "url": "https://s.1688.com/", "image_url": "", "price_cny": 32.0, "moq": 2, "sales": 650}
+    ],
+    "sample://heatless-curler": [
+      {"id": "s1688-curl-a", "title": "无热卷发棒 发带", "url": "https://s.1688.com/", "image_url": "", "price_cny": 4.5, "moq": 10, "sales": 12000}
+    ],
+    "sample://phone-mount": [
+      {"id": "s1688-mount-a", "title": "磁吸车载手机支架 360度", "url": "https://s.1688.com/", "image_url": "", "price_cny": 9.5, "moq": 5, "sales": 2200}
+    ],
+    "sample://plant-spikes": [
+      {"id": "s1688-spike-a", "title": "自动浇花器 12个装", "url": "https://s.1688.com/", "image_url": "", "price_cny": 5.0, "moq": 20, "sales": 800}
+    ]
+  },
+  "names_fa": {
+    "s-gap-filler": "پرکننده‌ی شکاف صندلی خودرو، چرمی با جیب (۲ عددی)",
+    "s-cup-expander": "بزرگ‌کننده‌ی جالیوانی خودرو با پایه‌ی قابل تنظیم",
+    "s-car-vacuum": "جاروشارژی خودرو",
+    "s-stretch-lids": "درپوش سیلیکونی کشی (۱۲ عددی)",
+    "s-dish-rack": "آبچکان کشویی روی سینک، استیل",
+    "s-underbed-bags": "کیسه‌ی نگهداری زیر تخت (۳ عددی)",
+    "s-acrylic-organizer": "نظم‌دهنده‌ی آرایشی اکریلیک کشودار",
+    "s-lick-mat": "زیرانداز لیسیدنی سگ (۲ عددی)",
+    "s-cat-perch": "ننوی پنجره‌ای گربه با بادکش",
+    "s-packing-cubes": "کیف نظم‌دهنده‌ی چمدان (ست ۶ تایی)",
+    "s-acupressure": "تشک و بالش طب‌فشاری",
+    "s-heatless-curler": "فرکننده‌ی مو بدون حرارت",
+    "s-phone-mount": "پایه‌ی مغناطیسی موبایل خودرو",
+    "s-plant-spikes": "آبیار خودکار گلدان (۱۲ عددی)"
+  }
+}

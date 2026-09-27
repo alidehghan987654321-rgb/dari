@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>شکارچی محصول</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<!--app:start-->
+<div id="app" class="app" dir="rtl">
+  <header class="topbar">
+    <div class="topbar-in">
+      <a class="brand" href="#" id="brand-link"><span class="brand-mark" aria-hidden="true">◎</span><span id="brand-name">شکارچی</span></a>
+      <nav class="tabs" id="tabs" hidden>
+        <button type="button" data-tab="hunt">شکارهای امروز</button>
+        <button type="button" data-tab="picks">شکارهای من</button>
+        <button type="button" data-tab="analyze">تحلیل محصول</button>
+        <button type="button" data-tab="account">حساب من</button>
+      </nav>
+      <div class="topbar-end" id="topbar-end"></div>
+    </div>
+  </header>
+  <main class="main" id="main"><p class="loading">در حال بارگذاری…</p></main>
+  <div class="toast" id="toast" role="status" hidden></div>
+</div>
+<!--app:end-->
+<script src="/static/app.js"></script>
+</body>
+</html>

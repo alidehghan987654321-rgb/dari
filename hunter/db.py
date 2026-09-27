@@ -1,0 +1,264 @@
+"""SQLite storage for the website: sellers, sessions, payments, hunts and picks."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    categories TEXT NOT NULL DEFAULT '[]',
+    budget_usd REAL NOT NULL DEFAULT 1000,
+    paid_until TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    plan TEXT NOT NULL,
+    days INTEGER NOT NULL,
+    amount_rial INTEGER NOT NULL,
+    gateway TEXT NOT NULL,
+    authority TEXT UNIQUE,
+    status TEXT NOT NULL,
+    ref_id TEXT,
+    created_at TEXT NOT NULL,
+    paid_at TEXT
+);
+CREATE TABLE IF NOT EXISTS hunts (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS picks (
+    hunt_id INTEGER NOT NULL REFERENCES hunts(id),
+    candidate_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (hunt_id, candidate_id, user_id)
+);
+"""
+
+
+def now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso(dt: datetime) -> str:
+    return dt.isoformat(timespec="seconds")
+
+
+class Database:
+    def __init__(self, path: str | Path):
+        self.path = str(path)
+        if self.path != ":memory:":
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        with self.tx() as db:
+            db.executescript(SCHEMA)
+
+    @contextmanager
+    def tx(self):
+        """A connection in a transaction: committed on success, rolled back on error."""
+        conn = sqlite3.connect(self.path, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    # --- users -----------------------------------------------------------------
+
+    def create_user(self, email: str, name: str, phone: str, password_hash: str) -> int:
+        with self.tx() as db:
+            cur = db.execute(
+                "INSERT INTO users (email, name, phone, password_hash, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (email, name, phone, password_hash, iso(now())),
+            )
+            return cur.lastrowid
+
+    def user(self, user_id: int) -> dict[str, Any] | None:
+        with self.tx() as db:
+            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return _user(row)
+
+    def user_by_email(self, email: str) -> dict[str, Any] | None:
+        with self.tx() as db:
+            row = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        return _user(row)
+
+    def update_profile(
+        self, user_id: int, *, name: str, phone: str, categories: list[str], budget_usd: float
+    ) -> None:
+        with self.tx() as db:
+            db.execute(
+                "UPDATE users SET name = ?, phone = ?, categories = ?, budget_usd = ? WHERE id = ?",
+                (name, phone, json.dumps(categories), budget_usd, user_id),
+            )
+
+    def extend_subscription(self, db: sqlite3.Connection, user_id: int, days: int) -> str:
+        row = db.execute("SELECT paid_until FROM users WHERE id = ?", (user_id,)).fetchone()
+        start = now()
+        if row and row["paid_until"]:
+            start = max(start, datetime.fromisoformat(row["paid_until"]))
+        until = iso(start + timedelta(days=days))
+        db.execute("UPDATE users SET paid_until = ? WHERE id = ?", (until, user_id))
+        return until
+
+    def grant(self, email: str, days: int) -> str | None:
+        with self.tx() as db:
+            row = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+            if not row:
+                return None
+            return self.extend_subscription(db, row["id"], days)
+
+    def make_admin(self, email: str) -> bool:
+        with self.tx() as db:
+            cur = db.execute("UPDATE users SET is_admin = 1 WHERE email = ?", (email,))
+            return cur.rowcount > 0
+
+    # --- sessions --------------------------------------------------------------
+
+    def create_session(self, token: str, user_id: int, days: int = 30) -> None:
+        with self.tx() as db:
+            db.execute("DELETE FROM sessions WHERE expires_at < ?", (iso(now()),))
+            db.execute(
+                "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+                (token, user_id, iso(now() + timedelta(days=days))),
+            )
+
+    def session_user(self, token: str) -> dict[str, Any] | None:
+        with self.tx() as db:
+            row = db.execute(
+                "SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id"
+                " WHERE sessions.token = ? AND sessions.expires_at > ?",
+                (token, iso(now())),
+            ).fetchone()
+        return _user(row)
+
+    def delete_session(self, token: str) -> None:
+        with self.tx() as db:
+            db.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+    # --- payments --------------------------------------------------------------
+
+    def create_payment(
+        self, user_id: int, plan: str, days: int, amount_rial: int, gateway: str
+    ) -> int:
+        with self.tx() as db:
+            cur = db.execute(
+                "INSERT INTO payments (user_id, plan, days, amount_rial, gateway, status, created_at)"
+                " VALUES (?, ?, ?, ?, ?, 'new', ?)",
+                (user_id, plan, days, amount_rial, gateway, iso(now())),
+            )
+            return cur.lastrowid
+
+    def set_authority(self, payment_id: int, authority: str) -> None:
+        with self.tx() as db:
+            db.execute(
+                "UPDATE payments SET authority = ?, status = 'pending' WHERE id = ?",
+                (authority, payment_id),
+            )
+
+    def payment_by_authority(self, authority: str) -> dict[str, Any] | None:
+        with self.tx() as db:
+            row = db.execute("SELECT * FROM payments WHERE authority = ?", (authority,)).fetchone()
+        return dict(row) if row else None
+
+    def mark_failed(self, payment_id: int) -> None:
+        with self.tx() as db:
+            db.execute(
+                "UPDATE payments SET status = 'failed' WHERE id = ? AND status = 'pending'",
+                (payment_id,),
+            )
+
+    def mark_paid(self, payment_id: int, ref_id: str) -> bool:
+        """Record a verified payment and extend the subscription, once."""
+        with self.tx() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
+            if not row or row["status"] == "paid":
+                return False
+            db.execute(
+                "UPDATE payments SET status = 'paid', ref_id = ?, paid_at = ? WHERE id = ?",
+                (ref_id, iso(now()), payment_id),
+            )
+            self.extend_subscription(db, row["user_id"], row["days"])
+            return True
+
+    # --- hunts and picks -------------------------------------------------------
+
+    def save_hunt(self, data: dict) -> int:
+        with self.tx() as db:
+            cur = db.execute(
+                "INSERT INTO hunts (created_at, data) VALUES (?, ?)",
+                (iso(now()), json.dumps(data, ensure_ascii=False)),
+            )
+            return cur.lastrowid
+
+    def latest_hunt(self) -> tuple[int, dict] | None:
+        with self.tx() as db:
+            row = db.execute("SELECT id, data FROM hunts ORDER BY id DESC LIMIT 1").fetchone()
+        return (row["id"], json.loads(row["data"])) if row else None
+
+    def picks(self, hunt_id: int, user_id: int) -> list[str]:
+        with self.tx() as db:
+            rows = db.execute(
+                "SELECT candidate_id FROM picks WHERE hunt_id = ? AND user_id = ? ORDER BY rowid",
+                (hunt_id, user_id),
+            ).fetchall()
+        return [r["candidate_id"] for r in rows]
+
+    @contextmanager
+    def picking(self, hunt_id: int):
+        """Hand out picks one seller at a time: yields (taken counts, save function)."""
+        with self.tx() as db:
+            db.execute("BEGIN IMMEDIATE")
+            taken: dict[str, int] = {}
+            for r in db.execute(
+                "SELECT candidate_id, COUNT(*) AS n FROM picks WHERE hunt_id = ? GROUP BY candidate_id",
+                (hunt_id,),
+            ):
+                taken[r["candidate_id"]] = r["n"]
+
+            def save(user_id: int, candidate_ids: list[str]) -> None:
+                db.executemany(
+                    "INSERT OR IGNORE INTO picks (hunt_id, candidate_id, user_id, created_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    [(hunt_id, cid, user_id, iso(now())) for cid in candidate_ids],
+                )
+
+            yield taken, save
+
+
+def _user(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    user = dict(row)
+    user["categories"] = json.loads(user["categories"] or "[]")
+    return user
+
+
+def is_active(user: dict[str, Any]) -> bool:
+    until = user.get("paid_until")
+    return bool(user.get("is_admin")) or bool(until and datetime.fromisoformat(until) > now())

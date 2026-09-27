@@ -1,0 +1,344 @@
+import json
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from hunter.app import Settings, create_app
+from hunter.db import Database
+from hunter.engine import Hunter
+from hunter.payments import DemoGateway, PaymentError, Zarinpal
+from hunter.preview import build_preview
+from hunter.sources.sample import SampleData
+
+PASSWORD = "secret-pass"
+
+
+@pytest.fixture(scope="module")
+def sample_hunt():
+    sample = SampleData()
+    result = Hunter([sample], sample).hunt()
+    result.sample, result.note = True, sample.note
+    return result.to_dict()
+
+
+@pytest.fixture
+def settings(tmp_path, sample_hunt):
+    path = str(tmp_path / "h.db")
+    Database(path).save_hunt(sample_hunt)
+    return Settings(db_path=path, gateway=DemoGateway(), public_url="http://testserver")
+
+
+@pytest.fixture
+def client(settings):
+    with TestClient(create_app(settings)) as c:
+        yield c
+
+
+def signup(client, email="seller@example.com", **extra):
+    body = {
+        "name": "فروشنده",
+        "email": email,
+        "phone": "09120000000",
+        "password": PASSWORD,
+        **extra,
+    }
+    r = client.post("/api/signup", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def subscribe(client, plan="monthly"):
+    r = client.post("/api/pay", json={"plan": plan})
+    assert r.status_code == 200, r.text
+    return client.get(
+        r.json()["redirect_url"].replace("http://testserver", ""), follow_redirects=False
+    )
+
+
+def test_pages_and_config(client):
+    assert "app:start" in client.get("/").text
+    assert client.get("/static/app.js").status_code == 200
+    cfg = client.get("/api/config").json()  # would fail on float('inf') in the settings
+    assert cfg["online_payment"] is True
+    assert {p["id"] for p in cfg["plans"]} == {"monthly", "quarterly"}
+    assert cfg["pricing"]["last_mile_usd"][-1][0] is None
+    assert any(c["restricted"] for c in cfg["categories"])
+
+
+def test_visitors_see_a_locked_teaser_only(client):
+    h = client.get("/api/hunt").json()
+    assert h["locked"] is True and h["sample"] is True
+    assert 0 < len(h["candidates"]) <= 3
+    for c in h["candidates"]:
+        assert c["verdict"] == "green"
+        assert "pricing" not in c and "offer" not in c  # no way to buy it without paying
+
+
+def test_signup_login_logout(client):
+    me = signup(client, email="Mixed@Example.COM")
+    assert me["email"] == "mixed@example.com" and me["active"] is False
+    assert (
+        client.post(
+            "/api/signup", json={"name": "x y", "email": "mixed@example.com", "password": PASSWORD}
+        ).status_code
+        == 409
+    )
+    client.post("/api/logout")
+    assert client.get("/api/me").status_code == 401
+    assert (
+        client.post(
+            "/api/login", json={"email": "mixed@example.com", "password": "nope"}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/login", json={"email": "MIXED@example.com", "password": PASSWORD}
+        ).status_code
+        == 200
+    )
+    assert client.get("/api/me").json()["email"] == "mixed@example.com"
+
+
+def test_bad_signups_are_refused(client):
+    assert (
+        client.post(
+            "/api/signup", json={"name": "ab", "email": "not-an-email", "password": PASSWORD}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/signup", json={"name": "ab", "email": "a@b.co", "password": "short"}
+        ).status_code
+        == 422
+    )
+
+
+def test_login_is_throttled(client):
+    signup(client)
+    client.post("/api/logout")
+    for _ in range(8):
+        client.post("/api/login", json={"email": "seller@example.com", "password": "wrong"})
+    r = client.post("/api/login", json={"email": "seller@example.com", "password": PASSWORD})
+    assert r.status_code == 429
+
+
+def test_paying_unlocks_everything(client):
+    signup(client)
+    assert client.get("/api/picks").status_code == 402
+    assert client.post("/api/analyze", json={"price_cny": 10, "weight_kg": 0.3}).status_code == 402
+    r = subscribe(client)
+    assert r.status_code == 303 and r.headers["location"] == "/#paid"
+    me = client.get("/api/me").json()
+    assert me["active"] is True and me["paid_until"]
+    h = client.get("/api/hunt").json()
+    assert (
+        h["locked"] is False
+        and len(h["candidates"])
+        == h["counts"]["green"] + h["counts"]["yellow"] + h["counts"]["red"]
+    )
+
+
+def test_a_replayed_callback_does_not_extend_twice(client, settings):
+    signup(client)
+    r = client.post("/api/pay", json={"plan": "monthly"})
+    callback = r.json()["redirect_url"].replace("http://testserver", "")
+    client.get(callback, follow_redirects=False)
+    first = client.get("/api/me").json()["paid_until"]
+    assert client.get(callback, follow_redirects=False).headers["location"] == "/#paid"
+    assert client.get("/api/me").json()["paid_until"] == first
+
+
+def test_cancelled_or_unknown_payments_do_nothing(client):
+    signup(client)
+    r = client.post("/api/pay", json={"plan": "monthly"})
+    authority = r.json()["redirect_url"].split("Authority=")[1].split("&")[0]
+    r = client.get(f"/pay/callback?Authority={authority}&Status=NOK", follow_redirects=False)
+    assert r.headers["location"] == "/#pay-cancelled"
+    r = client.get("/pay/callback?Authority=DEMO-forged&Status=OK", follow_redirects=False)
+    assert r.headers["location"] == "/#pay-failed"
+    assert client.get("/api/me").json()["active"] is False
+    assert client.post("/api/pay", json={"plan": "lifetime"}).status_code == 404
+
+
+def test_without_a_gateway_payment_is_offline(settings):
+    settings.gateway = None
+    with TestClient(create_app(settings)) as c:
+        signup(c)
+        assert c.get("/api/config").json()["online_payment"] is False
+        assert c.post("/api/pay", json={"plan": "monthly"}).status_code == 503
+
+
+def test_admin_grant_activates_a_seller(client, settings):
+    signup(client)
+    assert Database(settings.db_path).grant("seller@example.com", 30)
+    assert client.get("/api/me").json()["active"] is True
+    assert Database(settings.db_path).grant("nobody@example.com", 30) is None
+
+
+def test_picks_follow_categories_and_budget(client):
+    signup(client)
+    subscribe(client)
+    client.put(
+        "/api/me",
+        json={
+            "name": "فروشنده",
+            "phone": "",
+            "categories": ["car", "pets", "bogus"],
+            "budget_usd": 450,
+        },
+    )
+    assert client.get("/api/me").json()["categories"] == ["car", "pets"]
+    p = client.get("/api/picks").json()
+    assert p["candidates"]
+    assert {c["category"] for c in p["candidates"]} <= {"car", "pets"}
+    assert all(c["verdict"] in ("green", "yellow") for c in p["candidates"])
+    assert p["capital_usd"] <= 450
+    assert client.get("/api/picks").json()["candidates"] == p["candidates"]  # stable
+
+
+def test_each_product_goes_to_a_few_sellers_only(settings):
+    settings.per_product = 2
+    got = []
+    with TestClient(create_app(settings)) as c:
+        for i in range(3):
+            c.cookies.clear()
+            signup(c, email=f"s{i}@example.com")
+            subscribe(c)
+            c.put(
+                "/api/me",
+                json={"name": "فروشنده", "phone": "", "categories": ["pets"], "budget_usd": 5000},
+            )
+            got.append([x["id"] for x in c.get("/api/picks").json()["candidates"]])
+    perch = "temu:s-cat-perch"
+    assert perch in got[0] and perch in got[1] and perch not in got[2]
+
+
+def test_analyze_a_product(client):
+    signup(client)
+    subscribe(client)
+    body = {
+        "title": "Car Seat Gap Filler 2 Pack",
+        "price_cny": 6.65,
+        "weight_kg": 0.4,
+        "temu_price_usd": 11.99,
+        "listing_pack": 2,
+        "moq": 10,
+        "monthly_sold": 5000,
+        "reviews": 1800,
+    }
+    a = client.post("/api/analyze", json=body).json()
+    assert a["verdict"] == "green" and a["category"] == "car" and a["pack_qty"] == 2
+    assert a["pricing"]["price_usd"] < 11.99
+    vac = client.post(
+        "/api/analyze",
+        json={
+            "title": "Rechargeable car vacuum",
+            "price_cny": 38,
+            "weight_kg": 0.8,
+            "temu_price_usd": 19.99,
+        },
+    ).json()
+    assert vac["verdict"] == "red" and vac["flags"]
+    cod = client.post("/api/analyze", json={**body, "market": "cod"}).json()
+    assert cod["pricing"]["returns_reserve_usd"] > a["pricing"]["returns_reserve_usd"]
+    assert client.post("/api/analyze", json={**body, "price_cny": -1}).status_code == 422
+
+
+# --- Zarinpal ----------------------------------------------------------------------------
+
+
+def zarinpal(handler, sandbox=True):
+    return Zarinpal(
+        "MERCHANT", sandbox=sandbox, client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+
+def test_zarinpal_request_and_verify():
+    seen = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append((request.url.path, body))
+        if request.url.path.endswith("request.json"):
+            return httpx.Response(
+                200, json={"data": {"code": 100, "authority": "A0001"}, "errors": []}
+            )
+        ok = body["amount"] == 10_000_000
+        return httpx.Response(
+            200,
+            json={"data": {"code": 100, "ref_id": 201}, "errors": []}
+            if ok
+            else {"data": [], "errors": {"code": -50, "message": "amount"}},
+        )
+
+    z = zarinpal(handler)
+    authority, url = z.start(10_000_000, "اشتراک", "https://site/pay/callback", "a@b.co", "")
+    assert (authority, url) == ("A0001", "https://sandbox.zarinpal.com/pg/StartPay/A0001")
+    assert seen[0] == (
+        "/pg/v4/payment/request.json",
+        {
+            "merchant_id": "MERCHANT",
+            "amount": 10_000_000,
+            "description": "اشتراک",
+            "callback_url": "https://site/pay/callback",
+            "metadata": {"email": "a@b.co"},
+        },
+    )
+    assert z.verify("A0001", 10_000_000) == "201"
+    assert z.verify("A0001", 5) is None  # the gateway disagrees about the amount
+
+
+def test_zarinpal_refusal_and_already_verified():
+    def refuse(request):
+        return httpx.Response(200, json={"data": [], "errors": {"code": -9, "message": "bad"}})
+
+    with pytest.raises(PaymentError):
+        zarinpal(refuse).start(1000, "x", "https://s/cb", "", "")
+
+    def again(request):
+        return httpx.Response(200, json={"data": {"code": 101, "ref_id": 7}, "errors": []})
+
+    assert zarinpal(again, sandbox=False).verify("A", 1000) == "7"
+    assert zarinpal(again, sandbox=False).host == "https://payment.zarinpal.com"
+
+
+def test_payment_verified_by_zarinpal_through_the_site(settings):
+    amounts = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        if request.url.path.endswith("request.json"):
+            return httpx.Response(200, json={"data": {"code": 100, "authority": "A77"}})
+        amounts.append(body["amount"])
+        return httpx.Response(200, json={"data": {"code": 100, "ref_id": 9}})
+
+    settings.gateway = zarinpal(handler)
+    with TestClient(create_app(settings)) as c:
+        signup(c)
+        r = c.post("/api/pay", json={"plan": "quarterly"})
+        assert r.json()["redirect_url"].endswith("/pg/StartPay/A77")
+        assert (
+            c.get("/pay/callback?Authority=A77&Status=OK", follow_redirects=False).headers[
+                "location"
+            ]
+            == "/#paid"
+        )
+        assert amounts == [settings.plans[1].amount_rial]  # verified for the price we charge
+        assert c.get("/api/me").json()["active"] is True
+
+
+# --- the preview page -------------------------------------------------------------------
+
+
+def test_preview_is_self_contained(sample_hunt):
+    page = build_preview(sample_hunt)
+    assert "window.HUNTER_DEMO" in page
+    assert "/static/" not in page and "@font-face" not in page
+    data = page.split("window.HUNTER_DEMO = ", 1)[1].split(";</script>", 1)[0]
+    assert "</script" not in data
+    demo = json.loads(data)
+    assert demo["hunt"]["candidates"] and demo["picks"]["candidates"]
+    assert demo["me"]["active"] is True
