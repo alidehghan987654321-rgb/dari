@@ -7,29 +7,41 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from .categories import Category, classify, hunt_categories, pack_qty
+from .categories import Category, classify, find_category, hunt_categories, pack_qty
 from .models import Candidate, MarketListing, SupplierOffer
 from .pricing import PricingConfig, Unprofitable, price_product
 from .scoring import assess
 from .sources import MarketSource, SupplierSource
+from .sources.base import LinkError
 
 log = logging.getLogger(__name__)
 
 
-def pick_offer(offers: list[SupplierOffer], max_moq: int) -> SupplierOffer | None:
-    """The cheapest offer worth trusting.
+def rank_offers(offers: list[SupplierOffer], max_moq: int) -> list[SupplierOffer]:
+    """The offers worth trusting, best first.
 
     Offers far below the others are usually a different (smaller, flimsier) item, and
-    offers with almost no sales are a gamble, so those only win when nothing else is left.
+    offers with almost no sales are a gamble, so those only come first when nothing else
+    is left. Among the rest the price decides, with a factory or a long-standing shop
+    worth paying a few percent more for.
     """
     usable = [o for o in offers if o.price_cny > 0 and o.moq <= max_moq]
     if not usable:
-        return None
+        return []
     prices = sorted(o.price_cny for o in usable)
     median = prices[len(prices) // 2]
     sane = [o for o in usable if o.price_cny >= 0.35 * median]
-    proven = [o for o in sane if (o.sales or 0) >= 50] or sane
-    return min(proven, key=lambda o: o.price_cny)
+
+    def key(o: SupplierOffer) -> tuple[bool, float]:
+        trust = (0.05 if o.is_factory else 0) + min(o.years or 0, 10) * 0.005
+        return ((o.sales or 0) < 50, o.price_cny * (1 - trust))
+
+    return sorted(sane, key=key)
+
+
+def pick_offer(offers: list[SupplierOffer], max_moq: int) -> SupplierOffer | None:
+    ranked = rank_offers(offers, max_moq)
+    return ranked[0] if ranked else None
 
 
 @dataclass
@@ -111,10 +123,11 @@ class Hunter:
             log.exception("1688 search failed for %s", listing.url)
             skip("supplier_error")
             return None
-        offer = pick_offer(offers, self.cfg.max_moq)
-        if offer is None:
+        ranked = rank_offers(offers, self.cfg.max_moq)
+        if not ranked:
             skip("no_supplier")
             return None
+        offer = ranked[0]
 
         # "2 Pack" on Temu against a single piece on 1688 means buying two.
         units = max(1, round(pack_qty(listing.title) / pack_qty(offer.title)))
@@ -122,24 +135,28 @@ class Hunter:
             offer.weight_kg * units if offer.weight_kg else category.default_weight_kg * units
         )
 
-        if listing.source == "temu":
-            benchmark, estimated = listing.price_usd, False
+        matches = self.find_matches(listing)
+        on = {x.source: x for x in [listing, *matches]}
+        temu, amazon = on.get("temu"), on.get("amazon")
+        if temu:
+            benchmark, estimated = temu.price_usd, False
         else:
             benchmark, estimated = listing.price_usd * self.cfg.temu_vs_amazon, True
         try:
             pricing = price_product(
                 offer.price_cny,
                 weight,
-                benchmark,
+                benchmark or None,
                 self.cfg,
                 benchmark_estimated=estimated,
                 units=units,
+                amazon_usd=amazon.price_usd if amazon else None,
             )
         except Unprofitable:
             skip("unprofitable_settings")
             return None
 
-        a = assess(listing, offer, pricing, weight, self.cfg.max_premium)
+        a = assess(listing, offer, pricing, weight, self.cfg.max_premium, matches)
         if units > 1:
             a.flags.append(
                 f"قیمت 1688 برای {units} عدد حساب شد (آگهی بسته‌ی {units}تاییه)؛ "
@@ -159,7 +176,49 @@ class Hunter:
             pros=a.pros,
             cons=a.cons,
             flags=a.flags,
-            title_fa=listing.title_fa,
+            title_fa=listing.title_fa or next((m.title_fa for m in matches if m.title_fa), ""),
             starter_qty=starter_qty,
             starter_capital_usd=round(starter_qty * pricing.landed_usd, 2),
+            alternatives=ranked[1:3],
+            matches=matches,
         )
+
+    def find_matches(self, listing: MarketListing) -> list[MarketListing]:
+        """The same product on the other marketplaces (Amazon for a Temu find, and back)."""
+        found = []
+        for market in self.markets:
+            if market.name == listing.source or not hasattr(market, "find_similar"):
+                continue
+            try:
+                match = market.find_similar(listing)
+            except Exception:
+                log.exception("%s: couldn't look for %s", market.name, listing.url)
+                continue
+            if match and match.source != listing.source:
+                match.category = listing.category
+                found.append(match)
+        return found
+
+    def analyze_url(self, url: str) -> Candidate:
+        """Full analysis of one Temu or Amazon product link a seller brought."""
+        market = next(
+            (m for m in self.markets if getattr(m, "handles", None) and m.handles(url)), None
+        )
+        if market is None:
+            raise LinkError("unsupported_link")
+        try:
+            listing = market.listing_by_url(url)
+        except LinkError:
+            raise
+        except Exception:
+            log.exception("%s: couldn't read %s", market.name, url)
+            raise LinkError("listing_error") from None
+        if listing is None:
+            raise LinkError("listing_not_found")
+        category = find_category(classify(listing.title, listing.category))
+        listing.category = category.key
+        skipped: dict[str, int] = {}
+        candidate = self.evaluate(listing, category, skipped)
+        if candidate is None:
+            raise LinkError(next(iter(skipped), "no_supplier"))
+        return candidate

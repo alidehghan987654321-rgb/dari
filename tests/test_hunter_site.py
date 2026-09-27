@@ -342,3 +342,89 @@ def test_preview_is_self_contained(sample_hunt):
     demo = json.loads(data)
     assert demo["hunt"]["candidates"] and demo["picks"]["candidates"]
     assert demo["me"]["active"] is True
+
+
+# --- product links sellers send -----------------------------------------------------------
+
+
+@pytest.fixture
+def link_settings(settings):
+    sample = SampleData()
+    settings.link_hunter = Hunter([sample], sample)
+    settings.daily_links = 5
+    return settings
+
+
+def test_sellers_send_links_and_get_full_analyses(link_settings):
+    with TestClient(create_app(link_settings)) as c:
+        cfg = c.get("/api/config").json()
+        assert cfg["links"] is True and len(cfg["example_links"]) == 4
+        signup(c)
+        assert c.post("/api/analyses", json={"urls": cfg["example_links"][:1]}).status_code == 402
+        subscribe(c)
+        urls = cfg["example_links"][:2] + ["https://www.temu.com/nope.html", "not a link"]
+        r = c.post("/api/analyses", json={"urls": urls})
+        assert r.status_code == 200 and r.json() == {"queued": 3, "left_today": 2}
+        items = c.get("/api/analyses").json()["items"]
+        assert [i["status"] for i in items] == ["failed", "done", "done"]  # newest first
+        assert items[0]["error"] == "listing_not_found"
+        found = items[2]["result"]
+        assert found["offer"]["shop_name"] and found["pricing"]["amazon_usd"]
+        assert {m["source"] for m in found["matches"]} == {"amazon"}
+        assert (
+            c.post(
+                "/api/analyses",
+                json={
+                    "urls": [
+                        "https://www.temu.com/a",
+                        "https://www.temu.com/b",
+                        "https://www.temu.com/c",
+                    ]
+                },
+            ).status_code
+            == 429
+        )
+        assert c.post("/api/analyses", json={"urls": ["nothing here"]}).status_code == 422
+
+
+def test_links_are_off_without_sources(client):
+    signup(client)
+    subscribe(client)
+    assert client.get("/api/config").json()["links"] is False
+    r = client.post("/api/analyses", json={"urls": ["https://www.temu.com/x"]})
+    assert r.status_code == 503 and r.json()["detail"] == "links_not_configured"
+
+
+def test_too_many_links_at_once(link_settings):
+    link_settings.daily_links = 100
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        subscribe(c)
+        urls = [f"https://www.temu.com/{i}" for i in range(11)]
+        assert c.post("/api/analyses", json={"urls": urls}).json()["detail"] == "too_many_links"
+
+
+def test_links_left_waiting_by_a_restart_are_failed(link_settings):
+    db = Database(link_settings.db_path)
+    user_id = db.create_user("x@y.co", "x", "", "hash")
+    db.queue_analyses(user_id, ["https://www.temu.com/1"])
+    TestClient(create_app(link_settings))  # the app starting up
+    [item] = db.analyses(user_id)
+    assert (item["status"], item["error"]) == ("failed", "interrupted")
+
+
+def test_manual_analysis_compares_with_amazon(client):
+    signup(client)
+    subscribe(client)
+    a = client.post(
+        "/api/analyze",
+        json={
+            "title": "Car Seat Gap Filler 2 Pack",
+            "price_cny": 6.65,
+            "weight_kg": 0.4,
+            "temu_price_usd": 11.99,
+            "amazon_price_usd": 16.99,
+            "listing_pack": 2,
+        },
+    ).json()
+    assert a["pricing"]["amazon_usd"] == 16.99 and a["pricing"]["vs_amazon"] < 0.7

@@ -17,6 +17,18 @@ class MarketSource(Protocol):
         ...
 
 
+class LinkError(ValueError):
+    """A product link that couldn't be analysed; the message is a code the site words."""
+
+
+class LinkSource(Protocol):
+    """A market that can also read one product from a link a seller pastes."""
+
+    def handles(self, url: str) -> bool: ...
+
+    def listing_by_url(self, url: str) -> MarketListing | None: ...
+
+
 class SupplierSource(Protocol):
     def by_image(self, image_url: str, limit: int) -> list[SupplierOffer]:
         """1688 offers that look like the product in the picture."""

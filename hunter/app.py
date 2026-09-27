@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -22,10 +22,14 @@ from . import auth
 from .allocate import choose_picks
 from .categories import CATEGORIES, classify, pack_qty
 from .db import Database, is_active
+from .engine import Hunter
 from .models import MarketListing, SupplierOffer
 from .payments import DemoGateway, Gateway, PaymentError, Plan, Zarinpal, default_plans
 from .pricing import PricingConfig, Unprofitable, price_product
 from .scoring import assess
+from .sources.base import LinkError
+from .sources.sample import SampleData
+from .wiring import link_hunter
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +37,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 FONTS = Path(__file__).resolve().parent.parent / "static" / "fonts"
 COOKIE = "hunter_session"
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+LINK = re.compile(r"^https?://\S+$")
 
 
 @dataclass
@@ -46,6 +51,9 @@ class Settings:
     per_product: int = 3  # sellers per product
     picks_per_seller: int = 8
     teaser_size: int = 3
+    link_hunter: Hunter | None = None  # analyses the product links sellers paste
+    daily_links: int = 20  # links a seller may send per day (each one costs API calls)
+    links_per_request: int = 10
 
     @property
     def secure_cookies(self) -> bool:
@@ -71,6 +79,8 @@ class Settings:
             ),
             pricing=PricingConfig.from_env(),
             per_product=int(env("HUNTER_SELLERS_PER_PRODUCT", "3")),
+            link_hunter=link_hunter(),
+            daily_links=int(env("HUNTER_DAILY_LINKS", "20")),
         )
 
 
@@ -100,11 +110,16 @@ class Pay(BaseModel):
     plan: str
 
 
+class Links(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=50)
+
+
 class Analyze(BaseModel):
     title: str = Field(default="", max_length=300)
     price_cny: float = Field(gt=0, le=100_000)
     weight_kg: float = Field(gt=0, le=100)
     temu_price_usd: float | None = Field(default=None, ge=0, le=100_000)
+    amazon_price_usd: float | None = Field(default=None, ge=0, le=100_000)
     listing_pack: int = Field(default=1, ge=1, le=100)
     supplier_pack: int = Field(default=1, ge=1, le=100)
     moq: int = Field(default=1, ge=1, le=100_000)
@@ -145,6 +160,7 @@ def teaser(candidate: dict[str, Any]) -> dict[str, Any]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     db = Database(settings.db_path)
+    db.fail_unfinished_analyses()
     throttle = auth.Throttle()
     app = FastAPI(title=settings.brand, docs_url=None, redoc_url=None)
     app.state.settings = settings
@@ -201,6 +217,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else None
             ),
             "pricing": pricing_settings(settings.pricing),
+            "links": settings.link_hunter is not None,
+            "links_per_request": settings.links_per_request,
+            "daily_links": settings.daily_links,
+            "example_links": example_links(settings.link_hunter),
         }
 
     @app.post("/api/signup")
@@ -379,7 +399,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         try:
             pricing = price_product(
-                body.price_cny, weight, body.temu_price_usd or None, cfg, units=units
+                body.price_cny,
+                weight,
+                body.temu_price_usd or None,
+                cfg,
+                units=units,
+                amazon_usd=body.amazon_price_usd or None,
             )
         except Unprofitable as e:
             raise HTTPException(422, str(e)) from None
@@ -404,10 +429,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "detected_pack": pack_qty(title),
         }
 
+    # --- product links sellers bring ------------------------------------------------
+
+    def run_analyses(jobs: list[tuple[int, str]]) -> None:
+        hunter = settings.link_hunter
+        for analysis_id, url in jobs:
+            db.set_analysis(analysis_id, "running")
+            try:
+                found = hunter.analyze_url(url)
+            except LinkError as e:
+                db.set_analysis(analysis_id, "failed", error=str(e))
+            except Exception:
+                log.exception("Analysis of %s failed", url)
+                db.set_analysis(analysis_id, "failed", error="analysis_error")
+            else:
+                db.set_analysis(analysis_id, "done", result=found.to_dict())
+
+    @app.post("/api/analyses")
+    def send_links(body: Links, background: BackgroundTasks, user=Depends(require_active)):
+        if settings.link_hunter is None:
+            raise HTTPException(503, "links_not_configured")
+        urls = list(dict.fromkeys(u.strip() for u in body.urls if LINK.match(u.strip())))
+        if not urls:
+            raise HTTPException(422, "no_links")
+        if len(urls) > settings.links_per_request:
+            raise HTTPException(422, "too_many_links")
+        used = db.analyses_today(user["id"])
+        if used + len(urls) > settings.daily_links:
+            raise HTTPException(429, "daily_limit")
+        ids = db.queue_analyses(user["id"], urls)
+        background.add_task(run_analyses, list(zip(ids, urls)))
+        return {"queued": len(ids), "left_today": settings.daily_links - used - len(urls)}
+
+    @app.get("/api/analyses")
+    def my_analyses(user=Depends(require_active)):
+        return {
+            "items": db.analyses(user["id"]),
+            "left_today": max(0, settings.daily_links - db.analyses_today(user["id"])),
+        }
+
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     if FONTS.is_dir():
         app.mount("/fonts", StaticFiles(directory=FONTS), name="fonts")
     return app
+
+
+def example_links(hunter: Hunter | None) -> list[str]:
+    """With the sample data behind the link analysis, a few links it knows, to try."""
+    sample = next(
+        (m for m in (hunter.markets if hunter else []) if isinstance(m, SampleData)), None
+    )
+    if not sample:
+        return []
+    return [sample.listings[i].url for i in (0, 8, 2)] + [sample.amazon["s-packing-cubes"].url]
 
 
 def pricing_settings(cfg: PricingConfig) -> dict[str, Any]:

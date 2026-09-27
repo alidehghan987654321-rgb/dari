@@ -7,7 +7,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var state = {
     config: null, me: null, hunt: null, picks: null, tab: "hunt",
-    filter: { cat: "all", verdict: "all", sort: "score" }, authMode: "signup", analysis: null,
+    filter: { cat: "all", verdict: "all", sort: "score" }, authMode: "signup", analysis: null, jobs: undefined,
   };
 
   var ERRORS = {
@@ -128,13 +128,6 @@
     main.innerHTML = huntHTML(); bindHunt();
   }
 
-  function vsChip(p) {
-    if (p.vs_benchmark == null) return '<span class="vs-chip warn">؟</span>';
-    var d = Math.round((p.vs_benchmark - 1) * 100);
-    var cls = p.vs_benchmark <= 1.0 ? "good" : p.vs_benchmark <= 1.1 ? "warn" : "bad";
-    return '<span class="vs-chip ' + cls + '">' + (d > 0 ? "+" : "") + d + "%</span>";
-  }
-
   function cardHTML(c) {
     var title = esc(c.title_fa || (c.listing && c.listing.title) || "");
     var initial = esc((c.title_fa || "?").trim().charAt(0));
@@ -149,27 +142,25 @@
       "</div>";
     if (c.locked) {
       return '<article class="card locked">' + head +
-        '<div class="ladder"><div class="rung"><div class="k">1688</div><div class="v">¥00.00</div></div><div class="rung"><div class="k">تا انبار</div><div class="v">$0.00</div></div><div class="rung ours"><div class="k">قیمت پیشنهادی</div><div class="v">$00.00</div></div><div class="rung vs"><div class="k">Temu</div><span class="vs-chip good">-0%</span></div></div>' +
-        '<p class="lock-note">قیمت‌ها، تأمین‌کننده و لینک خرید برای مشترک‌ها باز میشه.</p></article>';
+        '<div class="ladder"><div class="rung"><div class="k">1688</div><div class="v">¥00.00</div></div><div class="rung"><div class="k">تا انبار</div><div class="v">$0.00</div></div><div class="rung ours"><div class="k">قیمت پیشنهادی</div><div class="v">$00.00</div></div></div>' +
+        '<div class="compare"><div class="market"><div class="k">Temu</div><div class="v">$00.00</div></div><div class="market"><div class="k">آمازون</div><div class="v">$00.00</div></div></div>' +
+        '<p class="lock-note">قیمت‌ها، مقایسه با Temu و آمازون، تأمین‌کننده و لینک خرید برای مشترک‌ها باز میشه.</p></article>';
     }
     var p = c.pricing, o = c.offer, l = c.listing;
-    var bench = p.benchmark_usd == null ? "—" : usd(p.benchmark_usd) + (p.benchmark_estimated ? "*" : "");
     var ladder =
       '<div class="ladder">' +
         '<div class="rung"><div class="k">خرید از 1688</div><div class="v">' + cny(o.price_cny * c.pack_qty) + "</div></div>" +
         '<div class="rung"><div class="k">تمام‌شده تا انبار</div><div class="v">' + usd(p.landed_usd) + "</div></div>" +
         '<div class="rung ours"><div class="k">قیمت پیشنهادی</div><div class="v">' + usd(p.price_usd) + "</div></div>" +
-        '<div class="rung vs"><div class="k">Temu ' + bench + "</div>" + vsChip(p) + "</div>" +
       "</div>";
-    var demand = l.monthly_sold != null ? l.monthly_sold : (l.sold_total != null ? Math.round(l.sold_total / 12) : null);
     var stats =
       '<div class="stats">' +
         '<div class="stat"><div class="k">سود هر عدد</div><div class="v">' + usd(p.profit_usd) + "</div></div>" +
         '<div class="stat"><div class="k">حاشیه‌ی سود</div><div class="v">' + pct(p.margin) + "</div></div>" +
         '<div class="stat"><div class="k">بازگشت سرمایه</div><div class="v">' + pct(p.roi) + "</div></div>" +
-        '<div class="stat"><div class="k">فروش ماهانه‌ی بازار</div><div class="v">' + count(demand) + "</div></div>" +
         '<div class="stat"><div class="k">حداقل سفارش</div><div class="v">' + count(o.moq) + "</div></div>" +
         '<div class="stat"><div class="k">سرمایه‌ی شروع (' + count(c.starter_qty) + ' عدد)</div><div class="v">' + usd(c.starter_capital_usd) + "</div></div>" +
+        '<div class="stat"><div class="k">نسبت به قیمت کارخونه</div><div class="v">×' + p.multiplier + "</div></div>" +
       "</div>";
     var reasons = '<ul class="reasons">' +
       (c.pros || []).map(function (r) { return '<li class="pro"><span>' + esc(r) + "</span></li>"; }).join("") +
@@ -191,13 +182,74 @@
       '<tr class="total"><td>سود فروشنده</td><td>' + usd(p.profit_usd) + "</td></tr>" +
       "</tbody></table>" +
       '<p class="hint" style="font-size:12px;color:var(--ink-faint);margin:6px 0 0">کمترین قیمت با سود مطلوب: ' + usd(p.floor_usd) +
-      " · سربه‌سر: " + usd(p.breakeven_usd) + " · " + p.multiplier + " برابر قیمت کارخونه" +
-      (p.benchmark_estimated ? " · * قیمت Temu از روی قیمت آمازون تخمین زده شده" : "") + "</p></details>";
+      " · سربه‌سر: " + usd(p.breakeven_usd) + "</p></details>";
+    return '<article class="card">' + head + ladder + compareHTML(c) + stats + reasons + flags +
+      supplierHTML(c) + costs + "</article>";
+  }
+
+  // The same product on Temu and Amazon, next to our price.
+  function compareHTML(c) {
+    var p = c.pricing, byMarket = {};
+    [c.listing].concat(c.matches || []).forEach(function (x) { if (x && !byMarket[x.source]) byMarket[x.source] = x; });
+    function box(name, market, price, ratio, estimated) {
+      var x = byMarket[market];
+      var demand = x ? (x.monthly_sold != null ? x.monthly_sold : x.sold_total != null ? Math.round(x.sold_total / 12) : null) : null;
+      var link = x && safeUrl(x.url)
+        ? '<a href="' + esc(x.url) + '" target="_blank" rel="noopener">' + (/search/.test(x.url) ? "جستجو" : "آگهی") + " ↗</a>" : "";
+      return '<div class="market"><div class="k">' + name + (estimated ? " (تخمینی)" : "") + "</div>" +
+        '<div class="v"><span class="num">' + (price == null ? "—" : usd(price)) + "</span> " + chip(ratio) + "</div>" +
+        '<div class="k">' + (demand != null ? "~" + count(demand) + " فروش در ماه" : (x || price != null ? "" : "پیدا نشد")) + (link ? " · " + link : "") + "</div></div>";
+    }
+    return '<div class="compare">' +
+      box("Temu", "temu", p.benchmark_usd, p.vs_benchmark, p.benchmark_estimated) +
+      box("آمازون", "amazon", p.amazon_usd, p.vs_amazon, false) +
+      "</div>";
+  }
+  function chip(ratio) {
+    if (ratio == null) return "";
+    var d = Math.round((ratio - 1) * 100);
+    var cls = ratio <= 1.0 ? "good" : ratio <= 1.1 ? "warn" : "bad";
+    return '<span class="vs-chip ' + cls + '" title="قیمت ما نسبت به این بازار">' + (d > 0 ? "+" : "") + d + "%</span>";
+  }
+
+  // Exactly what to buy and from whom, with backups.
+  function supplierHTML(c) {
+    var o = c.offer;
+    var isSearch = /offer_search|search_result|\/s\?/.test(o.url || "");
+    var facts = [];
+    if (o.is_factory != null) facts.push(o.is_factory ? "کارخانه" : "بازرگانی (واسطه)");
+    if (o.location) facts.push(esc(o.location));
+    if (o.years != null) facts.push(toman(o.years) + " سال در 1688");
+    if (o.rating != null) facts.push("امتیاز " + o.rating);
+    if (o.repurchase_rate != null) facts.push("خرید مجدد " + pct(o.repurchase_rate));
+    if (o.sales != null) facts.push(count(o.sales) + " فروش");
+    var tiers = (o.price_tiers || []).length
+      ? '<div class="tiers">' + o.price_tiers.map(function (t) {
+          return '<span>از <b class="num">' + count(t[0]) + '</b> عدد: <b class="num">¥' + Number(t[1]).toFixed(2) + "</b></span>";
+        }).join("") + "</div>" : "";
     var links = [];
-    if (safeUrl(l.url)) links.push('<a href="' + esc(l.url) + '" target="_blank" rel="noopener">آگهی در ' + (l.source === "amazon" ? "آمازون" : "Temu") + " ↗</a>");
-    if (safeUrl(o.url)) links.push('<a href="' + esc(o.url) + '" target="_blank" rel="noopener">تأمین‌کننده در 1688 ↗</a>');
-    return '<article class="card">' + head + ladder + stats + reasons + flags + costs +
-      '<div class="card-foot">' + links.join("") + "</div></article>";
+    if (safeUrl(o.url)) links.push('<a href="' + esc(o.url) + '" target="_blank" rel="noopener">' + (isSearch ? "جستجوی این کالا در 1688" : "صفحه‌ی همین محصول در 1688") + " ↗</a>");
+    if (safeUrl(o.shop_url)) links.push('<a href="' + esc(o.shop_url) + '" target="_blank" rel="noopener">فروشگاه تأمین‌کننده ↗</a>');
+    var alts = (c.alternatives || []).map(function (a) {
+      return "<li>" + (safeUrl(a.url) ? '<a href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.shop_name || a.title) + "</a>" : esc(a.shop_name || a.title)) +
+        ' — <span class="num">¥' + Number(a.price_cny).toFixed(2) + "</span>" +
+        (a.sales != null ? " · " + count(a.sales) + " فروش" : "") + (a.is_factory ? " · کارخانه" : "") + "</li>";
+    }).join("");
+    return '<div class="supplier">' +
+      '<div class="label">تأمین‌کننده در 1688</div>' +
+      '<div class="shop">' + esc(o.shop_name || "نام فروشگاه در دسترس نیست") + "</div>" +
+      (facts.length ? '<div class="facts">' + facts.join(" · ") + "</div>" : "") +
+      (o.title ? '<div class="offer-title" title="اسم محصول در 1688">' + esc(o.title) + "</div>" : "") +
+      tiers +
+      (links.length ? '<div class="links">' + links.join("") + "</div>" : "") +
+      (alts ? '<details class="alts"><summary>' + toman(c.alternatives.length) + " تأمین‌کننده‌ی جایگزین</summary><ul>" + alts + "</ul></details>" : "") +
+      '<details class="howto"><summary>چطور بخرم؟</summary><ol>' +
+        "<li>لینک همین محصول در 1688 رو برای ایجنت خریدت بفرست؛ اسم چینی محصول بالا اومده تا اشتباه نشه.</li>" +
+        "<li>اول ۱ تا ۳ عدد نمونه بخر و جنس، اندازه و بسته‌بندی رو چک کن.</li>" +
+        "<li>برای سفارش اصلی (حداقل " + count(c.starter_qty) + " عدد) قیمت پلکانی رو از تأمین‌کننده بپرس و عکس محموله قبل از ارسال بخواه.</li>" +
+        "<li>ارسال به انبار دبی و منشأ «ساخت چین» در اسناد.</li>" +
+      "</ol></details>" +
+    "</div>";
   }
   function row(k, v) { return "<tr><td>" + esc(k) + "</td><td>" + usd(v) + "</td></tr>"; }
 
@@ -344,16 +396,48 @@
 
   // --- analyze tab ---------------------------------------------------------------
 
+  var LINK_ERRORS = {
+    unsupported_link: "فقط لینک محصول Temu یا آمازون قبول میشه.",
+    listing_not_found: "محصولی با این لینک پیدا نشد.",
+    listing_error: "صفحه‌ی محصول خونده نشد؛ دوباره امتحان کن.",
+    amazon_site_not_supported: "این نسخه‌ی آمازون پشتیبانی نمیشه؛ لینک amazon.com بده.",
+    temu_links_not_configured: "تحلیل لینک Temu هنوز روی سایت فعال نشده.",
+    no_supplier: "همین محصول در 1688 پیدا نشد.",
+    supplier_error: "جستجو در 1688 جواب نداد؛ دوباره امتحان کن.",
+    unprofitable_settings: "با تنظیمات فعلی هیچ قیمتی سود نمیده.",
+    interrupted: "سرور وسط کار راه‌اندازی مجدد شد؛ لینک رو دوباره بفرست.",
+    analysis_error: "تحلیل با خطا روبه‌رو شد.",
+  };
+  var STATUS = { queued: ["neutral", "در صف"], running: ["yellow", "در حال تحلیل…"], done: ["green", "انجام شد"], failed: ["red", "ناموفق"] };
+
   function analyzeHTML() {
     if (!state.me.active) return lockedHTML();
-    var a = state.analysis;
-    return '<h1 class="section-title">تحلیل محصول خودم</h1>' +
-      '<p class="section-sub">محصولی که خودت پیدا کردی رو وارد کن: قیمت 1688، وزن و قیمت Temu. همون محاسبه‌ی موتور روش انجام میشه و میگه با چه قیمتی بفروشی و ارزش آوردن داره یا نه.</p>' +
+    var cfg = state.config, a = state.analysis, jobs = state.jobs;
+    var examples = (cfg.example_links || []).length
+      ? '<div class="field"><span class="label">لینک‌های نمونه برای امتحان:</span><div class="examples">' +
+          cfg.example_links.map(function (u) { return '<button type="button" data-link="' + esc(u) + '">' + esc(u) + "</button>"; }).join("") +
+        "</div></div>" : "";
+    var linksPart = cfg.links
+      ? '<form class="panel links-form stack" id="links-form" novalidate>' +
+          '<div class="field"><label for="links">لینک محصول‌های Temu یا آمازون (هر خط یه لینک، حداکثر ' + toman(cfg.links_per_request) + " تا)</label>" +
+          '<textarea class="input" id="links" placeholder="https://www.temu.com/...&#10;https://www.amazon.com/dp/..."></textarea>' +
+          '<span class="hint">برای هر لینک، موتور همون محصول رو در 1688 پیدا می‌کنه، تأمین‌کننده رو مشخص می‌کنه، با Temu و آمازون مقایسه می‌کنه و قیمت فروش پیشنهاد می‌ده. ' +
+          (jobs ? "امروز " + toman(jobs.left_today) + " تحلیل دیگه داری." : "") + "</span></div>" +
+          examples +
+          '<div class="error" id="links-error"></div><button class="btn" type="submit">تحلیل کن</button>' +
+        "</form>" +
+        '<div class="jobs" id="jobs">' + jobsHTML() + "</div>"
+      : '<div class="notice"><b>تحلیل با لینک هنوز فعال نشده.</b> مدیر سایت باید کلید Keepa یا Apify رو تنظیم کنه. فعلاً از تحلیل دستی پایین استفاده کن.</div>';
+    return '<h1 class="section-title">تحلیل محصول‌های خودم</h1>' +
+      '<p class="section-sub">محصولی که خودت پیدا کردی رو بفرست تا کامل تحلیل بشه: تأمین‌کننده در 1688، مقایسه با Temu و آمازون، همه‌ی هزینه‌ها و قیمت فروش.</p>' +
+      linksPart +
+      '<details class="manual"' + (cfg.links ? "" : " open") + "><summary>تحلیل دستی (اگه لینک نداری و قیمت‌ها رو خودت می‌دونی)</summary>" +
       '<form class="panel" id="an-form" novalidate><div class="form-grid">' +
         '<div class="field" style="grid-column:1/-1"><label for="an-title">اسم یا عنوان آگهی (برای تشخیص دسته و محدودیت‌ها)</label><input class="input" id="an-title" dir="auto" placeholder="مثلاً: Car Seat Gap Filler 2 Pack"></div>' +
         num("an-cny", "قیمت هر عدد در 1688 (یوان)", "12", "0.1") +
         num("an-weight", "وزن هر آگهی با بسته‌بندی (کیلو)", "0.4", "0.01") +
         num("an-temu", "قیمت همین محصول در Temu (دلار)", "11.99", "0.01") +
+        num("an-amazon", "قیمت همین محصول در آمازون (دلار)", "", "0.01") +
         num("an-lpack", "چند عدد در هر آگهی؟", "1", "1") +
         num("an-moq", "حداقل سفارش در 1688", "10", "1") +
         num("an-sold", "فروش ماهانه (اختیاری)", "", "1") +
@@ -361,35 +445,100 @@
         num("an-cart", "معمولاً چند قلم در هر سفارش؟", "3", "1") +
         '<div class="field"><label for="an-market">مشتری چطور پول می‌ده؟</label><select class="input" id="an-market"><option value="prepaid">آنلاین (مثل Temu)</option><option value="cod">پرداخت در محل</option></select></div>' +
       '</div><div class="error" id="an-error"></div><button class="btn" type="submit">تحلیل کن</button></form>' +
-      (a ? '<div style="margin-top:18px" class="grid">' + cardHTML(a) + "</div>" : "");
+      (a ? '<div style="margin-top:18px" class="grid">' + cardHTML(a) + "</div>" : "") +
+      "</details>";
   }
+
+  function jobsHTML() {
+    var items = state.jobs && state.jobs.items || [];
+    if (!items.length) return "";
+    return '<h2 class="section-title" style="font-size:16px">تحلیل‌های من</h2>' + items.map(function (j) {
+      var st = STATUS[j.status] || STATUS.queued;
+      var head = '<div class="job"><span class="url">' + esc(j.url) + '</span><span class="pill ' + st[0] + '"><span class="dot"></span>' + st[1] + "</span></div>";
+      if (j.status === "done" && j.result) return '<div>' + head + '<div class="job-result grid">' + cardHTML(j.result) + "</div></div>";
+      if (j.status === "failed") return '<div>' + head + '<p class="error" style="margin:4px 4px 0">' + esc(LINK_ERRORS[j.error] || j.error || "") + "</p></div>";
+      return head;
+    }).join("");
+  }
+
+  function loadJobs() {
+    if (DEMO) return Promise.resolve();
+    return api("/api/analyses").then(function (j) { state.jobs = j; }, function () {});
+  }
+  function pollJobs() {
+    clearTimeout(pollJobs.timer);
+    var pending = (state.jobs && state.jobs.items || []).some(function (j) { return j.status === "queued" || j.status === "running"; });
+    if (!pending || state.tab !== "analyze") return;
+    pollJobs.timer = setTimeout(function () {
+      loadJobs().then(function () { var box = $("jobs"); if (box && state.tab === "analyze") box.innerHTML = jobsHTML(); pollJobs(); });
+    }, 4000);
+  }
+
   function num(id, label, value, step) {
     return '<div class="field"><label for="' + id + '">' + label + '</label><input class="input num" id="' + id + '" type="number" min="0" step="' + step + '" value="' + value + '"></div>';
   }
   function bindAnalyze() {
     var form = $("an-form");
     if (!form) { bindLocked(); return; }
+    if (state.jobs === undefined && !DEMO && state.config.links) {
+      state.jobs = null;
+      loadJobs().then(function () { if (state.tab === "analyze") { $("jobs").innerHTML = jobsHTML(); pollJobs(); } });
+    } else {
+      pollJobs();
+    }
+    Array.prototype.forEach.call(document.querySelectorAll("[data-link]"), function (b) {
+      b.onclick = function () { var t = $("links"); t.value = (t.value.trim() ? t.value.trim() + "\n" : "") + b.dataset.link; };
+    });
+    var lf = $("links-form");
+    if (lf) lf.onsubmit = function (ev) {
+      ev.preventDefault();
+      var urls = $("links").value.split(/\s+/).filter(function (u) { return /^https?:\/\//i.test(u); });
+      $("links-error").textContent = "";
+      if (!urls.length) { $("links-error").textContent = "حداقل یه لینک درست (با https://) بذار."; return; }
+      if (DEMO) { state.jobs = demoLinks(urls); render(); return; }
+      api("/api/analyses", { method: "POST", body: { urls: urls } }).then(function () {
+        $("links").value = "";
+        return loadJobs();
+      }).then(function () { render(); }, function (e) {
+        $("links-error").textContent = e.code === "daily_limit" ? "سقف تحلیل امروزت پر شده؛ فردا دوباره امتحان کن."
+          : e.code === "too_many_links" ? "حداکثر " + toman(state.config.links_per_request) + " لینک در هر بار." : errText(e);
+      });
+    };
     form.onsubmit = function (ev) {
       ev.preventDefault();
       var v = function (id) { var x = $(id).value; return x === "" ? null : Number(x); };
       var body = {
         title: $("an-title").value, price_cny: v("an-cny"), weight_kg: v("an-weight"),
-        temu_price_usd: v("an-temu"), listing_pack: v("an-lpack") || 1, moq: v("an-moq") || 1,
+        temu_price_usd: v("an-temu"), amazon_price_usd: v("an-amazon"), listing_pack: v("an-lpack") || 1, moq: v("an-moq") || 1,
         monthly_sold: v("an-sold"), reviews: v("an-reviews"), items_per_cart: v("an-cart") || 3,
         market: $("an-market").value,
       };
       $("an-error").textContent = "";
       if (!body.price_cny || !body.weight_kg) { $("an-error").textContent = "قیمت 1688 و وزن لازمه."; return; }
-      var ids = ["an-title", "an-cny", "an-weight", "an-temu", "an-lpack", "an-moq", "an-sold", "an-reviews", "an-cart", "an-market"];
+      var ids = ["an-title", "an-cny", "an-weight", "an-temu", "an-amazon", "an-lpack", "an-moq", "an-sold", "an-reviews", "an-cart", "an-market"];
       var done = function (res) {
         var typed = {};
         ids.forEach(function (id) { typed[id] = $(id).value; });
         state.analysis = res; render();
+        document.querySelector(".manual").open = true;
         ids.forEach(function (id) { $(id).value = typed[id]; });  // keep what was typed
       };
       if (DEMO) { done(demoAnalyze(body)); return; }
       api("/api/analyze", { method: "POST", body: body }).then(done, function (e) { $("an-error").textContent = errText(e); });
     };
+  }
+
+  // In the demo there's no server: links are looked up in the sample hunt.
+  function demoLinks(urls) {
+    var known = {};
+    state.hunt.candidates.forEach(function (c) {
+      [c.listing].concat(c.matches || []).forEach(function (x) { known[x.url] = c; });
+    });
+    var items = urls.map(function (u) {
+      var c = known[u];
+      return c ? { url: u, status: "done", result: c } : { url: u, status: "failed", error: /temu\.com|amazon\./.test(u) ? "listing_not_found" : "unsupported_link" };
+    });
+    return { items: items.concat((state.jobs && state.jobs.items) || []), left_today: state.config.daily_links };
   }
 
   // --- account tab ---------------------------------------------------------------
@@ -467,6 +616,7 @@
     if (b.temu_price_usd) { var under = charmDown(b.temu_price_usd * (1 - cfg.undercut)); if (under >= floor) price = under; }
     var profit = price * keep - unit, margin = profit / price;
     var ratio = b.temu_price_usd ? price / b.temu_price_usd : null;
+    var vsAmazon = b.amazon_price_usd ? price / b.amazon_price_usd : null;
     var score = 0, pros = [], cons = [];
     var d = b.monthly_sold;
     if (d == null) { score += 10; cons.push("آمار فروش ماهانه وارد نشده"); }
@@ -481,6 +631,8 @@
     else if (ratio <= 1.03) { score += 15; pros.push("هم‌قیمت Temu"); }
     else if (ratio <= 1 + cfg.max_premium) { score += 8; cons.push(Math.round((ratio - 1) * 100) + "% گران‌تر از Temu"); }
     else cons.push("کمترین قیمتی که سود می‌ده " + Math.round((ratio - 1) * 100) + "% بالاتر از Temuه؛ رقابتی نیست");
+    if (vsAmazon != null && vsAmazon <= 0.7) { score += 5; pros.push(Math.round((1 - vsAmazon) * 100) + "% ارزان‌تر از آمازون"); }
+    else if (vsAmazon != null && vsAmazon > 1) { score -= 5; cons.push("از آمازون هم گران‌تره"); }
     score += b.reviews == null ? 5 : b.reviews < 500 ? 10 : b.reviews < 3000 ? 6 : 2;
     score += b.weight_kg <= 0.5 ? 10 : b.weight_kg <= 2 ? 6 : 2;
     score += 4;
@@ -492,16 +644,16 @@
     return {
       id: "analyze", category: "manual", title_fa: b.title || "محصول من", pack_qty: units, weight_kg: b.weight_kg,
       listing: { source: "temu", title: "", url: "", image_url: "", monthly_sold: b.monthly_sold },
-      offer: { price_cny: b.price_cny, moq: b.moq || 1, url: "" },
+      offer: { price_cny: b.price_cny, moq: b.moq || 1, url: "", shop_name: "", price_tiers: [] }, matches: [], alternatives: [],
       pricing: {
         factory_usd: r2(factory), china_side_usd: r2(china), freight_usd: r2(freight), packaging_usd: cfg.packaging_usd,
         landed_usd: r2(landed), last_mile_usd: r2(lastMile), price_usd: r2(price), floor_usd: r2(floor),
         breakeven_usd: r2(unit / keep), platform_fee_usd: r2(price * cfg.platform_pct), gateway_usd: r2(price * cfg.gateway_pct),
         marketing_usd: r2(price * cfg.marketing_pct), returns_reserve_usd: r2(price * returns), profit_usd: r2(profit),
         margin: margin, roi: profit / landed, multiplier: r2(price / factory), benchmark_usd: b.temu_price_usd,
-        benchmark_estimated: false, vs_benchmark: ratio,
+        benchmark_estimated: false, vs_benchmark: ratio, amazon_usd: b.amazon_price_usd, vs_amazon: vsAmazon,
       },
-      score: Math.min(score, 100), verdict: verdict, pros: pros, cons: cons, flags: [],
+      score: Math.max(0, Math.min(score, 100)), verdict: verdict, pros: pros, cons: cons, flags: [],
       starter_qty: starter, starter_capital_usd: r2(starter * landed),
     };
   }
@@ -511,7 +663,7 @@
   function go(tab) { state.tab = tab; render(); window.scrollTo(0, 0); }
   function logout() {
     api("/api/logout", { method: "POST" }).then(function () {
-      state.me = null; state.picks = null; state.analysis = null; return loadHunt();
+      state.me = null; state.picks = null; state.analysis = null; state.jobs = undefined; return loadHunt();
     }).then(render);
   }
 

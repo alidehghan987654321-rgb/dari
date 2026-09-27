@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS hunts (
     created_at TEXT NOT NULL,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS analyses (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    url TEXT NOT NULL,
+    status TEXT NOT NULL,  -- queued, running, done, failed
+    result TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS analyses_user ON analyses (user_id, id);
 CREATE TABLE IF NOT EXISTS picks (
     hunt_id INTEGER NOT NULL REFERENCES hunts(id),
     candidate_id TEXT NOT NULL,
@@ -249,6 +260,67 @@ class Database:
                 )
 
             yield taken, save
+
+    # --- product links sellers bring -------------------------------------------
+
+    def queue_analyses(self, user_id: int, urls: list[str]) -> list[int]:
+        with self.tx() as db:
+            return [
+                db.execute(
+                    "INSERT INTO analyses (user_id, url, status, created_at) VALUES (?, ?, 'queued', ?)",
+                    (user_id, url, iso(now())),
+                ).lastrowid
+                for url in urls
+            ]
+
+    def analyses_today(self, user_id: int) -> int:
+        since = iso(now() - timedelta(days=1))
+        with self.tx() as db:
+            row = db.execute(
+                "SELECT COUNT(*) AS n FROM analyses WHERE user_id = ? AND created_at > ?",
+                (user_id, since),
+            ).fetchone()
+        return row["n"]
+
+    def set_analysis(
+        self, analysis_id: int, status: str, result: dict | None = None, error: str | None = None
+    ) -> None:
+        done = status in ("done", "failed")
+        with self.tx() as db:
+            db.execute(
+                "UPDATE analyses SET status = ?, result = ?, error = ?, finished_at = ? WHERE id = ?",
+                (
+                    status,
+                    json.dumps(result, ensure_ascii=False) if result is not None else None,
+                    error,
+                    iso(now()) if done else None,
+                    analysis_id,
+                ),
+            )
+
+    def analyses(self, user_id: int, limit: int = 30) -> list[dict[str, Any]]:
+        with self.tx() as db:
+            rows = db.execute(
+                "SELECT * FROM analyses WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["result"] = json.loads(item["result"]) if item["result"] else None
+            out.append(item)
+        return out
+
+    def fail_unfinished_analyses(self) -> int:
+        """After a restart, links that were still waiting can't finish: mark them failed so
+        the seller can send them again."""
+        with self.tx() as db:
+            cur = db.execute(
+                "UPDATE analyses SET status = 'failed', error = 'interrupted', finished_at = ?"
+                " WHERE status IN ('queued', 'running')",
+                (iso(now()),),
+            )
+            return cur.rowcount
 
 
 def _user(row: sqlite3.Row | None) -> dict[str, Any] | None:

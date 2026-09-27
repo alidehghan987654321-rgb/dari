@@ -348,3 +348,157 @@ def test_apify_runs_the_actor_with_the_filled_input():
     assert "token=TOKEN" in seen["url"]
     assert seen["body"] == {"imageUrls": ["https://img/a.jpg"], "maxItems": 5}
     assert got[0].price_cny == 3
+
+
+# --- suppliers, Amazon/Temu matching and pasted links ------------------------------------
+
+from hunter.categories import CATEGORIES  # noqa: E402
+from hunter.engine import rank_offers  # noqa: E402
+from hunter.matching import best_match, search_terms, similarity  # noqa: E402
+from hunter.sources.apify import TemuMarket  # noqa: E402
+from hunter.sources.base import LinkError  # noqa: E402
+
+
+def test_a_factory_or_old_shop_wins_a_close_price():
+    trader = offer(id="trader", price_cny=10.0, sales=900, is_factory=False, years=1)
+    factory = offer(id="factory", price_cny=10.3, sales=900, is_factory=True, years=8)
+    cheap = offer(id="cheap", price_cny=8.0, sales=900)
+    assert [o.id for o in rank_offers([trader, factory], 500)] == ["factory", "trader"]
+    assert rank_offers([trader, factory, cheap], 500)[0].id == "cheap"  # a real saving still wins
+
+
+def test_candidates_carry_backup_suppliers_and_the_amazon_listing():
+    sample = SampleData()
+    result = Hunter([sample], sample).hunt()
+    gap = next(c for c in result.candidates if "Gap Filler" in c.listing.title)
+    assert gap.offer.shop_name and gap.offer.location and gap.offer.price_tiers
+    assert [a.id for a in gap.alternatives] == ["s1688-gap-a"]  # the ¥1.9 outlier is dropped
+    amazon = next(m for m in gap.matches if m.source == "amazon")
+    assert gap.pricing.amazon_usd == amazon.price_usd
+    assert gap.pricing.vs_amazon == pytest.approx(
+        gap.pricing.price_usd / amazon.price_usd, abs=1e-4
+    )
+    assert any("آمازون" in p for p in gap.pros)
+    assert any("تقاضا" in p and "Temu" in p and "آمازون" in p for p in gap.pros)  # both markets
+
+
+def test_supplier_details_and_amazon_price_in_the_verdict_reasons():
+    p = price_product(10, 0.3, 14.0, CFG, amazon_usd=11.0)
+    a = assess(
+        listing(price_usd=14.0), offer(is_factory=True, years=9, repurchase_rate=0.4), p, 0.3
+    )
+    assert any("کارخانه" in x for x in a.pros) and any("سال سابقه" in x for x in a.pros)
+    assert any("از آمازون هم گران‌تره" in x for x in a.cons)
+    a = assess(listing(price_usd=14.0), offer(years=1, repurchase_rate=0.05), p, 0.3)
+    assert any("تازه‌کار" in x for x in a.cons) and any("خرید مجدد پایین" in x for x in a.cons)
+
+
+def test_title_matching():
+    temu = listing(title="Cat Window Perch Hammock with Strong Suction Cups", price_usd=19.99)
+    amazon = [
+        listing(source="amazon", id="1", title="Dog Bed Orthopedic Large", price_usd=35),
+        listing(source="amazon", id="2", title="Cat Window Perch, Hammock Seat with Suction Cups for Indoor Cats", price_usd=29.99, monthly_sold=3000),
+        listing(source="amazon", id="3", title="Cat Window Perch Hammock Suction Cups Luxury Edition", price_usd=400),
+    ]  # fmt: skip
+    assert search_terms(temu.title) == "cat window perch hammock strong suction cups"
+    assert similarity(temu.title, amazon[1].title) >= 0.8
+    assert best_match(temu, amazon).id == "2"  # #3 is 20x the price: another product
+    assert best_match(temu, amazon[:1]) is None
+
+
+def test_analyze_links_from_both_markets():
+    sample = SampleData()
+    hunter = Hunter([sample], sample)
+    temu_url = next(x.url for x in sample.listings if x.id == "s-cat-perch")
+    c = hunter.analyze_url(temu_url)
+    assert c.listing.source == "temu" and c.category == "pets"
+    assert [m.source for m in c.matches] == ["amazon"] and not c.pricing.benchmark_estimated
+    c = hunter.analyze_url(sample.amazon["s-cat-perch"].url)
+    assert c.listing.source == "amazon" and [m.source for m in c.matches] == ["temu"]
+    assert (
+        c.pricing.benchmark_usd == 19.99 and not c.pricing.benchmark_estimated
+    )  # Temu's real price
+    assert c.title_fa
+    with pytest.raises(LinkError, match="listing_not_found"):
+        hunter.analyze_url("https://www.temu.com/something-else.html")
+    with pytest.raises(LinkError, match="unsupported_link"):
+        hunter.analyze_url("https://shop.example.com/item")
+
+
+def test_keepa_links_and_similar_search():
+    calls = []
+
+    def handler(request):
+        calls.append(request.url)
+        return httpx.Response(200, json={"products": [KEEPA_PRODUCT]})
+
+    keepa = Keepa("KEY", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert keepa.handles("https://www.amazon.com/dp/B0TEST") and not keepa.handles(
+        "https://temu.com/x"
+    )
+    got = keepa.listing_by_url("https://www.amazon.com/Car-Seat-Gap/dp/B0CJRVK5Q1?ref=x")
+    assert got.id == "B0TEST" and calls[-1].params["asin"] == "B0CJRVK5Q1"
+    with pytest.raises(LinkError, match="amazon_site_not_supported"):
+        keepa.listing_by_url("https://www.amazon.ae/dp/B0CJRVK5Q1")
+    with pytest.raises(LinkError, match="listing_not_found"):
+        keepa.listing_by_url("https://www.amazon.com/s?k=gap+filler")
+    match = keepa.find_similar(
+        listing(title="2 Pack Car Seat Gap Filler with Storage", price_usd=11.99)
+    )
+    assert match.id == "B0TEST"
+    assert calls[-1].path == "/search" and calls[-1].params["type"] == "product"
+    assert calls[-1].params["term"] == "car seat gap filler storage"
+
+
+def test_temu_links_need_the_product_actor():
+    seen = {}
+
+    def handler(request):
+        seen["url"], seen["body"] = str(request.url), json.loads(request.content)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "title": "Cat Window Perch",
+                    "price": 19.99,
+                    "url": "https://www.temu.com/g-1.html",
+                }
+            ],
+        )
+
+    apify = Apify("T", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(LinkError, match="temu_links_not_configured"):
+        TemuMarket(apify, "me/temu-search").listing_by_url("https://www.temu.com/g-1.html")
+    temu = TemuMarket(apify, "me/temu-search", product_actor="me/temu-product")
+    got = temu.listing_by_url("https://www.temu.com/g-1.html")
+    assert got.price_usd == 19.99 and "me~temu-product" in seen["url"]
+    assert seen["body"] == {"startUrls": [{"url": "https://www.temu.com/g-1.html"}], "maxItems": 1}
+    match = temu.find_similar(
+        listing(source="amazon", title="Cat Window Perch for Indoor Cats", price_usd=29.99)
+    )
+    assert match.price_usd == 19.99 and "me~temu-search" in seen["url"]
+
+
+def test_1688_shop_details_are_read():
+    o = offer_1688({
+        "subject": "猫咪吸盘吊床", "price": "21.00", "detailUrl": "https://detail.1688.com/offer/1.html",
+        "companyName": "义乌某宠物用品厂", "shopUrl": "https://shop1.1688.com", "province": "浙江 义乌",
+        "tpYear": "8", "repurchaseRate": "35%", "priceRanges": [
+            {"startQuantity": 100, "price": "19.5"}, {"startQuantity": 2, "price": "21.00"}],
+    })  # fmt: skip
+    assert (o.shop_name, o.shop_url, o.location, o.years) == (
+        "义乌某宠物用品厂",
+        "https://shop1.1688.com",
+        "浙江 义乌",
+        8,
+    )
+    assert o.is_factory is True and o.repurchase_rate == pytest.approx(0.35)
+    assert o.price_tiers == [[2, 21.0], [100, 19.5]]
+    trader = offer_1688(
+        {"title": "x", "price": 3, "url": "https://1688/2", "shopName": "某贸易公司"}
+    )
+    assert trader.is_factory is None and trader.price_tiers == []
+
+
+def test_keepa_domains_cover_the_default():
+    assert CATEGORIES["car"].amazon_category_id == 15684181

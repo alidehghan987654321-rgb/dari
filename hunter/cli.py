@@ -24,46 +24,9 @@ from .db import Database
 from .engine import Hunter
 from .pricing import PricingConfig
 from .sources.sample import SampleData
+from .wiring import live_sources
 
 log = logging.getLogger("hunter")
-
-
-def live_sources() -> tuple[list, object | None]:
-    """Market sources and the 1688 source configured in the environment."""
-    env = os.environ.get
-    markets: list = []
-    supplier = None
-    if env("KEEPA_API_KEY"):
-        from .sources.keepa import Keepa
-
-        markets.append(Keepa(env("KEEPA_API_KEY")))
-    if env("APIFY_TOKEN"):
-        from .sources.apify import (
-            DEFAULT_1688_IMAGE_INPUT,
-            DEFAULT_1688_KEYWORD_INPUT,
-            DEFAULT_TEMU_INPUT,
-            Apify,
-            Supplier1688,
-            TemuMarket,
-        )
-
-        apify = Apify(env("APIFY_TOKEN"))
-        if env("HUNTER_TEMU_ACTOR"):
-            markets.insert(
-                0,
-                TemuMarket(
-                    apify, env("HUNTER_TEMU_ACTOR"), env("HUNTER_TEMU_INPUT") or DEFAULT_TEMU_INPUT
-                ),
-            )
-        if env("HUNTER_1688_IMAGE_ACTOR"):
-            supplier = Supplier1688(
-                apify,
-                env("HUNTER_1688_IMAGE_ACTOR"),
-                env("HUNTER_1688_KEYWORD_ACTOR", ""),
-                env("HUNTER_1688_IMAGE_INPUT") or DEFAULT_1688_IMAGE_INPUT,
-                env("HUNTER_1688_KEYWORD_INPUT") or DEFAULT_1688_KEYWORD_INPUT,
-            )
-    return markets, supplier
 
 
 def cmd_hunt(args) -> int:

@@ -37,6 +37,15 @@ class SupplierOffer:
     moq: int = 1
     sales: int | None = None  # 1688's sold/transactions count for the offer
     weight_kg: float | None = None
+    # Who sells it: what a seller needs to buy from the right shop.
+    shop_name: str = ""
+    shop_url: str = ""
+    location: str = ""  # province / city
+    years: int | None = None  # years on 1688
+    is_factory: bool | None = None  # a factory, not a trading company
+    repurchase_rate: float | None = None  # 0-1, buyers who ordered again
+    rating: float | None = None  # 0-5
+    price_tiers: list[list[float]] = field(default_factory=list)  # [[from qty, price], ...]
 
 
 @dataclass
@@ -63,6 +72,8 @@ class Pricing:
     benchmark_usd: float | None  # Temu's price (or an estimate of it)
     benchmark_estimated: bool
     vs_benchmark: float | None  # price / benchmark
+    amazon_usd: float | None = None  # the same (or a very similar) product on Amazon
+    vs_amazon: float | None = None  # price / Amazon's price
 
 
 @dataclass
@@ -84,6 +95,8 @@ class Candidate:
     title_fa: str = ""
     starter_qty: int = 0
     starter_capital_usd: float = 0.0
+    alternatives: list[SupplierOffer] = field(default_factory=list)  # other shops for the same item
+    matches: list[MarketListing] = field(default_factory=list)  # the product on the other markets
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -93,5 +106,7 @@ class Candidate:
         d = dict(d)
         d["listing"] = MarketListing(**d["listing"])
         d["offer"] = SupplierOffer(**d["offer"])
+        d["alternatives"] = [SupplierOffer(**o) for o in d.get("alternatives", [])]
+        d["matches"] = [MarketListing(**x) for x in d.get("matches", [])]
         d["pricing"] = Pricing(**d["pricing"])
         return cls(**d)

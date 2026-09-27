@@ -12,10 +12,12 @@ import re
 from pathlib import Path
 
 from .allocate import choose_picks
-from .app import pricing_settings, public_user
+from .app import example_links, pricing_settings, public_user
 from .categories import CATEGORIES
+from .engine import Hunter
 from .payments import default_plans
 from .pricing import PricingConfig
+from .sources.sample import SampleData
 
 STATIC = Path(__file__).resolve().parent / "static"
 FONTS_LINK = (
@@ -36,6 +38,7 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
     css = re.sub(r"/\*fonts:start\*/.*?/\*fonts:end\*/", "", css, flags=re.S)
     markup = _between(html, "<!--app:start-->", "<!--app:end-->")
 
+    sample = SampleData()
     candidates = hunt["candidates"]
     counts: dict[str, int] = {}
     for c in candidates:
@@ -66,6 +69,10 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
             ],
             "hunt": {"started_at": hunt["started_at"], "sample": True},
             "pricing": pricing_settings(pricing),
+            "links": True,
+            "links_per_request": 10,
+            "daily_links": 20,
+            "example_links": example_links(Hunter([sample], sample)),
         },
         "me": me,
         "hunt": {

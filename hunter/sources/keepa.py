@@ -8,16 +8,28 @@ the rating as 0-50, weights in grams; -1 means "no data".
 from __future__ import annotations
 
 import logging
+import re
+from urllib.parse import urlsplit
 
 import httpx
 
 from ..categories import Category
+from ..matching import best_match, search_terms
 from ..models import MarketListing
+from .base import LinkError
 
 log = logging.getLogger(__name__)
 
 API = "https://api.keepa.com"
 IMAGE_BASE = "https://m.media-amazon.com/images/I/"
+
+# Keepa's domain codes by Amazon site.
+DOMAINS = {
+    "amazon.com": 1, "amazon.co.uk": 2, "amazon.de": 3, "amazon.fr": 4, "amazon.co.jp": 5,
+    "amazon.ca": 6, "amazon.it": 8, "amazon.es": 9, "amazon.in": 10, "amazon.com.mx": 11,
+    "amazon.com.br": 12,
+}  # fmt: skip
+ASIN = re.compile(r"/(?:dp|gp/product|gp/aw/d|product)/([A-Z0-9]{10})(?:[/?#]|$)")
 
 # Indexes into stats.current (Keepa's csv types).
 AMAZON, NEW, RATING, COUNT_REVIEWS, BUY_BOX_SHIPPING = 0, 1, 16, 17, 18
@@ -51,6 +63,29 @@ class Keepa:
         products = self._get("product", asin=",".join(wanted), stats=30).get("products") or []
         listings = [x for x in (to_listing(p, category.key) for p in products) if x]
         return listings[:limit]
+
+    def find_similar(self, listing: MarketListing) -> MarketListing | None:
+        """The same product on Amazon, by keyword search (up to 10 results, ~10 tokens)."""
+        terms = search_terms(listing.title)
+        if not terms:
+            return None
+        found = self._get("search", type="product", term=terms, stats=30, page=0, history=0)
+        return best_match(
+            listing, [x for x in (to_listing(p, "") for p in found.get("products") or []) if x]
+        )
+
+    def handles(self, url: str) -> bool:
+        return (urlsplit(url).hostname or "").removeprefix("www.").startswith("amazon.")
+
+    def listing_by_url(self, url: str) -> MarketListing | None:
+        host = (urlsplit(url).hostname or "").removeprefix("www.")
+        if DOMAINS.get(host) != self.domain:
+            raise LinkError("amazon_site_not_supported")
+        m = ASIN.search(urlsplit(url).path + "/")
+        if not m:
+            raise LinkError("listing_not_found")
+        products = self._get("product", asin=m.group(1), stats=30).get("products") or []
+        return to_listing(products[0], "") if products else None
 
 
 def _current(stats: dict, index: int) -> int | None:

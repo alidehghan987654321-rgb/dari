@@ -94,6 +94,7 @@ def price_product(
     *,
     benchmark_estimated: bool = False,
     units: int = 1,
+    amazon_usd: float | None = None,
 ) -> Pricing:
     """Cost out one sold listing (``units`` supplier pieces) and pick its price."""
     keep = 1 - cfg.cuts
@@ -141,4 +142,6 @@ def price_product(
         benchmark_usd=round(benchmark_usd, 2) if benchmark_usd else None,
         benchmark_estimated=benchmark_estimated,
         vs_benchmark=round(price / benchmark_usd, 4) if benchmark_usd else None,
+        amazon_usd=round(amazon_usd, 2) if amazon_usd else None,
+        vs_amazon=round(price / amazon_usd, 4) if amazon_usd else None,
     )

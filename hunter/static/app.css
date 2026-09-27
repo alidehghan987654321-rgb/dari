@@ -137,14 +137,43 @@ a { color: var(--accent); }
 .score.green { color: var(--good); } .score.yellow { color: var(--warn); } .score.red { color: var(--bad); }
 
 /* the price ladder: 1688 -> landed in Dubai -> our price, against Temu */
-.ladder { display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 0; margin: 0 16px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.ladder { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin: 0 16px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .rung { padding: 8px 10px; border-inline-start: 1px solid var(--line); }
 .rung:first-child { border-inline-start: 0; }
 .rung .k { font-size: 11px; color: var(--ink-faint); font-weight: 700; }
 .rung .v { font-family: var(--mono); font-weight: 700; font-size: 14px; direction: ltr; text-align: right; }
 .rung.ours { background: var(--accent-soft); }
 .rung.ours .v { color: var(--accent); font-size: 16px; }
-.rung.vs { display: flex; flex-direction: column; justify-content: center; align-items: center; min-width: 76px; }
+/* the same product on Temu and Amazon */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 16px 0; }
+.market { background: var(--surface-2); border-radius: 10px; padding: 7px 10px; }
+.market .k { font-size: 11px; color: var(--ink-faint); font-weight: 700; }
+.market .k a { font-weight: 700; text-decoration: none; }
+.market .v { font-weight: 700; font-size: 14px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.card.locked .compare { filter: blur(5px); user-select: none; pointer-events: none; }
+
+/* who to buy from */
+.supplier { margin: 10px 16px 0; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.supplier .shop { font-weight: 900; }
+.supplier .facts { font-size: 12.5px; color: var(--ink-soft); }
+.supplier .offer-title { font-size: 12.5px; color: var(--ink-faint); overflow-wrap: anywhere; }
+.supplier .tiers { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.supplier .tiers span { background: var(--surface-2); border-radius: 6px; padding: 1px 7px; }
+.supplier .links { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; }
+.supplier .links a { font-weight: 700; text-decoration: none; }
+.supplier details { margin: 2px 0 0; border: 0; padding: 0; font-size: 13px; }
+.supplier ul, .supplier ol { margin: 6px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 4px; }
+
+/* links sellers send */
+.links-form textarea { width: 100%; min-height: 110px; resize: vertical; direction: ltr; text-align: left; font-family: var(--mono); font-size: 13px; }
+.examples { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12.5px; }
+.examples button { border: 1px dashed var(--line); background: var(--surface); border-radius: 8px; padding: 3px 9px; cursor: pointer; color: var(--accent); direction: ltr; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobs { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.job { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.job .url { direction: ltr; font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); overflow-wrap: anywhere; flex: 1 1 240px; text-align: left; }
+.job-result { margin-top: 4px; }
+.manual { margin-top: 22px; }
+.manual > summary { cursor: pointer; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
 .vs-chip { font-family: var(--mono); font-size: 12px; font-weight: 700; border-radius: 6px; padding: 1px 6px; direction: ltr; }
 .vs-chip.good { background: var(--good-soft); color: var(--good); }
 .vs-chip.warn { background: var(--warn-soft); color: var(--warn); }
