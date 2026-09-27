@@ -235,7 +235,15 @@ python -m hunter make-admin you@example.com    # دسترسی کامل بدون 
 
 ## روی سرور
 
-راهنمای کامل در **[DEPLOY.md](DEPLOY.md)** هست. خلاصه‌اش: یه سرور بیرون از ایران، یه دامنه، و یه دستور:
+راهنمای کامل در **[DEPLOY.md](DEPLOY.md)** هست. دو راه داره.
+
+**Cloudflare** (پیشنهادی)، روی **https://hunter.gryffin.uk**:
+
+- سرور لازم نیست. کافیه دو Secret گیت‌هاب ربات (`CLOUDFLARE_API_TOKEN` و `CLOUDFLARE_ACCOUNT_ID`) باشن.
+- هر تغییری در کد، خودکار مستقر میشه.
+- دیتابیس در R2 نگه داشته میشه و شکار روزانه با cron خود Cloudflare اجرا میشه.
+
+**یا یه سرور بیرون از ایران**، یه دامنه، و یه دستور:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alidehghan987654321-rgb/dari/refs/heads/claude/trusting-cori-54e2u9/hunter/deploy/install.sh | bash

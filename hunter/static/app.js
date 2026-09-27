@@ -23,6 +23,8 @@
     gateway_error: "درگاه پرداخت جواب نداد؛ چند دقیقه دیگه دوباره امتحان کن.",
     no_hunt_yet: "هنوز شکاری انجام نشده.",
     unprofitable_settings: "با این تنظیمات هیچ قیمتی سود نمی‌ده.",
+    no_such_seller: "فروشنده‌ای با این ایمیل ثبت‌نام نکرده.",
+    admins_only: "این کار فقط برای مدیر سایته.",
     network: "ارتباط با سرور برقرار نشد.",
   };
   var HASH_MESSAGES = {
@@ -800,7 +802,21 @@
         "</div>" +
         '<div class="label" style="margin-bottom:6px">دسته‌هایی که کار می‌کنی</div><div class="cats">' + cats + "</div>" +
         '<div class="error" id="profile-error"></div><button class="btn" type="submit">ذخیره' + ic("save") + "</button></form>" +
+      (me.is_admin ? adminHTML() : "") +
     "</div>";
+  }
+
+  // For the site's admin: activate a seller who paid by bank transfer.
+  function adminHTML() {
+    var plans = state.config.plans.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.name_fa) + "</option>"; }).join("");
+    return '<form class="panel" id="grant-form"><h2 class="section-title">مدیریت: فعال کردن اشتراک فروشنده</h2>' +
+      '<p class="section-sub">برای فروشنده‌ای که کارت‌به‌کارت پرداخت کرده. اول باید روی سایت ثبت‌نام کرده باشه؛ اگه اشتراکش هنوز فعاله، روزها به آخرش اضافه میشه.</p>' +
+      '<div class="form-grid" style="margin-bottom:16px">' +
+        '<div class="field"><label for="g-email">ایمیل فروشنده</label><input class="input" id="g-email" type="email" dir="ltr" required></div>' +
+        '<div class="field"><label for="g-plan">پلن</label><select class="input" id="g-plan">' + plans + "</select></div>" +
+        '<div class="field"><label for="g-days">چند روز</label><input class="input num" id="g-days" type="number" min="1" step="1" value="30"></div>' +
+      "</div>" +
+      '<div class="error" id="grant-error"></div><button class="btn" type="submit">فعال کن' + ic("check") + "</button></form>";
   }
   function bindAccount() {
     each(document, "[data-plan]", function (b) {
@@ -812,6 +828,17 @@
         }, function (e) { b.disabled = false; $("pay-error").textContent = errText(e); });
       };
     });
+    var grant = $("grant-form");
+    if (grant) grant.onsubmit = function (ev) {
+      ev.preventDefault();
+      var body = { email: $("g-email").value, plan: $("g-plan").value, days: Number($("g-days").value || 30) };
+      $("grant-error").textContent = "";
+      if (DEMO) { toast("در نسخه‌ی واقعی اشتراک " + body.email + " فعال میشه."); return; }
+      api("/api/admin/grant", { method: "POST", body: body }).then(function (r) {
+        toast("اشتراک " + r.email + " تا " + faDate(r.paid_until) + " فعال شد.");
+        $("g-email").value = "";
+      }, function (e) { $("grant-error").textContent = errText(e); });
+    };
     $("profile-form").onsubmit = function (ev) {
       ev.preventDefault();
       var cats = Array.prototype.map.call(document.querySelectorAll('input[name="cat"]:checked'), function (x) { return x.value; });

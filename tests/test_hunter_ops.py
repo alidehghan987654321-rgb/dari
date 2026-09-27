@@ -1,11 +1,17 @@
 """Running the site for real: the daily schedule and database backups."""
 
+import sqlite3
 from datetime import datetime, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 
+from hunter.app import Settings, create_app
 from hunter.cli import backup, main, next_run
 from hunter.db import Database
+from hunter.jobs import daily_hunt
+from hunter.pricing import PricingConfig
+from hunter.sources.sample import SampleData
 
 
 def test_backup_is_a_full_copy_and_keeps_the_newest(tmp_path):
@@ -49,3 +55,45 @@ def test_restore_puts_a_backup_back(tmp_path):
     db.create_user("later@example.com", "b", "", "x")
     assert main(["restore", str(saved), "--db", db.path]) == 0
     assert db.user_by_email("kept@example.com") and not db.user_by_email("later@example.com")
+
+
+def hunts(path):
+    with sqlite3.connect(path) as conn:
+        return conn.execute("SELECT count(*) FROM hunts").fetchone()[0]
+
+
+@pytest.fixture
+def no_data_keys(monkeypatch):
+    for name in ("KEEPA_API_KEY", "APIFY_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_the_scheduler_starts_the_hunt_with_its_secret_only(tmp_path, no_data_keys):
+    path = str(tmp_path / "h.db")
+    with TestClient(create_app(Settings(db_path=path, cron_secret="s3cret"))) as c:
+        assert c.post("/internal/hunt").status_code == 404
+        assert c.post("/internal/hunt", headers={"X-Hunter-Cron": "wrong"}).status_code == 404
+        assert hunts(path) == 0
+        r = c.post("/internal/hunt", headers={"X-Hunter-Cron": "s3cret"})
+        assert r.json() == {"started": True}
+        assert hunts(path) == 1  # no data keys yet: the sample hunt, so the site isn't empty
+        c.post("/internal/hunt", headers={"X-Hunter-Cron": "s3cret"})
+        assert hunts(path) == 1  # and only while there's nothing to show
+    with TestClient(create_app(Settings(db_path=path))) as c:  # no secret set: no endpoint
+        assert c.post("/internal/hunt", headers={"X-Hunter-Cron": ""}).status_code == 404
+
+
+def test_daily_hunt_runs_live_when_there_are_sources(tmp_path, monkeypatch):
+    sample = SampleData()
+    monkeypatch.setattr("hunter.jobs.live_sources", lambda: ([sample], sample))
+    db = Database(str(tmp_path / "h.db"))
+    assert daily_hunt(db, PricingConfig()).startswith("hunt 1:")
+    assert daily_hunt(db, PricingConfig()).startswith("hunt 2:")  # every day, not only once
+
+
+def test_hunt_if_empty(tmp_path, no_data_keys):
+    path = str(tmp_path / "h.db")
+    for _ in range(2):
+        assert main(["hunt", "--sample", "--if-empty", "--db", path]) == 0
+    assert hunts(path) == 1
+    assert main(["hunt", "--db", path]) == 2  # live without keys: says what's missing

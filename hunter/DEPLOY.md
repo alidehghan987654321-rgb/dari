@@ -1,12 +1,84 @@
 # آنلاین کردن شکارچی
 
-همه‌چیز داخل Docker اجرا میشه:
+دو راه هست:
 
-- **site**: خود سایت
-- **hunt**: هر روز شکار و بعدش پشتیبان‌گیری از دیتابیس
-- **caddy**: HTTPS، که گواهیش رو خودش می‌گیره و تمدید می‌کنه
+- **Cloudflare** (پیشنهادی): سرور لازم نیست. سایت روی **https://hunter.gryffin.uk** بالا میاد، مثل ربات که روی
+  `dl.gryffin.uk` هست.
+- **یه سرور مجازی (VPS)** با Docker: از بخش «۱. سرور کجا باشه؟» به بعد.
 
-داده‌ها در volume `hunter_data` می‌مونن و با به‌روزرسانی پاک نمیشن. کل راه‌اندازی یه دستوره.
+## روی Cloudflare: hunter.gryffin.uk
+
+ساختار:
+
+- یه Worker روی `hunter.gryffin.uk` هر درخواست رو به یه کانتینر می‌ده که از
+  `hunter/deploy/Dockerfile.cloudflare` ساخته شده (`cloudflare/hunter.jsonc` و `cloudflare/src/hunter.ts`).
+- Cloudflare رکورد DNS و گواهی HTTPS رو خودش می‌سازه.
+- **دیتابیس در R2 نگه داشته میشه.** دیسک کانتینر با هر بار خوابیدن یا به‌روزرسانی پاک میشه، پس
+  [Litestream](https://litestream.io) دیتابیس رو لحظه‌به‌لحظه در باکت R2 به اسم `hunter-db` می‌نویسه و موقع روشن
+  شدن برمی‌گردونه. ۳۰ روز تاریخچه هم نگه می‌داره.
+- **شکار روزانه** با cron خود Cloudflare، ساعت ۰۱:۰۰ UTC (۴:۳۰ صبح تهران)، کانتینر رو بیدار می‌کنه.
+- کانتینر بعد از ۲ ساعت بی‌کاری می‌خوابه. اولین بازدید بعد از خواب چند ثانیه طول می‌کشه.
+- هر تغییری که در کد هیونتر به گیت‌هاب برسه، GitHub Actions تست می‌کنه و دوباره مستقر می‌کنه
+  (`.github/workflows/deploy-hunter.yml`).
+
+### کارهای یک‌باره
+
+اگه این‌ها رو برای ربات انجام دادی، مرحله‌ی ۱ تا ۳ تکراریه؛ فقط مطمئن شو توکن دسترسی R2 داره.
+
+1. **پلن Workers Paid** (ماهی حدود ۵ دلار؛ Containers بدون اون کار نمی‌کنه): در
+   [dash.cloudflare.com](https://dash.cloudflare.com) ← **Workers & Pages** ← **Plans**.
+2. **API Token:** عکس پروفایل ← **My Profile** ← **API Tokens** ← **Create Token** ← قالب
+   **Edit Cloudflare Workers** ← **Use template**. با **+ Add more** این‌ها رو اضافه کن:
+   - Account ← **Containers** ← Edit
+   - Zone ← **DNS** ← Edit
+   - Zone ← **Zone** ← Read
+
+   در **Zone Resources** دامنه‌ی `gryffin.uk` رو انتخاب کن و توکن رو بساز و کپی کن. دسترسی **Workers R2 Storage ←
+   Edit** توی همین قالب هست و برای دیتابیس لازمه؛ پاکش نکن.
+3. **Account ID:** در صفحه‌ی **Workers & Pages**، سمت راست.
+4. **Secretها در گیت‌هاب:** مخزن ← **Settings** ← **Secrets and variables** ← **Actions** ←
+   **New repository secret**:
+   - `CLOUDFLARE_API_TOKEN` = توکن مرحله‌ی ۲
+   - `CLOUDFLARE_ACCOUNT_ID` = شناسه‌ی مرحله‌ی ۳
+   - `HUNTER_ENV` (اختیاری): تنظیمات سایت، هر خط یه `اسم=مقدار`، مثل `.env`. فقط `HUNTER_*`، `KEEPA_*`،
+     `APIFY_*`، `ZARINPAL_*` و `ANTHROPIC_*` خونده میشن. مثلاً:
+
+     ```
+     HUNTER_ADMINS=you@example.com
+     KEEPA_API_KEY=...
+     APIFY_TOKEN=...
+     HUNTER_TEMU_ACTOR=...
+     HUNTER_1688_IMAGE_ACTOR=...
+     ZARINPAL_MERCHANT_ID=...
+     HUNTER_TOMAN_PER_USD=234500
+     ```
+
+     `HUNTER_ADMINS` ایمیل(های) مدیره: با ثبت‌نام یا ورود با همین ایمیل، مدیر میشی. چون روی Cloudflare خط
+     فرمان نداری، فعال کردن اشتراک فروشنده‌ها از **حساب من ← مدیریت** انجام میشه.
+5. **اجرا:** مخزن ← **Actions** ← **Deploy the hunter to Cloudflare** ← **Run workflow**. بار اول چند دقیقه طول
+   می‌کشه. بعد https://hunter.gryffin.uk باز میشه. خلاصه‌ی اجرا نشون می‌ده دیتابیس در R2 هست یا نه، و کلید داده
+   داری یا نه.
+
+### نکته‌ها
+
+- **بدون کلید داده** سایت شکار نمونه رو نشون می‌ده. با اضافه شدن Keepa یا Apify به `HUNTER_ENV` و اجرای دوباره،
+  اولین شکار زنده همون موقع شروع میشه.
+- **هر تغییر `HUNTER_ENV`:** دوباره **Run workflow** بزن.
+- **اگه خلاصه‌ی اجرا گفت «Database kept in R2: no»:** توکن دسترسی R2 نداره و با هر ری‌استارت داده‌ها پاک میشن.
+  یا دسترسی **Workers R2 Storage ← Edit** رو به توکن بده، یا در R2 ← **Manage API tokens** یه توکن Object Read &
+  Write برای باکت `hunter-db` بساز و `R2_ACCESS_KEY_ID` و `R2_SECRET_ACCESS_KEY` رو به Secretها اضافه کن.
+- **لاگ‌ها:** Cloudflare ← **Workers & Pages** ← `hunter` ← **Logs**.
+- **آدرس دیگه:** `hunter.gryffin.uk` رو در `cloudflare/hunter.jsonc` (دو جا) عوض کن.
+- **هزینه:**
+  - پلن Workers Paid
+  - زمان روشن بودن کانتینر (نوع `basic`: ربع هسته، ۱ گیگ رم)
+  - R2، که برای این اندازه در سهم رایگانش جا می‌گیره
+
+  قیمت‌های روز در صفحه‌ی Pricing خود Cloudflare هست.
+- **زرین‌پال:** درخواست‌ها از آی‌پی‌های Cloudflare به زرین‌پال می‌رن. قبل از افتتاح، با `ZARINPAL_SANDBOX=1` یه
+  پرداخت آزمایشی بزن (مرحله‌ی ۱ پایین).
+
+---
 
 ## ۱. سرور کجا باشه؟
 

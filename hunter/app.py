@@ -7,6 +7,7 @@ get products of your own and analyse any product.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ from .allocate import choose_picks
 from .categories import CATEGORIES, classify, pack_qty
 from .db import Database, is_active
 from .engine import Hunter
+from .jobs import daily_hunt
 from .links import link_key
 from .models import MarketListing, SupplierOffer
 from .payments import DemoGateway, Gateway, PaymentError, Plan, Zarinpal, make_plans
@@ -79,6 +81,8 @@ class Settings:
     offer_cache_hours: float = 24 * 7  # 1688 offer pages shown on the site
     image_client: httpx.Client | None = None  # for the image proxy (tests pass a fake)
     namer: PersianNamer | None = None  # Persian product names with Claude
+    cron_secret: str = ""  # lets a scheduler start the daily hunt (POST /internal/hunt)
+    admins: tuple[str, ...] = ()  # these emails are admins as soon as they sign up or log in
 
     @property
     def secure_cookies(self) -> bool:
@@ -109,6 +113,10 @@ class Settings:
             monthly_links=int(env("HUNTER_MONTHLY_LINKS", "30")),
             cache_hours=float(env("HUNTER_CACHE_HOURS", "72")),
             namer=PersianNamer.from_env(),
+            cron_secret=env("HUNTER_CRON_SECRET", ""),
+            admins=tuple(
+                e.strip().lower() for e in env("HUNTER_ADMINS", "").split(",") if e.strip()
+            ),
         )
 
 
@@ -136,6 +144,12 @@ class Profile(BaseModel):
 
 class Pay(BaseModel):
     plan: str
+
+
+class Grant(BaseModel):
+    email: str = Field(max_length=120)
+    days: int = Field(default=30, ge=1, le=3650)
+    plan: str | None = None
 
 
 class Links(BaseModel):
@@ -227,11 +241,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(402, "subscription_required")
         return user
 
+    def admin_by_setting(user: dict[str, Any]) -> dict[str, Any]:
+        """HUNTER_ADMINS: where there's no shell to run make-admin (Cloudflare)."""
+        if user["email"] in settings.admins and not user["is_admin"]:
+            db.make_admin(user["email"])
+            user = db.user(user["id"])
+        return user
+
     # --- pages -----------------------------------------------------------------
 
     @app.get("/", include_in_schema=False)
     def index():
         return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/admin/grant")
+    def admin_grant(body: Grant, user=Depends(require_user)):
+        """An admin activates a seller who paid another way (grant, from the site)."""
+        if not user["is_admin"]:
+            raise HTTPException(403, "admins_only")
+        if body.plan and body.plan not in {p.id for p in settings.plans}:
+            raise HTTPException(422, "bad_plan")
+        email = body.email.strip().lower()
+        until = db.grant(email, body.days, body.plan)
+        if not until:
+            raise HTTPException(404, "no_such_seller")
+        return {"email": email, "paid_until": until}
+
+    @app.post("/internal/hunt", include_in_schema=False)
+    def internal_hunt(request: Request, background: BackgroundTasks):
+        """The daily hunt, for a scheduler that can't run a command (Cloudflare's cron
+        trigger). Unknown to anyone without the secret."""
+        given = request.headers.get("x-hunter-cron", "")
+        if not settings.cron_secret or not hmac.compare_digest(
+            given.encode(), settings.cron_secret.encode()
+        ):
+            raise HTTPException(404, "Not Found")
+        background.add_task(lambda: log.info("daily hunt: %s", daily_hunt(db, settings.pricing)))
+        return {"started": True}
 
     @app.get("/healthz", include_in_schema=False)
     def healthz():
@@ -276,7 +322,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             email, body.name.strip(), body.phone.strip(), auth.hash_password(body.password)
         )
         set_session(response, user_id)
-        return public_user(db.user(user_id))
+        return public_user(admin_by_setting(db.user(user_id)))
 
     @app.post("/api/login")
     def login(body: Login, request: Request, response: Response):
@@ -290,7 +336,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(401, "wrong_login")
         throttle.reset(key)
         set_session(response, user["id"])
-        return public_user(user)
+        return public_user(admin_by_setting(user))
 
     @app.post("/api/logout")
     def logout(request: Request, response: Response):

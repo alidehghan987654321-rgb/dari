@@ -1,0 +1,36 @@
+// The product hunter (hunter/) on Cloudflare: a Worker on hunter.gryffin.uk hands every
+// request to one container built from hunter/deploy/Dockerfile.cloudflare, and wakes it
+// every day for the hunt. The database lives in R2 (Litestream), because the container's
+// disk doesn't survive a restart. Deployed by .github/workflows/deploy-hunter.yml; see
+// hunter/DEPLOY.md. To use a different address, change it in both "routes" and "vars".
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hunter",
+  "main": "src/hunter.ts",
+  "compatibility_date": "2026-06-01",
+  "workers_dev": false,
+  // Cloudflare creates the DNS record and HTTPS certificate for this itself.
+  "routes": [{ "pattern": "hunter.gryffin.uk", "custom_domain": true }],
+  "vars": {
+    "DOMAIN": "hunter.gryffin.uk",
+    "HUNTER_BRAND": "شکارچی",
+    // The R2 bucket for the database (the deploy workflow creates it).
+    "LITESTREAM_BUCKET": "hunter-db"
+  },
+  // The daily hunt: 01:00 UTC is 04:30 in Tehran.
+  "triggers": { "crons": ["0 1 * * *"] },
+  "containers": [
+    {
+      "class_name": "Hunter",
+      "image": "../hunter/deploy/Dockerfile.cloudflare",
+      "image_build_context": "..",
+      // 1/4 vCPU and 1 GiB: plenty for the site and SQLite.
+      "instance_type": "basic",
+      // One instance: SQLite has a single writer.
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": { "bindings": [{ "name": "HUNTER", "class_name": "Hunter" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hunter"] }],
+  "observability": { "enabled": true }
+}

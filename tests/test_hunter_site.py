@@ -735,3 +735,38 @@ def test_preview_carries_the_calculator(sample_hunt):
     assert "window.HunterCalc" in page or "root.HunterCalc" in page
     assert page.index("HunterCalc = api") < page.index("var Calc = window.HunterCalc")
     assert '"toman_per_usd": 234500' in page
+
+
+def test_admins_from_the_setting_and_granting_from_the_site(settings):
+    settings.admins = ("boss@example.com",)
+    with TestClient(create_app(settings)) as c:
+        seller = signup(c, email="seller@example.com")
+        assert seller["is_admin"] is False
+        r = c.post("/api/admin/grant", json={"email": "seller@example.com", "days": 30})
+        assert r.status_code == 403  # sellers can't give themselves a subscription
+        c.post("/api/logout")
+        boss = signup(c, email="Boss@Example.com")
+        assert boss["is_admin"] is True and boss["active"] is True
+        r = c.post(
+            "/api/admin/grant",
+            json={"email": " SELLER@example.com", "days": 30, "plan": "business"},
+        )
+        assert r.status_code == 200 and r.json()["email"] == "seller@example.com"
+        assert c.post("/api/admin/grant", json={"email": "nobody@example.com"}).status_code == 404
+        assert (
+            c.post(
+                "/api/admin/grant", json={"email": "seller@example.com", "plan": "gold"}
+            ).status_code
+            == 422
+        )
+        c.post("/api/logout")
+        c.post("/api/login", json={"email": "seller@example.com", "password": PASSWORD})
+        me = c.get("/api/me").json()
+        assert me["active"] is True and me["plan"] == "business"
+
+
+def test_admins_setting_from_env(monkeypatch):
+    monkeypatch.setenv("HUNTER_ADMINS", " A@example.com, b@example.com ,")
+    monkeypatch.setenv("HUNTER_CRON_SECRET", "x")
+    s = Settings.from_env()
+    assert s.admins == ("a@example.com", "b@example.com") and s.cron_secret == "x"

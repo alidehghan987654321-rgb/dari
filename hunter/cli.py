@@ -24,47 +24,33 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .categories import find_category, hunt_categories
+from .categories import find_category
 from .db import Database
 from .engine import Hunter
+from .jobs import NoSources, run_hunt
 from .payments import PLAN_TIERS
 from .pricing import PricingConfig
 from .sources.sample import SampleData
-from .translate import PersianNamer, name_candidates
-from .wiring import live_sources
 
 log = logging.getLogger("hunter")
 
 
 def cmd_hunt(args) -> int:
-    cats = (
-        [find_category(k) for k in args.categories.split(",")]
-        if args.categories
-        else hunt_categories()
-    )
+    cats = [find_category(k) for k in args.categories.split(",")] if args.categories else None
     cfg = PricingConfig.from_env()
     if args.market:
         cfg = cfg.for_market(args.market)
-    if args.sample:
-        sample = SampleData()
-        hunter, note = Hunter([sample], sample, cfg), sample.note
-    else:
-        markets, supplier = live_sources()
-        if not markets or supplier is None:
-            print(
-                "No live sources configured. Set KEEPA_API_KEY and/or APIFY_TOKEN +"
-                " HUNTER_TEMU_ACTOR for listings, and APIFY_TOKEN + HUNTER_1688_IMAGE_ACTOR"
-                " for 1688 (see hunter/README.md), or use --sample.",
-                file=sys.stderr,
-            )
-            return 2
-        hunter, note = Hunter(markets, supplier, cfg), ""
-    result = hunter.hunt(cats, args.per_category)
-    result.sample, result.note = args.sample, note
-    data = result.to_dict()
     db = Database(args.db)
-    name_candidates(data["candidates"], PersianNamer.from_env(), db)
-    hunt_id = db.save_hunt(data)
+    if getattr(args, "if_empty", False) and db.latest_hunt_time():
+        print("There is already a hunt; skipped (--if-empty).")
+        return 0
+    try:
+        hunt_id, data, result = run_hunt(
+            db, cfg, sample=args.sample, categories=cats, per_category=args.per_category
+        )
+    except NoSources as e:
+        print(f"{e} Or use --sample.", file=sys.stderr)
+        return 2
     if args.json:
         Path(args.json).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     counts = {v: sum(c.verdict == v for c in result.candidates) for v in ("green", "yellow", "red")}
@@ -192,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("hunt", help="find products and save the hunt")
     hunt_args(p)
+    p.add_argument("--if-empty", action="store_true", help="only if there's no hunt yet")
     p.set_defaults(func=cmd_hunt)
 
     p = sub.add_parser("schedule", help="hunt and back up every day at a fixed time (UTC)")

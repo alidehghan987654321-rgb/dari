@@ -272,4 +272,4 @@ pytest
 قیمت فروشِ رقابتی با Temu پیشنهاد می‌ده و با اشتراک زرین‌پال کار می‌کنه. یه ماشین‌حساب واردات رایگان هم داره.
 
 - توضیح کامل: [hunter/README.md](hunter/README.md)
-- آنلاین کردنش روی سرور (Docker و HTTPS، جدا از ربات): [hunter/DEPLOY.md](hunter/DEPLOY.md)
+- آنلاین کردنش روی Cloudflare (`hunter.gryffin.uk`، با همون دو Secret ربات) یا روی یه سرور: [hunter/DEPLOY.md](hunter/DEPLOY.md)
