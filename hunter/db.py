@@ -96,6 +96,10 @@ class Database:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            # The site and the daily hunt write at the same time; WAL lets readers go on.
+            conn = sqlite3.connect(self.path, timeout=30)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.close()
         with self.tx() as db:
             db.executescript(SCHEMA)
             # Databases made before plans had tiers.
@@ -266,6 +270,32 @@ class Database:
         with self.tx() as db:
             row = db.execute("SELECT id, data FROM hunts ORDER BY id DESC LIMIT 1").fetchone()
         return (row["id"], json.loads(row["data"])) if row else None
+
+    def latest_hunt_time(self) -> str | None:
+        with self.tx() as db:
+            row = db.execute("SELECT created_at FROM hunts ORDER BY id DESC LIMIT 1").fetchone()
+        return row["created_at"] if row else None
+
+    def backup(self, dest: str | Path) -> None:
+        """A consistent copy of the whole database, safe while the site is running."""
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        src, out = sqlite3.connect(self.path, timeout=30), sqlite3.connect(str(dest))
+        try:
+            src.backup(out)
+        finally:
+            out.close()
+            src.close()
+
+    def restore(self, src: str | Path) -> None:
+        """Replace the whole database with a backup, through SQLite (safe with WAL)."""
+        if not Path(src).is_file():
+            raise FileNotFoundError(src)
+        backup, out = sqlite3.connect(str(src)), sqlite3.connect(self.path, timeout=30)
+        try:
+            backup.backup(out)
+        finally:
+            out.close()
+            backup.close()
 
     def picks(self, hunt_id: int, user_id: int) -> list[str]:
         with self.tx() as db:

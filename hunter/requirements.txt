@@ -1,4 +1,7 @@
-# The product hunter uses the main requirements (FastAPI, httpx, ...) plus, optionally,
-# the Claude SDK for Persian product names (only used when ANTHROPIC_API_KEY is set).
--r ../requirements.txt
+# The product hunter on its own; its Docker image installs only this.
+fastapi==0.141.1
+uvicorn==0.54.0
+httpx
+python-dotenv==1.2.3
+# Optional: Persian product names with Claude (used only when ANTHROPIC_API_KEY is set).
 anthropic>=1.8

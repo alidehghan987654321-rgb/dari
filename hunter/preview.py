@@ -23,7 +23,7 @@ from .sources.sample import SampleData
 STATIC = Path(__file__).resolve().parent / "static"
 FONTS_LINK = (
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
-    'family=Vazirmatn:wght@400;700;900&display=swap">'
+    'family=IBM+Plex+Mono:wght@400;600&family=Vazirmatn:wght@400;700&display=swap">'
 )
 
 
@@ -46,6 +46,7 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     css = (STATIC / "app.css").read_text(encoding="utf-8")
     js = (STATIC / "app.js").read_text(encoding="utf-8")
+    calc = (STATIC / "calc.js").read_text(encoding="utf-8")
     css = re.sub(r"/\*fonts:start\*/.*?/\*fonts:end\*/", "", css, flags=re.S)
     markup = _between(html, "<!--app:start-->", "<!--app:end-->")
 
@@ -90,6 +91,8 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
             ],
             "hunt": {"started_at": hunt["started_at"], "sample": True},
             "pricing": pricing_settings(pricing),
+            "toman_per_usd": 234_500,
+            "per_product": 3,
             "links": True,
             "links_per_request": 10,
             "monthly_links": 30,
@@ -118,5 +121,6 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
     return (
         "<title>شکارچی محصول</title>\n"
         f"{FONTS_LINK}\n<style>\n{css}\n</style>\n{markup}\n"
-        f"<script>window.HUNTER_DEMO = {data};</script>\n<script>\n{js}\n</script>\n"
+        f"<script>window.HUNTER_DEMO = {data};</script>\n"
+        f"<script>\n{calc}\n</script>\n<script>\n{js}\n</script>\n"
     )

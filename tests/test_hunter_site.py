@@ -521,6 +521,13 @@ def test_manual_analysis_compares_with_amazon(client):
         },
     ).json()
     assert a["pricing"]["amazon_usd"] == 16.99 and a["pricing"]["vs_amazon"] < 0.7
+    only_amazon = client.post(
+        "/api/analyze",
+        json={"title": "Car Seat Gap Filler", "price_cny": 6.65, "weight_kg": 0.4, "amazon_price_usd": 16.99},
+    ).json()["pricing"]  # fmt: skip
+    # Priced against the Temu price Amazon suggests, as the daily hunt does.
+    assert only_amazon["benchmark_estimated"] is True
+    assert only_amazon["benchmark_usd"] == round(16.99 * 0.6, 2)
 
 
 # --- plans, new-today, the in-site 1688 view and the image proxy ------------------------
@@ -676,3 +683,55 @@ def test_image_proxy_only_fetches_product_pictures(link_settings):
             assert c.get("/img", params={"u": bad}).status_code == 400
         assert c.get("/img", params={"u": "https://img.alicdn.com/page.html"}).status_code == 502
         assert fetched == ["https://cbu01.alicdn.com/a.png", "https://img.alicdn.com/page.html"]
+
+
+# --- the calculator, the new look and going online -------------------------------------
+
+
+def test_page_is_versioned_and_sent_with_security_headers(client):
+    r = client.get("/")
+    page = r.text
+    assert "{{v}}" not in page and r.headers["cache-control"] == "no-cache"
+    assert page.index("/static/calc.js?v=") < page.index("/static/app.js?v=")  # app.js needs it
+    assert 'id="i-calc"' in page  # the icon sprite
+    assert "script-src 'self'" in r.headers["content-security-policy"]
+    assert (
+        r.headers["x-frame-options"] == "DENY" and r.headers["x-content-type-options"] == "nosniff"
+    )
+    assert "strict-transport-security" not in r.headers  # only behind https
+    assert client.get("/api/config").headers["x-frame-options"] == "DENY"
+    for path in ("/static/calc.js", "/static/icon.svg", "/static/fonts/Vazirmatn-Regular.woff2",
+                 "/static/fonts/IBMPlexMono-Regular.woff2"):  # fmt: skip
+        assert client.get(path).status_code == 200, path
+
+
+def test_https_sites_ask_for_https_only(settings):
+    settings.public_url = "https://shop.example"
+    with TestClient(create_app(settings)) as c:
+        assert c.get("/").headers["strict-transport-security"].startswith("max-age=")
+
+
+def test_calculator_settings_in_config(client, settings):
+    cfg = client.get("/api/config").json()
+    assert cfg["toman_per_usd"] == settings.toman_per_usd == 234_500
+    assert cfg["per_product"] == settings.per_product
+
+
+def test_toman_rate_from_env(monkeypatch):
+    monkeypatch.setenv("HUNTER_TOMAN_PER_USD", "250000")
+    s = Settings.from_env()
+    assert s.toman_per_usd == 250_000 and s.plans[0].price_toman == 1_500_000  # $6
+
+
+def test_health_check(tmp_path, sample_hunt):
+    with TestClient(create_app(Settings(db_path=str(tmp_path / "h.db")))) as c:
+        assert c.get("/healthz").json() == {"ok": True, "last_hunt": None}
+        Database(str(tmp_path / "h.db")).save_hunt(sample_hunt)
+        assert c.get("/healthz").json()["last_hunt"]
+
+
+def test_preview_carries_the_calculator(sample_hunt):
+    page = build_preview(sample_hunt)
+    assert "window.HunterCalc" in page or "root.HunterCalc" in page
+    assert page.index("HunterCalc = api") < page.index("var Calc = window.HunterCalc")
+    assert '"toman_per_usd": 234500' in page

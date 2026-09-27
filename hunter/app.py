@@ -6,6 +6,7 @@ get products of your own and analyse any product.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -17,9 +18,10 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.datastructures import MutableHeaders
 
 from . import auth
 from .allocate import choose_picks
@@ -40,10 +42,21 @@ from .wiring import link_hunter
 log = logging.getLogger(__name__)
 
 STATIC = Path(__file__).resolve().parent / "static"
-FONTS = Path(__file__).resolve().parent.parent / "static" / "fonts"
 COOKIE = "hunter_session"
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 LINK = re.compile(r"^https?://\S+$")
+ASSETS = ("app.css", "calc.js", "app.js")  # versioned in the page so a deploy isn't cached
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';"
+        " script-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none';"
+        " base-uri 'self'; form-action 'self'"
+    ),
+}
 IMAGE_HOSTS = ("alicdn.com", "1688.com", "media-amazon.com", "ssl-images-amazon.com", "kwcdn.com")
 
 
@@ -53,6 +66,7 @@ class Settings:
     public_url: str = "http://localhost:8100"  # where the site is reached; for the payment callback
     brand: str = "شکارچی"
     gateway: Gateway | None = None  # None: no online payment, an admin activates sellers
+    toman_per_usd: float = 234_500  # the free-market rate; plan prices and the calculator
     plans: list[Plan] = field(default_factory=lambda: make_plans(234_500))
     pricing: PricingConfig = field(default_factory=PricingConfig)
     per_product: int = 3  # sellers per product
@@ -79,14 +93,15 @@ class Settings:
             gateway = DemoGateway()
         elif env("ZARINPAL_MERCHANT_ID"):
             gateway = Zarinpal(env("ZARINPAL_MERCHANT_ID"), sandbox=env("ZARINPAL_SANDBOX") == "1")
+        toman_per_usd = float(env("HUNTER_TOMAN_PER_USD", "234500"))
         return cls(
             db_path=env("HUNTER_DB", cls.db_path),
             public_url=env("HUNTER_PUBLIC_URL", cls.public_url).rstrip("/"),
             brand=env("HUNTER_BRAND", cls.brand),
             gateway=gateway,
+            toman_per_usd=toman_per_usd,
             plans=make_plans(
-                float(env("HUNTER_TOMAN_PER_USD", "234500")),
-                json.loads(env("HUNTER_PLANS")) if env("HUNTER_PLANS") else None,
+                toman_per_usd, json.loads(env("HUNTER_PLANS")) if env("HUNTER_PLANS") else None
             ),
             pricing=PricingConfig.from_env(),
             per_product=int(env("HUNTER_SELLERS_PER_PRODUCT", "3")),
@@ -177,6 +192,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     db.fail_unfinished_analyses()
     throttle = auth.Throttle()
     app = FastAPI(title=settings.brand, docs_url=None, redoc_url=None)
+    headers = dict(SECURITY_HEADERS)
+    if settings.secure_cookies:
+        headers["Strict-Transport-Security"] = "max-age=31536000"
+    app.add_middleware(SecurityHeaders, headers=headers)
+    page = (STATIC / "index.html").read_text(encoding="utf-8").replace("{{v}}", asset_version())
     image_client = settings.image_client or httpx.Client(timeout=20, follow_redirects=False)
     app.state.settings = settings
     app.state.db = db
@@ -211,7 +231,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(STATIC / "index.html")
+        return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/healthz", include_in_schema=False)
+    def healthz():
+        latest = db.latest_hunt_time()
+        return {"ok": True, "last_hunt": latest}
 
     # --- config & account --------------------------------------------------------
 
@@ -232,6 +257,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else None
             ),
             "pricing": pricing_settings(settings.pricing),
+            "toman_per_usd": settings.toman_per_usd,
+            "per_product": settings.per_product,
             "links": settings.link_hunter is not None,
             "links_per_request": settings.links_per_request,
             "monthly_links": settings.monthly_links,
@@ -412,14 +439,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             moq=body.moq,
             sales=body.supplier_sales,
         )
+        temu, amazon = body.temu_price_usd or None, body.amazon_price_usd or None
+        # Only an Amazon price: priced against the Temu price it suggests, as in the hunt.
+        benchmark = temu or (amazon * cfg.temu_vs_amazon if amazon else None)
         try:
             pricing = price_product(
                 body.price_cny,
                 weight,
-                body.temu_price_usd or None,
+                benchmark,
                 cfg,
+                benchmark_estimated=not temu and bool(amazon),
                 units=units,
-                amazon_usd=body.amazon_price_usd or None,
+                amazon_usd=amazon,
             )
         except Unprofitable as e:
             raise HTTPException(422, str(e)) from None
@@ -552,9 +583,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
-    if FONTS.is_dir():
-        app.mount("/fonts", StaticFiles(directory=FONTS), name="fonts")
     return app
+
+
+class SecurityHeaders:
+    """Adds the security headers to every response (plain ASGI, so background tasks and
+    streaming are untouched)."""
+
+    def __init__(self, app, headers: dict[str, str]):
+        self.app, self.headers = app, headers
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                h = MutableHeaders(scope=message)
+                for k, v in self.headers.items():
+                    if k not in h:
+                        h[k] = v
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+def asset_version() -> str:
+    digest = hashlib.sha256()
+    for name in ASSETS:
+        digest.update((STATIC / name).read_bytes())
+    return digest.hexdigest()[:10]
 
 
 def example_links(hunter: Hunter | None) -> list[str]:
