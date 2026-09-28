@@ -29,7 +29,9 @@
   // input: what the seller typed; any cfg value can be overridden in input.cfg.
   function compute(input, siteCfg) {
     var cfg = Object.assign({}, siteCfg, input.cfg || {});
-    if (input.market === "cod") cfg.returns_pct = input.cfg && input.cfg.returns_pct != null ? input.cfg.returns_pct : 0.22;
+    if (input.market && cfg.returns_by_market && !(input.cfg && input.cfg.returns_pct != null)) {
+      cfg.returns_pct = cfg.returns_by_market[input.market] || 0;
+    }
     if (input.freight && FREIGHT[input.freight] && !(input.cfg && input.cfg.freight_usd_per_kg != null)) {
       cfg.freight_usd_per_kg = FREIGHT[input.freight];
     }
@@ -102,13 +104,16 @@
   // The first shipment: what it costs, what it earns, and when the money is back. Each
   // sale brings back its landed cost plus its profit (what's left after fees and delivery),
   // so the capital is back before the last piece is sold.
-  function shipment(res, qty, monthlySales, tomanPerUsd) {
+  // licenseUsd: the store panel's licence still to pay from profits (0 when exempt).
+  function shipment(res, qty, monthlySales, tomanPerUsd, licenseUsd) {
     var capital = qty * res.landed_usd;
     var perSale = res.landed_usd + res.profit_usd;
     var profit = qty * res.profit_usd;
     var unitsBack = perSale > 0 ? Math.ceil(capital / perSale - 1e-9) : null;
     if (unitsBack != null && unitsBack > qty) unitsBack = null;
     var monthly = monthlySales > 0 ? Math.min(monthlySales, qty) * res.profit_usd : null;
+    var license = Math.max(0, licenseUsd || 0);
+    var shelf = res.cfg && res.cfg.max_shelf_months;
     function toman(usd) { return tomanPerUsd && usd != null ? Math.round(usd * tomanPerUsd) : null; }
     function r1(x) { return Math.round(x * 10) / 10; }
     return {
@@ -118,6 +123,15 @@
       units_to_cash_back: unitsBack,
       cash_back_months: unitsBack != null && monthlySales > 0 ? r1(unitsBack / monthlySales) : null,
       sell_out_months: monthlySales > 0 ? r1(qty / monthlySales) : null,
+      // The contract: unsold stock older than max_shelf_months may be removed.
+      shelf_months: shelf || null,
+      over_shelf: !!(shelf && monthlySales > 0 && qty / monthlySales > shelf),
+      max_qty_on_shelf: shelf && monthlySales > 0 ? Math.floor(monthlySales * shelf) : null,
+      // The panel's licence, paid off from the monthly profit.
+      license_usd: license,
+      license_months: license && monthly > 0 ? r1(license / monthly) : null,
+      first_year_usd: monthly != null ? r2(monthly * 12 - license) : null,
+      first_year_toman: monthly != null ? toman(monthly * 12 - license) : null,
     };
   }
 

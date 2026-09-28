@@ -79,10 +79,22 @@ def test_units_multiply_the_factory_price():
 
 
 def test_last_mile_depends_on_weight_and_is_shared_by_the_cart():
-    assert CFG.last_mile_for(0.2) == 4.0
-    assert CFG.last_mile_for(1.5) == 6.5
-    assert CFG.last_mile_for(9) == 11.0
-    assert price_product(10, 0.2, None, CFG).last_mile_usd == pytest.approx(4.0 / 3, abs=0.01)
+    other = PricingConfig(last_mile_usd=((0.5, 4.0), (2.0, 6.5), (float("inf"), 11.0)))
+    assert other.last_mile_for(0.2) == 4.0
+    assert other.last_mile_for(1.5) == 6.5
+    assert other.last_mile_for(9) == 11.0
+    assert price_product(10, 0.2, None, other).last_mile_usd == pytest.approx(4.0 / 3, abs=0.01)
+
+
+def test_defaults_follow_the_store_contract():
+    """The store keeps 20% and pays delivery, packaging, ads and returns from it, so
+    price = (landed cost + the seller's profit) / 0.8."""
+    p = price_product(10, 0.3, None, CFG)
+    assert p.profit_usd == pytest.approx(0.8 * p.price_usd - p.landed_usd, abs=0.011)
+    assert p.platform_fee_usd == pytest.approx(0.2 * p.price_usd, abs=0.011)
+    assert p.last_mile_usd == p.gateway_usd == p.marketing_usd == p.returns_reserve_usd == 0
+    assert sum(pct for _, pct in CFG.platform_split) == pytest.approx(CFG.platform_pct)
+    assert CFG.license_usd == 10_000 and CFG.max_shelf_months == 4
 
 
 def test_impossible_settings_raise():
@@ -90,8 +102,8 @@ def test_impossible_settings_raise():
         price_product(10, 0.3, None, PricingConfig(marketing_pct=0.5, target_margin=0.3))
 
 
-def test_cash_on_delivery_market_reserves_more_for_returns():
-    assert CFG.for_market("cod").returns_pct > CFG.for_market("prepaid").returns_pct
+def test_returns_are_the_stores_however_customers_pay():
+    assert CFG.for_market("cod").returns_pct == CFG.for_market("prepaid").returns_pct == 0
 
 
 # --- categories ------------------------------------------------------------------------
@@ -683,9 +695,15 @@ def test_1688_offer_pages_are_read():
             "attributes": [{"name": "材质", "value": "聚酯纤维"}, {"name": "", "value": "x"}],
             "skuList": [{"specAttrs": ["灰色", "承重18kg"], "price": "21", "amountOnSale": 4200}],
             "serviceTags": ["48小时发货", {"text": "一件代发"}],
+            "video": {"url": "https://cloud.video.taobao.com/play/u/1/e/6/t/1/1.mp4"},
+            "videos": ["https://cloud.video.taobao.com/2.mp4", "not a link"],
         },
         "https://detail.1688.com/offer/1.html",
     )
+    assert d.videos == [
+        "https://cloud.video.taobao.com/play/u/1/e/6/t/1/1.mp4",
+        "https://cloud.video.taobao.com/2.mp4",
+    ]
     assert d.offer.url == "https://detail.1688.com/offer/1.html" and d.offer.is_factory
     assert d.images == ["https://cbu01.alicdn.com/1.jpg", "https://cbu01.alicdn.com/2.jpg"]
     assert d.attributes == [["材质", "聚酯纤维"]]

@@ -244,7 +244,8 @@ def test_analyze_a_product(client):
     ).json()
     assert vac["verdict"] == "red" and vac["flags"]
     cod = client.post("/api/analyze", json={**body, "market": "cod"}).json()
-    assert cod["pricing"]["returns_reserve_usd"] > a["pricing"]["returns_reserve_usd"]
+    # returns are the store's under the contract, however customers pay
+    assert cod["pricing"]["returns_reserve_usd"] == a["pricing"]["returns_reserve_usd"] == 0
     assert client.post("/api/analyze", json={**body, "price_cny": -1}).status_code == 422
 
 
@@ -770,3 +771,97 @@ def test_admins_setting_from_env(monkeypatch):
     monkeypatch.setenv("HUNTER_CRON_SECRET", "x")
     s = Settings.from_env()
     assert s.admins == ("a@example.com", "b@example.com") and s.cron_secret == "x"
+
+
+# --- support, and each product's pictures and videos ------------------------------------
+
+
+def test_support_contact_is_shown_and_is_an_admin(client):
+    support = client.get("/api/config").json()["support"]
+    assert support == {
+        "name": "امید علی دهقان",
+        "phone": "09120412723",
+        "email": "afran.persianmall@gmail.com",
+    }
+    assert signup(client, email="Afran.PersianMall@gmail.com")["is_admin"]
+    other = TestClient(client.app)
+    assert not signup(other, email="someone@example.com")["is_admin"]
+
+
+def media_site(link_settings, sample_hunt, pictures):
+    """A hunt whose first product has real-looking picture links, and a 1688 page with
+    pictures and a video."""
+    from hunter.models import OfferDetail, SupplierOffer
+
+    hunt = json.loads(json.dumps(sample_hunt))
+    product = hunt["candidates"][0]
+    product["listing"]["image_url"] = "https://img.kwcdn.com/listing.jpg"
+    product["offer"]["image_url"] = "https://cbu01.alicdn.com/offer.jpg"
+    Database(link_settings.db_path).save_hunt(hunt)
+    supplier = link_settings.link_hunter.supplier
+    supplier.offer_detail = lambda url: OfferDetail(
+        offer=SupplierOffer(id="x", title="猫", url=url, image_url="", price_cny=1, moq=1),
+        images=["https://cbu01.alicdn.com/1.jpg", "https://cbu01.alicdn.com/offer.jpg"],
+        videos=["https://cloud.video.taobao.com/play/1.mp4", "https://evil.example/v.mp4"],
+    )
+
+    def handler(request):
+        url = str(request.url)
+        if url.endswith(".mp4"):
+            return httpx.Response(200, content=b"MP4DATA", headers={"content-type": "video/mp4"})
+        return httpx.Response(200, content=pictures, headers={"content-type": "image/png"})
+
+    link_settings.image_client = httpx.Client(transport=httpx.MockTransport(handler))
+    return product
+
+
+def png(w=40, h=20):
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGBA", (w, h), (250, 197, 7, 255)).save(out, "PNG")
+    return out.getvalue()
+
+
+def test_sellers_download_their_products_pictures_and_videos(link_settings, sample_hunt):
+    import io
+    import zipfile
+
+    from PIL import Image
+
+    product = media_site(link_settings, sample_hunt, png())
+    with TestClient(create_app(link_settings)) as c:
+        signup(c)
+        assert c.get("/api/media", params={"id": product["id"]}).status_code == 402
+        subscribe(c)
+        m = c.get("/api/media", params={"id": product["id"]}).json()
+        assert m["page_read"] and m["title"] == product["title_fa"]
+        assert [(i["url"], i["source"]) for i in m["images"]] == [
+            ("https://cbu01.alicdn.com/1.jpg", "1688"),
+            ("https://cbu01.alicdn.com/offer.jpg", "1688"),  # once, though the page has it too
+            ("https://img.kwcdn.com/listing.jpg", "temu"),
+        ]
+        assert [v["url"] for v in m["videos"]] == ["https://cloud.video.taobao.com/play/1.mp4"]
+        assert c.get("/api/media", params={"id": "nope"}).status_code == 404
+
+        r = c.get("/media/file", params={"u": m["images"][0]["url"], "name": "گربه", "n": 2})
+        assert r.status_code == 200 and r.content == png()
+        assert r.headers["content-disposition"].startswith("attachment;")
+        assert "filename*=UTF-8''%DA%AF%D8%B1%D8%A8%D9%87-02.png" in r.headers["content-disposition"]
+        ready = c.get("/media/file", params={"u": m["images"][0]["url"], "ready": 1})
+        with Image.open(io.BytesIO(ready.content)) as im:
+            assert ready.headers["content-type"] == "image/jpeg" and im.size == (1200, 1200)
+            assert im.getpixel((5, 5)) == (255, 255, 255)  # padded with white
+        v = c.get("/media/file", params={"u": m["videos"][0]["url"], "inline": 1})
+        assert v.content == b"MP4DATA" and v.headers["content-disposition"] == "inline"
+        assert v.headers["content-type"] == "video/mp4"
+        for bad in ("https://evil.example/a.png", "http://cbu01.alicdn.com/a.png"):
+            assert c.get("/media/file", params={"u": bad}).status_code == 400
+
+        z = c.get("/media/zip", params={"id": product["id"]})
+        assert z.headers["content-type"] == "application/zip"
+        names = zipfile.ZipFile(io.BytesIO(z.content)).namelist()
+        assert len([n for n in names if n.startswith("original/")]) == 3
+        assert len([n for n in names if n.startswith("store-ready-1200/")]) == 3

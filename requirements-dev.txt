@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest
+# The hunter's picture downloads (hunter/requirements.txt has it for its image).
+pillow>=11.0

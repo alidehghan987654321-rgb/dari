@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.datastructures import MutableHeaders
@@ -31,9 +31,22 @@ from .db import Database, is_active
 from .engine import Hunter
 from .jobs import daily_hunt
 from .links import link_key
+from .media import (
+    IMAGE_HOSTS,
+    MAX_IMAGE,
+    MAX_VIDEO,
+    VIDEO_HOSTS,
+    allowed,
+    collect,
+    disposition,
+    extension,
+    file_name,
+    store_ready,
+    zip_images,
+)
 from .models import MarketListing, SupplierOffer
 from .payments import DemoGateway, Gateway, PaymentError, Plan, Zarinpal, make_plans
-from .pricing import PricingConfig, Unprofitable, price_product
+from .pricing import RETURN_RESERVE, PricingConfig, Unprofitable, price_product
 from .scoring import assess
 from .sources.base import LinkError
 from .sources.sample import SampleData
@@ -59,7 +72,6 @@ SECURITY_HEADERS = {
         " base-uri 'self'; form-action 'self'"
     ),
 }
-IMAGE_HOSTS = ("alicdn.com", "1688.com", "media-amazon.com", "ssl-images-amazon.com", "kwcdn.com")
 
 
 @dataclass
@@ -83,6 +95,10 @@ class Settings:
     namer: PersianNamer | None = None  # Persian product names with Claude
     cron_secret: str = ""  # lets a scheduler start the daily hunt (POST /internal/hunt)
     admins: tuple[str, ...] = ()  # these emails are admins as soon as they sign up or log in
+    # Support and the project's manager, shown on the site; their email is an admin too.
+    support_name: str = "امید علی دهقان"
+    support_phone: str = "09120412723"
+    support_email: str = "afran.persianmall@gmail.com"
 
     @property
     def secure_cookies(self) -> bool:
@@ -117,7 +133,14 @@ class Settings:
             admins=tuple(
                 e.strip().lower() for e in env("HUNTER_ADMINS", "").split(",") if e.strip()
             ),
+            support_name=env("HUNTER_SUPPORT_NAME", cls.support_name),
+            support_phone=env("HUNTER_SUPPORT_PHONE", cls.support_phone),
+            support_email=env("HUNTER_SUPPORT_EMAIL", cls.support_email).strip().lower(),
         )
+
+    @property
+    def admin_emails(self) -> set[str]:
+        return {*self.admins, *([self.support_email.lower()] if self.support_email else [])}
 
 
 # --- request bodies --------------------------------------------------------------
@@ -242,8 +265,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return user
 
     def admin_by_setting(user: dict[str, Any]) -> dict[str, Any]:
-        """HUNTER_ADMINS: where there's no shell to run make-admin (Cloudflare)."""
-        if user["email"] in settings.admins and not user["is_admin"]:
+        """HUNTER_ADMINS and the support email: where there's no shell to run make-admin
+        (Cloudflare)."""
+        if user["email"] in settings.admin_emails and not user["is_admin"]:
             db.make_admin(user["email"])
             user = db.user(user["id"])
         return user
@@ -309,6 +333,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "links_per_request": settings.links_per_request,
             "monthly_links": settings.monthly_links,
             "example_links": example_links(settings.link_hunter),
+            "support": {
+                "name": settings.support_name,
+                "phone": settings.support_phone,
+                "email": settings.support_email,
+            },
+            "media": True,
         }
 
     @app.post("/api/signup")
@@ -574,23 +604,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- a 1688 offer shown on our site ------------------------------------------
 
-    def known_offer_urls(user: dict[str, Any]) -> set[str]:
-        """Offers the site itself found for this seller: only these are fetched, so
-        nobody can make us pay for looking up arbitrary pages."""
+    def my_products(user: dict[str, Any]) -> list[dict[str, Any]]:
+        """Today's hunt and the seller's own analyses: what they may look into."""
         found = []
         latest = db.latest_hunt()
         if latest:
             found += latest[1]["candidates"]
         found += [a["result"] for a in db.analyses(user["id"], 200) if a["result"]]
-        return {o["url"] for c in found for o in [c["offer"], *c.get("alternatives", [])]}
+        return found
+
+    def known_offer_urls(user: dict[str, Any]) -> set[str]:
+        """Offers the site itself found for this seller: only these are fetched, so
+        nobody can make us pay for looking up arbitrary pages."""
+        return {
+            o["url"] for c in my_products(user) for o in [c["offer"], *c.get("alternatives", [])]
+        }
 
     @app.get("/api/offer")
     def offer(url: str, user=Depends(require_active)):
+        if url not in known_offer_urls(user):
+            raise HTTPException(404, "offer_not_found")
+        return read_offer(url)
+
+    def read_offer(url: str) -> dict[str, Any]:
+        """A 1688 offer's page: from the week's cache, or read now."""
         supplier = settings.link_hunter.supplier if settings.link_hunter else None
         if supplier is None or not hasattr(supplier, "offer_detail"):
             raise HTTPException(503, "details_not_configured")
-        if url not in known_offer_urls(user):
-            raise HTTPException(404, "offer_not_found")
         cached = db.cached_offer(url, settings.offer_cache_hours)
         if cached is not None:
             return cached
@@ -626,6 +666,113 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(502, "image_error")
         return Response(
             r.content, media_type=kind, headers={"Cache-Control": "private, max-age=604800"}
+        )
+
+    # --- a product's pictures and videos, for the seller's own listing -----------------
+
+    @app.get("/api/media")
+    def media(id: str, user=Depends(require_active)):
+        """Every picture and video of one of the seller's products: the 1688 page's (the
+        supplier's own), the offer's and the Temu/Amazon listing's."""
+        product = next((c for c in my_products(user) if c.get("id") == id), None)
+        if product is None:
+            raise HTTPException(404, "product_not_found")
+        detail = None
+        url = (product.get("offer") or {}).get("url")
+        if url:
+            try:
+                detail = read_offer(url)
+            except HTTPException:
+                detail = None  # the listing's pictures still work
+        title = product.get("title_fa") or (product.get("listing") or {}).get("title") or ""
+        return {
+            "id": id,
+            "title": title,
+            "page_read": detail is not None,
+            **collect(product, detail),
+        }
+
+    @app.get("/media/file", include_in_schema=False)
+    def media_file(
+        u: str, name: str = "", n: int = 1, ready: bool = False, inline: bool = False,
+        user=Depends(require_active),
+    ):  # fmt: skip
+        """One picture or video, through our server, as a download (or shown in the page).
+        ready=1: the picture on a white 1200×1200 square, as stores ask for."""
+        if not allowed(u, VIDEO_HOSTS):
+            raise HTTPException(400, "not_a_media_host")
+        try:
+            r = image_client.send(image_client.build_request("GET", u), stream=True)
+        except httpx.HTTPError:
+            raise HTTPException(502, "media_error") from None
+        kind = r.headers.get("content-type", "").split(";")[0].strip().lower()
+        ext = extension(kind, u)
+        is_video = kind.startswith("video/") or (
+            kind in ("application/octet-stream", "binary/octet-stream")
+            and ext in ("mp4", "mov", "webm")
+        )
+        if r.status_code != 200 or not (
+            kind.startswith("image/") and allowed(u, IMAGE_HOSTS) or is_video
+        ):
+            r.close()
+            raise HTTPException(502, "media_error")
+        where = "inline" if inline else disposition(file_name(name, n, "jpg" if ready else ext))
+        if not is_video:
+            try:
+                data = r.read()
+            finally:
+                r.close()
+            if len(data) > MAX_IMAGE:
+                raise HTTPException(502, "media_error")
+            if ready:
+                try:
+                    data, kind = store_ready(data), "image/jpeg"
+                except Exception:
+                    raise HTTPException(502, "media_error") from None
+            return Response(data, media_type=kind, headers={
+                "Content-Disposition": where, "Cache-Control": "private, max-age=86400"})  # fmt: skip
+        length = int(r.headers.get("content-length") or 0)
+        if length > MAX_VIDEO:
+            r.close()
+            raise HTTPException(413, "video_too_big")
+
+        def chunks():
+            sent = 0
+            try:
+                for chunk in r.iter_bytes(65536):
+                    sent += len(chunk)
+                    if sent > MAX_VIDEO:
+                        break
+                    yield chunk
+            finally:
+                r.close()
+
+        headers = {"Content-Disposition": where, "Cache-Control": "private, max-age=86400"}
+        if length:
+            headers["Content-Length"] = str(length)
+        return StreamingResponse(
+            chunks(), media_type=kind if kind.startswith("video/") else "video/mp4", headers=headers
+        )
+
+    @app.get("/media/zip", include_in_schema=False)
+    def media_zip(id: str, user=Depends(require_active)):
+        """All of a product's pictures in one ZIP, each as it came and store-ready."""
+        found = media(id, user)
+        pictures = []
+        for item in found["images"]:
+            try:
+                r = image_client.get(item["url"])
+            except httpx.HTTPError:
+                continue
+            kind = r.headers.get("content-type", "")
+            if r.status_code == 200 and kind.startswith("image/") and len(r.content) <= MAX_IMAGE:
+                pictures.append((r.content, extension(kind, item["url"])))
+        if not pictures:
+            raise HTTPException(502, "no_pictures")
+        return Response(
+            zip_images(found["title"], pictures),
+            media_type="application/zip",
+            headers={"Content-Disposition": disposition(f"{found['title'] or 'product'}.zip")},
         )
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -674,6 +821,7 @@ def example_links(hunter: Hunter | None) -> list[str]:
 def pricing_settings(cfg: PricingConfig) -> dict[str, Any]:
     """The pricing assumptions, for the page to show (JSON has no infinity)."""
     d = asdict(cfg)
+    d["returns_by_market"] = RETURN_RESERVE
     d["last_mile_usd"] = [
         [None if kg == float("inf") else kg, cost] for kg, cost in cfg.last_mile_usd
     ]

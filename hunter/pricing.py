@@ -9,6 +9,15 @@ want is
     floor = (landed cost + last-mile share) / (1 - all the cuts - target margin)
 
 and the recommended price sits a little under Temu when the floor allows it.
+
+The defaults follow the sellers' contract with the store (RhinoMall): the store keeps 20%
+of the final price, and that 20% pays for delivery to the customer, final packaging,
+warehousing, ads, promotions and returns (clauses 3-5, 5 and 6-6). So the seller's only
+costs are getting the goods to the Dubai warehouse, and
+
+    price = (landed cost + the seller's profit) / 0.8
+
+exactly as the contract's own formula. The other cuts stay configurable for other stores.
 """
 
 from __future__ import annotations
@@ -19,32 +28,46 @@ from dataclasses import dataclass, field, replace
 
 from .models import Pricing
 
-# Refused/returned share of orders, by how customers pay. Paid online (like Temu), few
-# come back; cash on delivery, common in the Gulf and Asia, is refused a lot at the door.
-RETURN_RESERVE = {"prepaid": 0.10, "cod": 0.22}
+# The reserve for refused/returned orders, by how customers pay. Under the contract the
+# store bears returns (clause 6-6), so there's none; another store would need ~10% prepaid
+# and ~22% cash on delivery.
+RETURN_RESERVE = {"prepaid": 0.0, "cod": 0.0}
+
+# What the store's 20% pays for (contract clause 5), to show sellers where it goes.
+PLATFORM_SPLIT = (
+    ("fee", 0.05),  # platform commission
+    ("ads", 0.02),  # ads and digital marketing
+    ("storage", 0.01),  # warehousing and handling in Dubai
+    ("packaging", 0.02),  # final packaging
+    ("delivery", 0.08),  # delivery to the customer (Emirates Post)
+    ("promo", 0.02),  # promotions and referrals, plus whatever the others didn't use
+)
 
 
 @dataclass(frozen=True)
 class PricingConfig:
     cny_per_usd: float = 7.1
-    platform_pct: float = 0.20  # the store's cut: warehouse and the rest
-    gateway_pct: float = 0.028
-    marketing_pct: float = 0.05  # the seller's own promotions; the store brings the traffic
+    platform_pct: float = 0.20  # the store's share: everything after the Dubai warehouse
+    platform_split: tuple[tuple[str, float], ...] = PLATFORM_SPLIT
+    gateway_pct: float = 0.0  # buyers pay the store (contract clause 6-2)
+    marketing_pct: float = 0.0  # ads are in the store's share; set for your own promotions
     returns_pct: float = RETURN_RESERVE["prepaid"]
     target_margin: float = 0.15  # what's left for the seller, as a share of the price
     china_side_pct: float = 0.10  # buying agent + trucking to the port, on the factory price
     freight_usd_per_kg: float = 2.5  # China -> Dubai, consolidated
-    packaging_usd: float = 0.15
-    # Delivering one order from the Dubai warehouse, by the product's weight.
-    last_mile_usd: tuple[tuple[float, float], ...] = field(
-        default=((0.5, 4.0), (2.0, 6.5), (float("inf"), 11.0))
-    )
+    packaging_usd: float = 0.0  # final packaging is the store's; set for packaging bought in China
+    # Delivering one order from the Dubai warehouse, by the product's weight: the store's,
+    # inside its share (contract clause 3-5). Another store: e.g. ((0.5, 4), (2, 6.5), (inf, 11)).
+    last_mile_usd: tuple[tuple[float, float], ...] = field(default=((float("inf"), 0.0),))
     items_per_cart: int = 3  # one delivery is shared by the items in an order
     undercut: float = 0.05  # aim this much under Temu when the numbers allow
     max_premium: float = 0.10  # above Temu by more than this, it won't sell
     temu_vs_amazon: float = 0.60  # Temu is ~60% of Amazon's price, to estimate Temu
     max_moq: int = 500  # skip offers that need bigger first orders
     min_starter_qty: int = 50  # smallest sensible first shipment
+    license_usd: float = 10_000  # the store panel's licence, in 10 instalments (clause 4-1)
+    license_installments: int = 10  # earlier partners are exempt (clause 4-2): license_usd 0
+    max_shelf_months: float = 4  # unsold stock older than this may be removed (clause 11-5)
 
     @property
     def cuts(self) -> float:
@@ -57,9 +80,10 @@ class PricingConfig:
         return cls(
             cny_per_usd=float(env("HUNTER_CNY_PER_USD", "7.1")),
             platform_pct=float(env("HUNTER_PLATFORM_PCT", "20")) / 100,
-            marketing_pct=float(env("HUNTER_MARKETING_PCT", "5")) / 100,
+            marketing_pct=float(env("HUNTER_MARKETING_PCT", "0")) / 100,
             target_margin=float(env("HUNTER_TARGET_MARGIN_PCT", "15")) / 100,
             freight_usd_per_kg=float(env("HUNTER_FREIGHT_USD_PER_KG", "2.5")),
+            license_usd=float(env("HUNTER_LICENSE_USD", "10000")),
         ).for_market(env("HUNTER_MARKET", "prepaid"))
 
     def for_market(self, market: str) -> PricingConfig:

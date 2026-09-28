@@ -291,6 +291,18 @@ def offer_detail(item: dict, url: str) -> OfferDetail | None:
     if offer is None:
         return None
     images = _strings(pick(item, "images", "imageList", "mainImages", "pics", "imageUrls"))
+    videos = _strings(pick(item, "videos", "videoList", "videoUrls"))
+    one = pick(
+        item,
+        "video.url",
+        "videoUrl",
+        "video",
+        "mainVideo",
+        "videoInfo.videoUrl",
+        "wirelessVideo.videoUrl",
+    )
+    if isinstance(one, str) and one not in videos:
+        videos.insert(0, one)
     attrs_raw = pick(item, "attributes", "productAttributes", "props", "specs", "attributeList")
     if isinstance(attrs_raw, dict):
         attributes = [[str(k), str(v)] for k, v in attrs_raw.items()]
@@ -317,6 +329,7 @@ def offer_detail(item: dict, url: str) -> OfferDetail | None:
     return OfferDetail(
         offer=offer,
         images=images or ([offer.image_url] if offer.image_url else []),
+        videos=[v for v in videos if v.startswith(("http", "//"))],
         attributes=[a for a in attributes if a[0] and a[1]],
         skus=[x for x in skus if x["name"]],
         badges=badges,

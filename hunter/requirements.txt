@@ -3,5 +3,7 @@ fastapi==0.141.1
 uvicorn==0.54.0
 httpx
 python-dotenv==1.2.3
+# Store-ready product pictures (white 1200×1200 squares) for sellers to download.
+pillow>=11.0
 # Optional: Persian product names with Claude (used only when ANTHROPIC_API_KEY is set).
 anthropic>=1.8

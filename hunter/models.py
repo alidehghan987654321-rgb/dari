@@ -55,6 +55,7 @@ class OfferDetail:
 
     offer: SupplierOffer  # price, MOQ, shop and its record
     images: list[str] = field(default_factory=list)
+    videos: list[str] = field(default_factory=list)  # the offer's product videos, if any
     attributes: list[list[str]] = field(default_factory=list)  # [[name, value], ...]
     skus: list[dict] = field(default_factory=list)  # {"name", "price_cny", "stock"}
     badges: list[str] = field(default_factory=list)  # shop and service badges, as on 1688

@@ -27,6 +27,11 @@ CASES = [
 ]
 
 
+FIELDS = ("factory_usd", "freight_usd", "landed_usd", "last_mile_usd", "price_usd", "floor_usd",
+          "breakeven_usd", "profit_usd", "margin", "roi", "multiplier", "vs_benchmark", "vs_amazon",
+          "platform_fee_usd", "gateway_usd", "marketing_usd", "returns_reserve_usd")  # fmt: skip
+
+
 def run_js(inputs, cfg):
     script = (
         f"const c = require({json.dumps(str(CALC))});"
@@ -53,9 +58,31 @@ def test_calculator_prices_like_the_engine():
             cny, kg, benchmark, cfg, units=units, amazon_usd=amazon,
             benchmark_estimated=not temu and bool(amazon),
         )  # fmt: skip
-        for field in ("factory_usd", "freight_usd", "landed_usd", "last_mile_usd", "price_usd",
-                      "floor_usd", "breakeven_usd", "profit_usd", "margin", "roi", "multiplier",
-                      "vs_benchmark", "vs_amazon", "platform_fee_usd", "returns_reserve_usd"):  # fmt: skip
+        for field in FIELDS:
+            assert js[field] == pytest.approx(getattr(py, field), abs=0.011), (cny, field)
+
+
+def test_calculator_prices_like_the_engine_for_another_store():
+    """Every cut the contract doesn't have (gateway, ads, returns, delivery) still agrees."""
+    other = PricingConfig(
+        gateway_pct=0.028, marketing_pct=0.05, returns_pct=0.1, packaging_usd=0.15,
+        last_mile_usd=((0.5, 4.0), (2.0, 6.5), (float("inf"), 11.0)),
+    )  # fmt: skip
+    inputs = [
+        {"price": cny, "weight_kg": kg, "temu_usd": temu, "amazon_usd": amazon, "units": units,
+         "items_per_cart": cart}
+        for cny, kg, temu, amazon, units, _, cart in CASES
+    ]  # fmt: skip
+    results = run_js(inputs, pricing_settings(other))
+    for (cny, kg, temu, amazon, units, _, cart), js in zip(CASES, results, strict=True):
+        cfg = PricingConfig(**{**asdict(other), "items_per_cart": cart})
+        benchmark = temu or (amazon * cfg.temu_vs_amazon if amazon else None)
+        py = price_product(
+            cny, kg, benchmark, cfg, units=units, amazon_usd=amazon,
+            benchmark_estimated=not temu and bool(amazon),
+        )  # fmt: skip
+        assert py.last_mile_usd > 0 and py.gateway_usd > 0
+        for field in FIELDS:
             assert js[field] == pytest.approx(getattr(py, field), abs=0.011), (cny, field)
 
 
@@ -67,11 +94,12 @@ def test_calculator_extras():
         "const r = c.compute({price: 21, weight_kg: 0.3, dims: {l: 40, w: 30, h: 10}, temu_usd: 19.99,"
         " freight: 'sea', items_per_cart: 3}, cfg);"
         "const own = c.at(r, 24.99);"
-        "const s = c.shipment(r, 100, 50, 234500);"
+        "const s = c.shipment(r, 100, 50, 234500, 10000);"
+        "const big = c.shipment(r, 300, 50, 234500, 0);"
         "const parts = c.split(r).reduce((a, p) => a + p.value, 0);"
         "const usd = c.compute({price: 2.96, currency: 'usd', weight_kg: 0.3}, cfg);"
         "const cny = c.compute({price: 2.96 * cfg.cny_per_usd, weight_kg: 0.3}, cfg);"
-        "console.log(JSON.stringify({r, own, s, parts, usd: usd.price_usd, cny: cny.price_usd}));"
+        "console.log(JSON.stringify({r, own, s, big, parts, usd: usd.price_usd, cny: cny.price_usd}));"
     )
     out = json.loads(
         subprocess.run([NODE, "-e", script], capture_output=True, text=True, check=True).stdout
@@ -96,3 +124,10 @@ def test_calculator_extras():
         r["price_usd"], abs=0.03
     )  # the five parts make up the price
     assert out["usd"] == out["cny"]
+    # the contract: the panel's licence paid from profits, and the 4-month shelf rule
+    assert s["license_usd"] == 10000
+    assert s["license_months"] == pytest.approx(10000 / s["monthly_profit_usd"], abs=0.05)
+    assert s["first_year_usd"] == pytest.approx(12 * s["monthly_profit_usd"] - 10000, abs=0.01)
+    assert not s["over_shelf"] and s["max_qty_on_shelf"] == 200
+    big = out["big"]
+    assert big["over_shelf"] and big["sell_out_months"] == 6.0 and big["license_months"] is None
