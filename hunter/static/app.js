@@ -8,7 +8,7 @@
   var Calc = window.HunterCalc;
   var $ = function (id) { return document.getElementById(id); };
   var state = {
-    config: null, me: null, hunt: null, picks: null, tab: "hunt", calc: null,
+    config: null, me: null, hunt: null, picks: null, tab: "home", calc: null,
     filter: { cat: "all", verdict: "all", sort: "score", fresh: false }, authMode: "signup", analysis: null, jobs: undefined,
   };
 
@@ -33,8 +33,8 @@
     "pay-failed": "پرداخت تأیید نشد. اگه پولی کم شده، ظرف ۷۲ ساعت برمی‌گرده.",
   };
   var VERDICT = { green: "شکار خوب", yellow: "با احتیاط", red: "نیار" };
-  var TITLES = { hunt: "شکارهای امروز", picks: "شکارهای اختصاصی من", analyze: "تحلیل لینک", calc: "ماشین‌حساب واردات", account: "حساب من" };
-  var PUBLIC = { hunt: true, calc: true };
+  var TITLES = { dash: "میز کار", hunt: "شکارهای امروز", picks: "شکارهای اختصاصی من", analyze: "تحلیل لینک", calc: "ماشین‌حساب واردات", account: "حساب من" };
+  var PUBLIC = { home: true, calc: true };  // what visitors can open; "home" is the landing
 
   // --- helpers ----------------------------------------------------------------
 
@@ -110,7 +110,7 @@
 
   function load() {
     if (DEMO) {
-      state.config = DEMO.config; state.me = DEMO.me; state.hunt = DEMO.hunt;
+      state.config = DEMO.config; state.me = null; state.hunt = DEMO.hunt;  // starts as a visitor; signing up opens the workspace
       state.picks = DEMO.picks;
       return Promise.resolve();
     }
@@ -127,14 +127,17 @@
   // --- the shell ---------------------------------------------------------------
 
   function render() {
+    stopDemo();
     var loggedIn = !!state.me;
-    if (!loggedIn && !PUBLIC[state.tab]) state.tab = "hunt";
+    if (!loggedIn && !PUBLIC[state.tab]) state.tab = "home";
+    if (loggedIn && state.tab === "home") state.tab = "dash";
     var app = $("app");
     app.classList.toggle("member", loggedIn);
     app.classList.toggle("guest", !loggedIn);
+    app.classList.toggle("landing", state.tab === "home");
     var brand = (state.config && state.config.brand) || "شکارچی";
     $("brand-name").textContent = brand;
-    document.title = (loggedIn || state.tab === "calc" ? TITLES[state.tab] + " · " : "") + brand;
+    document.title = (state.tab !== "home" ? TITLES[state.tab] + " · " : "") + brand;
     each($("tabs"), "button", function (b) {
       b.setAttribute("aria-current", b.dataset.tab === state.tab ? "page" : "false");
     });
@@ -146,6 +149,7 @@
     var main = $("main");
     if (state.tab === "calc") renderCalc();
     else if (!loggedIn) { main.innerHTML = landingHTML(); bindLanding(); }
+    else if (state.tab === "dash") renderDash();
     else if (state.tab === "picks") renderPicks();
     else if (state.tab === "analyze") { main.innerHTML = analyzeHTML(); bindAnalyze(); }
     else if (state.tab === "account") { main.innerHTML = accountHTML(); bindAccount(); }
@@ -154,15 +158,16 @@
   }
 
   function topbar(brand, loggedIn) {
-    var mark = '<a class="brand" href="#" data-go="hunt"><span class="brand-mark" aria-hidden="true"></span><span>' + esc(brand) + "</span></a>";
+    var mark = '<a class="brand" href="#" data-go="home"><span class="brand-mark" aria-hidden="true"></span><span>' + esc(brand) + "</span></a>";
     if (!loggedIn) {
       var link = function (go, label) {
         return '<button type="button" data-go="' + go + '" aria-current="' + (state.tab === go ? "page" : "false") + '">' + label + "</button>";
       };
       $("topbar").innerHTML = mark +
-        '<nav class="guest-links" aria-label="بخش‌ها">' + link("hunt", "معرفی") + link("calc", "ماشین‌حساب رایگان") +
-          '<button type="button" data-go="plans">تعرفه‌ها</button></nav>' +
-        '<div class="topbar-end"><button type="button" class="btn small" data-go="login">ورود / ثبت‌نام' + ic("login") + "</button></div>";
+        '<nav class="guest-links" aria-label="بخش‌ها">' + link("home", "معرفی") + '<button type="button" data-go="demo">دمو</button>' +
+          link("calc", "ماشین‌حساب") + '<button type="button" data-go="plans">تعرفه‌ها</button></nav>' +
+        '<div class="topbar-end"><button type="button" class="nav-login" data-go="login">ورود</button>' +
+          '<button type="button" class="btn small" data-go="signup">شروع کن</button></div>';
       return;
     }
     var plan = currentPlan();
@@ -183,7 +188,7 @@
     f.innerHTML = '<div class="who" title="' + esc(me.email) + '">' + esc(me.name || me.email) + "</div>" +
       (me.active && me.paid_until && !me.is_admin ? "<div>اشتراک تا " + esc(faDate(me.paid_until)) + "</div>" : "") +
       (DEMO ? '<span class="pill yellow">نسخه‌ی نمایشی</span>' : "") +
-      '<button type="button" class="btn ghost small" data-logout>' + (DEMO ? "دیدن صفحه‌ی بازدیدکننده" : "خروج") + ic("logout") + "</button>";
+      '<button type="button" class="btn ghost small" data-logout>خروج' + ic("logout") + "</button>";
   }
 
   // --- product cards ----------------------------------------------------------------
@@ -415,30 +420,45 @@
     bindCopy(root);
   }
 
-  // --- landing (logged out) -----------------------------------------------------------
+  // --- landing (logged out): a product page with a live demo, then sign-up ---------------
+
+  // One product through the whole pipeline, for the demo. The listing and supplier are
+  // sample data; every price below them is worked out live by calc.js with the site's settings.
+  var EXAMPLE = {
+    title_fa: "پرکننده‌ی شکاف صندلی خودرو، چرمی با جیب (۲ عددی)",
+    temu: { title: "2 Pack Car Seat Gap Filler, PU Leather Organizer with Storage Pocket", price: 11.99 },
+    amazon: { price: 16.99, sold: 5000 },
+    offer: {
+      title: "座椅缝隙收纳盒 皮革 悬挂式", shop: "کارخانه‌ی نمونه در ییوو", location: "浙江 义乌", years: 8,
+      rating: 4.8, repurchase: 0.32, moq: 10, price: 6.65, tiers: [[10, 6.65], [100, 6.12], [1000, 5.65]],
+    },
+    units: 2, weight_kg: 0.4,
+  };
+  // What the laptop on the landing shows: three sample products, priced the same way.
+  var MINI = [
+    ["پرکننده‌ی شکاف صندلی خودرو", { price: 6.65, units: 2, weight_kg: 0.4, temu_usd: 11.99, amazon_usd: 16.99 }],
+    ["بزرگ‌کننده‌ی جالیوانی خودرو", { price: 5.2, units: 1, weight_kg: 0.25, temu_usd: 9.99, amazon_usd: 11.99 }],
+    ["کیسه‌ی زیر تخت (۳ عددی)", { price: 12.5, units: 3, weight_kg: 1.1, temu_usd: 15.99, amazon_usd: 21.99 }],
+  ];
+  var STEPS = ["پرفروش", "تأمین‌کننده", "هزینه‌ها", "قیمت و حکم"];
+  var FREIGHTS = [["sea", "دریایی"], ["site", "معمول"], ["air", "هوایی"]];
+  var landing = { step: 0, timer: null, io: null, stopped: false, trial: null };
+
+  function quote(input) {
+    var p = state.config.pricing;
+    var res = Calc.compute(Object.assign({ market: "prepaid", items_per_cart: p.items_per_cart }, input), p);
+    return res && res.ok ? res : null;
+  }
+  function example() {
+    var e = EXAMPLE;
+    return quote({ price: e.offer.price, units: e.units, weight_kg: e.weight_kg, temu_usd: e.temu.price, amazon_usd: e.amazon.price });
+  }
+  function motionOK() {
+    return !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
 
   function landingHTML() {
-    var cfg = state.config || {};
-    var teaser = state.hunt && state.hunt.candidates || [];
-    if (DEMO) {
-      teaser = teaser.filter(function (c) { return c.verdict === "green"; }).slice(0, 3).map(function (c) {
-        return { id: c.id, category: c.category, title_fa: c.title_fa, verdict: c.verdict, score: c.score, locked: true };
-      });
-    }
-    var steps = [
-      ["hunt", "پرفروش‌ها رو پیدا می‌کنه", "هر روز پرفروش‌های Temu و آمازون در دسته‌های مجاز بررسی میشن؛ اسباب‌بازی، آرایشی، باتری‌دار و خوراکی کنار گذاشته میشن."],
-      ["factory", "همون جنس رو در 1688 پیدا می‌کنه", "با جستجوی تصویری، تأمین‌کننده‌ی اصلی و چند جایگزین، با سطح، سابقه و قیمت پلکانی."],
-      ["receipt", "همه‌ی هزینه‌ها رو حساب می‌کنه", "خرید، ایجنت، حمل تا دبی، بسته‌بندی، ارسال به مشتری، کمیسیون، درگاه، تبلیغات و مرجوعی."],
-      ["list", "قیمت و حکم می‌ده", "قیمتی کمی زیر Temu که هنوز سود تو بمونه، و حکم سبز، زرد یا قرمز با دلیل‌هاش."],
-    ];
-    var features = [
-      ["hunt", "شکار روزانه", "هر روز محصول‌های تازه، با برچسب «جدید امروز» برای چیزهایی که دیروز نبودن."],
-      ["picks", "شکار اختصاصی", "بر اساس دسته‌ها و بودجه‌ی تو؛ هر محصول فقط به " + toman(3) + " فروشنده داده میشه."],
-      ["analyze", "تحلیل لینک", "لینک Temu یا آمازونی که خودت پیدا کردی رو بده؛ تأمین‌کننده، هزینه‌ها و قیمت فروش آماده میشه."],
-      ["factory", "1688 به فارسی", "عکس، مشخصات، مدل‌ها و قیمت پلکانی تأمین‌کننده همین‌جا؛ بدون نیاز به حساب 1688."],
-      ["scale", "مقایسه با Temu و آمازون", "قیمت و فروش ماهانه‌ی رقیب‌ها کنار قیمت تو، با درصد ارزون‌تر یا گرون‌تر بودن."],
-      ["calc", "ماشین‌حساب واردات", "وزن حجمی، حمل دریایی یا هوایی، پرداخت در محل و برنامه‌ی اولین محموله به تومان."],
-    ];
+    var cfg = state.config || {}, brand = cfg.brand || "شکارچی";
     var faq = [
       ["داده‌ها از کجا میان؟", "قیمت و فروش Temu و آمازون از سرویس‌های داده‌ی بازار (Keepa و Apify) خونده میشه و تأمین‌کننده با جستجوی تصویری در 1688 پیدا میشه. هر محصول کنار لینکش نشون داده میشه تا خودت هم ببینی."],
       ["اعداد چقدر دقیقن؟", "هزینه‌ها با فرض‌های رایج حساب میشن (کرایه‌ی هر کیلو، کارمزدها، مرجوعی) و همه‌شون در ماشین‌حساب قابل تغییرن. قبل از سفارش اصلی حتماً نمونه بخر و نرخ حمل رو از فورواردر خودت بپرس."],
@@ -446,39 +466,203 @@
       ["چرا هر محصول فقط به چند فروشنده داده میشه؟", "اگه همه یه محصول رو بیارن، قیمت‌ها می‌شکنه. شکارهای اختصاصی بین فروشنده‌ها پخش میشن تا هر کس بازار خودش رو داشته باشه."],
       ["پرداخت چطوریه؟", "اشتراک ماهانه با درگاه زرین‌پال و کارت بانکی. هر پلن سهمیه‌ی تحلیل لینک خودش رو داره."],
     ];
-    return (
-      '<section class="hero">' +
-        "<div>" +
-          '<span class="eyebrow">موتور شکار محصول · واردات از چین به انبار دبی</span>' +
-          "<h1>هر روز، محصولی که ارزش آوردن از چین رو داره، با قیمت فروش آماده</h1>" +
-          "<p>موتور ما پرفروش‌های Temu و آمازون رو می‌گرده، همون جنس رو با عکس در 1688 پیدا می‌کنه، همه‌ی هزینه‌ها تا انبار دبی و تحویل به مشتری رو حساب می‌کنه و قیمتی پیشنهاد می‌ده که هم از Temu ارزون‌تر باشه هم برای تو سود بمونه.</p>" +
-          '<div class="cta"><button type="button" class="btn" data-go="signup">شروع کن' + ic("back") + '</button><button type="button" class="btn ghost" data-go="calc">ماشین‌حساب رایگان' + ic("calc") + "</button></div>" +
-          '<ol class="chain"><li>پرفروش Temu</li><li class="arrow">←</li><li>تأمین‌کننده در 1688</li><li class="arrow">←</li><li>هزینه تا انبار دبی</li><li class="arrow">←</li><li>قیمت پیشنهادی</li><li class="arrow">←</li><li>سبز / زرد / قرمز</li></ol>' +
-          '<dl class="hero-stats"><div><dt>3</dt><dd>بازار: Temu، آمازون و 1688</dd></div><div><dt>10</dt><dd>قلم هزینه تا دست مشتری</dd></div><div><dt>' + (cfg.per_product || 3) + "</dt><dd>فروشنده برای هر محصول، نه بیشتر</dd></div></dl>" +
-        "</div>" +
-        '<div class="panel auth" id="auth">' + authHTML() + "</div>" +
+    var stats = [
+      [toman(3), "بازار زیر نظر", "Temu، آمازون و 1688"],
+      [toman(10), "قلم هزینه", "از کارخونه تا دست مشتری"],
+      [toman(cfg.per_product || 3), "فروشنده برای هر محصول", "نه بیشتر، تا قیمت‌ها نشکنه"],
+      [toman(0), "حساب 1688 لازم نیست", "همه‌چیز به فارسی، همین‌جا"],
+    ];
+    return '<div class="ap">' +
+      '<section class="ap-hero">' +
+        '<p class="ap-kicker">' + esc(brand) + "</p>" +
+        '<h1 class="ap-display">محصول درست.<br><span class="ap-grad">قیمت درست.</span></h1>' +
+        '<p class="ap-lead">هر روز پرفروش‌های Temu و آمازون، همون جنس در 1688، همه‌ی هزینه‌ها تا انبار دبی، و قیمتی که هم از Temu ارزون‌تره هم برای تو سود داره.</p>' +
+        '<div class="ap-ctas"><button type="button" class="btn" data-go="signup">شروع کن</button>' +
+          '<button type="button" class="ap-link" data-go="demo">دموی زنده رو ببین' + ic("chev") + "</button></div>" +
+        deviceHTML() +
       "</section>" +
-      '<section class="band"><div class="band-head"><div><span class="eyebrow">روند کار</span><h2 class="section-title">چطور کار می‌کنه</h2></div></div>' +
-        '<div class="steps">' + steps.map(function (s, n) {
-          return '<div class="step"><div class="n"><span>0' + (n + 1) + "</span>" + ic(s[0]) + "</div><h3>" + s[1] + "</h3><p>" + s[2] + "</p></div>";
-        }).join("") + "</div></section>" +
-      '<section class="band"><div class="band-head"><div><span class="eyebrow">امکانات</span><h2 class="section-title">هر چیزی که برای انتخاب و قیمت‌گذاری لازم داری</h2></div></div>' +
-        '<div class="features">' + features.map(function (f) {
-          return '<div class="feature">' + ic(f[0]) + "<h3>" + f[1] + "</h3><p>" + f[2] + "</p></div>";
-        }).join("") + "</div></section>" +
-      '<section class="band promo"><div><h2 class="section-title">ماشین‌حساب واردات، رایگان و بدون ثبت‌نام</h2>' +
-        "<p>قیمت 1688 و وزن رو بده؛ تمام‌شده تا انبار، قیمت فروش، سود، و اینکه پولت کی برمی‌گرده رو ببین.</p></div>" +
-        '<button type="button" class="btn" data-go="calc">باز کردن ماشین‌حساب' + ic("calc") + "</button></section>" +
-      (teaser.length
-        ? '<section class="band"><div class="band-head"><div><span class="eyebrow">نمونه</span><h2 class="section-title">شکارهای امروز</h2>' +
-            '<p class="section-sub" style="margin:0">جزئیات، قیمت‌ها و تأمین‌کننده بعد از خرید اشتراک باز میشه.</p></div></div><div class="grid">' +
-            teaser.map(cardHTML).join("") + "</div></section>"
-        : "") +
-      '<section class="band" id="plans"><div class="band-head"><div><span class="eyebrow">تعرفه‌ها</span><h2 class="section-title">پلن‌های ماهانه</h2></div></div>' +
-        '<div class="plans">' + plansHTML(false) + "</div></section>" +
-      '<section class="band faq"><div class="band-head"><div><span class="eyebrow">سؤال‌ها</span><h2 class="section-title">سؤال‌های رایج</h2></div></div>' +
-        faq.map(function (q) { return "<details><summary>" + q[0] + "</summary><p>" + q[1] + "</p></details>"; }).join("") + "</section>"
-    );
+      '<section class="ap-stats"><div class="ap-in">' + stats.map(function (s) {
+        return '<div class="ap-stat"><b class="ap-grad">' + s[0] + "</b><span>" + s[1] + "</span><small>" + s[2] + "</small></div>";
+      }).join("") + "</div></section>" +
+      '<section class="ap-sec ap-alt" id="demo"><div class="ap-in">' +
+        head("دموی زنده", "یه محصول، از Temu<br>تا قیمت فروش تو.",
+          "موتور شکار با هر محصول همین چهار کار رو می‌کنه. این یه نمونه‌ست و عددهاش همین الان با فرمول‌های سایت حساب شدن.") +
+        '<div class="ap-seg" role="tablist" aria-label="مرحله‌های دمو" id="demo-seg">' + STEPS.map(function (s, n) {
+          return '<button type="button" role="tab" data-step="' + n + '" aria-selected="' + (n === landing.step) + '"><span class="n">' + toman(n + 1) + "</span>" + s + "</button>";
+        }).join("") + "</div>" +
+        '<div class="ap-stage" id="demo-stage" role="tabpanel">' + stepHTML(landing.step) + "</div>" +
+      "</div></section>" +
+      trialHTML() +
+      bentoHTML(cfg) +
+      '<section class="ap-sec ap-alt" id="plans"><div class="ap-in">' +
+        head("تعرفه‌ها", "یه پلن برای هر اندازه.", "اشتراک ماهانه با کارت بانکی، از درگاه زرین‌پال. ماشین‌حساب همیشه رایگانه.") +
+        '<div class="plans">' + plansHTML(false) + "</div>" +
+      "</div></section>" +
+      '<section class="ap-sec" id="signup"><div class="ap-in ap-signup">' +
+        '<div class="ap-signup-copy">' + head("ثبت‌نام", "میز کارت<br>آماده‌ست.", "یه حساب بساز؛ همون لحظه میز کار با همه‌ی ابزارها برات باز میشه.") +
+          '<ul class="ap-checks">' + [
+            "میز کار با شکارهای امروز، ماشین‌حساب و تحلیل لینک",
+            "دسته‌ها و بودجه‌ی خودت برای شکارهای اختصاصی",
+            "ماشین‌حساب واردات رایگان، با ذخیره‌ی حالت‌ها",
+            "اشتراک هر وقت آماده بودی، با زرین‌پال",
+          ].map(function (t) { return "<li>" + ic("check") + "<span>" + t + "</span></li>"; }).join("") + "</ul></div>" +
+        '<div class="ap-card auth" id="auth">' + authHTML() + "</div>" +
+      "</div></section>" +
+      '<section class="ap-sec ap-alt" id="faq"><div class="ap-in ap-narrow">' + head("سؤال‌ها", "سؤال‌های رایج.", "") +
+        '<div class="ap-faq">' + faq.map(function (q) { return "<details><summary>" + q[0] + "</summary><p>" + q[1] + "</p></details>"; }).join("") + "</div>" +
+      "</div></section>" +
+    "</div>";
+  }
+  function head(eyebrow, title, sub) {
+    return '<div class="ap-head"><p class="ap-eyebrow">' + eyebrow + '</p><h2 class="ap-title">' + title + "</h2>" +
+      (sub ? '<p class="ap-sub">' + sub + "</p>" : "") + "</div>";
+  }
+
+  // A laptop showing the workspace, drawn in CSS.
+  function deviceHTML() {
+    var counts = state.hunt && state.hunt.counts, ex = example();
+    var cards = MINI.map(function (m) {
+      var r = quote(m[1]), v = r ? r.verdict : "yellow";
+      return '<div class="mc v-' + v + '"><div class="mc-t">' + esc(m[0]) + '</div><div class="mc-l"><span>¥' + m[1].price.toFixed(2) + "</span><span>" +
+        (r ? usd(r.landed_usd) : "—") + '</span><span class="o">' + (r ? usd(r.price_usd) : "—") + '</span></div><div class="mc-b"><i style="width:' +
+        (r ? Math.round(Math.max(0.08, Math.min(1, r.margin / 0.3)) * 100) : 30) + '%"></i></div></div>';
+    }).join("");
+    var plates = [
+      ["شکار خوب", counts ? count(counts.green || 0) : "12"],
+      ["بررسی‌شده", counts ? count((counts.green || 0) + (counts.yellow || 0) + (counts.red || 0)) : "40"],
+      ["سود هر عدد", ex ? usd(ex.profit_usd) : "—"],
+      ["حاشیه", ex ? pct(ex.margin) : "—"],
+    ];
+    return '<div class="ap-device" aria-hidden="true"><div class="lid"><div class="screen"><div class="mini">' +
+      '<div class="mini-side"><b></b><i class="on"></i><i></i><i></i><i></i><i></i></div>' +
+      '<div class="mini-main"><div class="mini-top"><span>میز کار</span><em>نسخه‌ی امروز</em></div>' +
+        '<div class="mini-deck"><div class="mini-copy"><i></i><i></i><i></i></div><div class="mini-box"></div></div>' +
+        '<div class="mini-plates">' + plates.map(function (p) { return "<div><small>" + p[0] + "</small><b>" + p[1] + "</b></div>"; }).join("") + "</div>" +
+        '<div class="mini-cards">' + cards + "</div>" +
+      "</div></div></div></div><div class=\"base\"></div></div>";
+  }
+
+  function stepHTML(n) {
+    var e = EXAMPLE, o = e.offer, r = example();
+    var copy, visual;
+    if (n === 0) {
+      copy = ["پیدا کردن پرفروش", "هر روز پرفروش‌های Temu و آمازون در دسته‌های مجاز بررسی میشن. این یکی در آمازون ماهی حدود " +
+        toman(e.amazon.sold) + " تا فروش داره و وزنش سبکه؛ یعنی حمل ارزون."];
+      visual = '<div class="ex-listing"><div class="ex-img">' + ic("box") + '<span class="ex-badge">Temu</span></div><div class="ex-body">' +
+        '<p class="ex-en" dir="ltr">' + esc(e.temu.title) + '</p><p class="ex-fa">' + esc(e.title_fa) + "</p>" +
+        '<div class="ex-prices"><div><span>Temu</span><b>' + usd(e.temu.price) + "</b></div>" +
+        "<div><span>آمازون</span><b>" + usd(e.amazon.price) + "</b><small>~" + count(e.amazon.sold) + " فروش در ماه</small></div></div></div></div>";
+    } else if (n === 1) {
+      copy = ["همون جنس در 1688", "با جستجوی تصویری، همون محصول در 1688 پیدا میشه: تأمین‌کننده، سابقه، امتیاز و قیمت پلکانی. به فارسی و بدون نیاز به حساب 1688."];
+      var facts = ["کارخانه", o.location, toman(o.years) + " سال در 1688", "امتیاز " + o.rating, "خرید مجدد " + pct(o.repurchase), "حداقل سفارش " + toman(o.moq)];
+      visual = '<div class="ex-supplier"><div class="ex-shop">' + ic("factory") + "<b>" + esc(o.shop) + "</b></div>" +
+        '<p class="ex-zh" lang="zh">' + esc(o.title) + "</p>" +
+        '<div class="ex-facts">' + facts.map(function (f) { return "<bdi>" + esc(f) + "</bdi>"; }).join("") + "</div>" +
+        '<div class="ex-tiers">' + o.tiers.map(function (t) {
+          return "<div><small>از " + toman(t[0]) + " عدد</small><b>¥" + t[1].toFixed(2) + "</b></div>";
+        }).join("") + "</div></div>";
+    } else if (n === 2) {
+      copy = ["همه‌ی هزینه‌ها", r ? "ده قلم هزینه، از کارخونه تا دست مشتری، حساب میشه. این محصول با " + toman(e.units) + " عدد در هر بسته، تا انبار دبی " +
+        ltr(usd(r.landed_usd)) + " تموم میشه." : ERRORS.unprofitable_settings];
+      var rows = r ? [
+        ["خرید از کارخونه (" + toman(e.units) + " عدد)", r.factory_usd], ["ایجنت و حمل داخل چین", r.china_side_usd],
+        ["حمل تا انبار دبی", r.freight_usd], ["بسته‌بندی", r.packaging_usd], ["ارسال به مشتری", r.last_mile_usd],
+        ["کمیسیون فروشگاه", r.platform_fee_usd], ["درگاه، تبلیغات و مرجوعی", r.gateway_usd + r.marketing_usd + r.returns_reserve_usd],
+      ] : [];
+      var max = Math.max.apply(null, rows.map(function (x) { return x[1]; }).concat([0.01]));
+      visual = '<div class="ex-costs">' + rows.map(function (x) {
+        return '<div class="ex-row"><span>' + x[0] + '</span><i><s style="width:' + Math.max(2, Math.round(x[1] / max * 100)) + '%"></s></i><b>' + usd(x[1]) + "</b></div>";
+      }).join("") + (r ? '<div class="ex-row total"><span>تمام‌شده تا انبار دبی</span><b>' + usd(r.landed_usd) + "</b></div>" : "") + "</div>";
+    } else {
+      copy = ["قیمت و حکم", "قیمتی کمی زیر Temu که هنوز سود تو بمونه، با حکم سبز، زرد یا قرمز و دلیل‌هاش؛ برای همه‌ی شکارهای هر روز."];
+      visual = r ? '<div class="ex-verdict"><span class="pill ' + r.verdict + '"><span class="dot"></span>' + VERDICT[r.verdict] + "</span>" +
+        '<div class="ex-big">' + usd(r.price_usd) + "</div><p>قیمت فروش پیشنهادی</p>" +
+        '<div class="ex-vs"><div><span>Temu</span><b>' + usd(e.temu.price) + "</b>" + chip(r.vs_benchmark) + "</div>" +
+          "<div><span>آمازون</span><b>" + usd(e.amazon.price) + "</b>" + chip(r.vs_amazon) + "</div></div>" +
+        '<div class="ex-kpis"><div><span>سود هر عدد</span><b>' + usd(r.profit_usd) + "</b></div><div><span>حاشیه‌ی سود</span><b>" + pct(r.margin) +
+          "</b></div><div><span>بازده سرمایه</span><b>" + pct(r.roi) + "</b></div></div></div>" : "";
+    }
+    return '<div class="ex-copy"><span class="ex-n">مرحله‌ی ' + toman(n + 1) + " از " + toman(STEPS.length) + "</span><h3>" + copy[0] + "</h3><p>" + copy[1] + "</p>" +
+      (n === STEPS.length - 1
+        ? '<button type="button" class="btn" data-go="signup">شکارهای امروز رو ببین</button>'
+        : '<button type="button" class="ap-link" data-step-next>مرحله‌ی بعد' + ic("chev") + "</button>") +
+      '</div><div class="ex-vis">' + visual + "</div>";
+  }
+
+  // The live mini calculator.
+  function trial() {
+    if (!landing.trial) {
+      var d = calcDefaults();
+      landing.trial = { price: d.price, weight_kg: d.weight_kg, temu_usd: d.temu_usd, freight: "site" };
+    }
+    return landing.trial;
+  }
+  var TRIAL = [
+    ["price", "قیمت در 1688 (هر عدد)", 1, 150, 0.5, function (v) { return "¥" + v.toFixed(2); }],
+    ["weight_kg", "وزن با بسته‌بندی", 0.05, 3, 0.05, function (v) { return v.toFixed(2) + " kg"; }],
+    ["temu_usd", "قیمت همین جنس در Temu", 2, 60, 0.5, function (v) { return usd(v); }],
+  ];
+  function trialHTML() {
+    var t = trial();
+    return '<section class="ap-sec" id="try"><div class="ap-in">' +
+      head("ماشین‌حساب زنده", "عددهای خودت رو<br>امتحان کن.", "قیمت 1688، وزن و قیمت Temu رو تغییر بده؛ قیمت فروش، سود و حکم همون لحظه حساب میشه.") +
+      '<div class="ap-try"><div class="ap-card ap-controls">' +
+        TRIAL.map(function (s) {
+          return '<div class="ap-slider"><div class="row"><label for="t-' + s[0] + '">' + s[1] + '</label><output id="o-' + s[0] + '" dir="ltr">' + s[5](t[s[0]]) + "</output></div>" +
+            '<input type="range" id="t-' + s[0] + '" data-t="' + s[0] + '" min="' + s[2] + '" max="' + s[3] + '" step="' + s[4] + '" value="' + t[s[0]] + '"></div>';
+        }).join("") +
+        '<div class="ap-slider"><div class="row"><span class="label">حمل تا دبی</span></div><div class="ap-seg small" role="group" aria-label="حمل تا دبی">' +
+          FREIGHTS.map(function (f) { return '<button type="button" data-f="' + f[0] + '" aria-pressed="' + (t.freight === f[0]) + '">' + f[1] + "</button>"; }).join("") +
+        "</div></div>" +
+      '</div><div class="ap-card ap-result" id="try-out">' + trialOutHTML() + "</div></div>" +
+    "</div></section>";
+  }
+  function trialOutHTML() {
+    var t = trial();
+    var r = quote({ price: t.price, units: 1, weight_kg: t.weight_kg, temu_usd: t.temu_usd, freight: t.freight === "site" ? null : t.freight });
+    if (!r) return '<p class="hint">' + ERRORS.unprofitable_settings + "</p>";
+    var parts = Calc.split(r), total = parts.reduce(function (a, p) { return a + Math.max(0, p.value); }, 0) || 1;
+    return '<div class="tr-top"><span class="pill ' + r.verdict + '"><span class="dot"></span>' + VERDICT[r.verdict] + '</span><span>قیمت فروش پیشنهادی</span></div>' +
+      '<div class="tr-big" dir="ltr">' + usd(r.price_usd) + "</div>" +
+      '<div class="tr-figs">' +
+        "<div><span>تمام‌شده تا دبی</span><b>" + usd(r.landed_usd) + "</b></div>" +
+        '<div><span>سود هر عدد</span><b class="' + (r.profit_usd >= 0 ? "good" : "bad") + '">' + usd(r.profit_usd) + "</b></div>" +
+        "<div><span>حاشیه‌ی سود</span><b>" + pct(r.margin) + "</b></div>" +
+        "<div><span>نسبت به Temu</span><b>" + signed(r.vs_benchmark) + "</b></div>" +
+      "</div>" +
+      '<div class="tr-split" role="img" aria-label="سهم سود و هزینه‌ها از قیمت فروش؛ فهرستش زیرش هست">' + parts.map(function (p, n) {
+        return '<i class="c' + (n + 1) + '" style="flex:' + (Math.max(0, p.value) / total).toFixed(4) + ' 1 0"></i>';
+      }).join("") + "</div>" +
+      '<ul class="tr-legend">' + parts.map(function (p, n) {
+        return '<li><span class="sw c' + (n + 1) + '"></span><span>' + PARTS[n][1] + '</span><b dir="ltr">' + usd(p.value) + "</b></li>";
+      }).join("") + "</ul>" +
+      '<button type="button" class="btn ghost" data-open-calc>باز کردن در ماشین‌حساب کامل' + ic("calc") + "</button>";
+  }
+
+  function bentoHTML(cfg) {
+    var counts = state.hunt && state.hunt.counts, ex = example();
+    var meter = [["green", "شکار خوب"], ["yellow", "با احتیاط"], ["red", "نیار"]].map(function (v) {
+      var n = counts ? counts[v[0]] || 0 : null;
+      return '<div class="bm"><span class="pill ' + v[0] + '"><span class="dot"></span>' + v[1] + "</span>" + (n != null ? '<b dir="ltr">' + count(n) + "</b>" : "") + "</div>";
+    }).join("");
+    function tile(cls, icon, title, text, extra) {
+      return '<article class="tile ' + cls + '">' + (icon ? ic(icon) : "") + "<h3>" + title + "</h3><p>" + text + "</p>" + (extra || "") + "</article>";
+    }
+    return '<section class="ap-sec" id="tools"><div class="ap-in">' +
+      head("میز کار", "همه‌ی ابزارها.<br>یه جا.", "بعد از ثبت‌نام، همه‌ی این‌ها روی میز کارت منتظرن.") +
+      '<div class="bento">' +
+        tile("dark wide", "hunt", "شکار روزانه", "هر روز محصول‌های تازه با حکم سبز، زرد یا قرمز، و برچسب «جدید امروز» برای چیزهایی که دیروز نبودن.",
+          '<div class="bento-meter">' + meter + "</div>") +
+        tile("", "picks", "شکار اختصاصی", "بر اساس دسته‌ها و بودجه‌ی تو.",
+          '<div class="bento-big"><b class="ap-grad">' + toman(cfg.per_product || 3) + "</b><span>فروشنده برای هر محصول</span></div>") +
+        tile("", "factory", "1688 به فارسی", "عکس، مشخصات، مدل‌ها و قیمت پلکانی تأمین‌کننده؛ بدون نیاز به حساب 1688.") +
+        tile("", "scale", "مقایسه با Temu و آمازون", "قیمت و فروش رقیب‌ها کنار قیمت تو.",
+          ex ? '<div class="bento-chips"><span>Temu ' + chip(ex.vs_benchmark) + "</span><span>آمازون " + chip(ex.vs_amazon) + "</span></div>" : "") +
+        tile("", "analyze", "تحلیل لینک", "لینک Temu یا آمازونی که خودت پیدا کردی رو بده.",
+          '<div class="bento-input" dir="ltr">https://www.temu.com/…</div>') +
+        tile("grad full", "calc", "ماشین‌حساب واردات. رایگان.", "وزن حجمی، حمل دریایی یا هوایی، قیمت دلخواه و برنامه‌ی اولین محموله به تومان؛ بدون ثبت‌نام.",
+          '<button type="button" class="btn" data-go="calc">باز کردن ماشین‌حساب</button>') +
+      "</div></div></section>";
   }
 
   function plansHTML(buying) {
@@ -502,36 +686,260 @@
 
   function authHTML() {
     var signup = state.authMode === "signup";
-    return '<div class="auth-tabs"><button type="button" data-mode="signup" aria-pressed="' + signup + '">ثبت‌نام</button>' +
+    return '<div class="auth-tabs" role="group" aria-label="ثبت‌نام یا ورود"><button type="button" data-mode="signup" aria-pressed="' + signup + '">ثبت‌نام</button>' +
       '<button type="button" data-mode="login" aria-pressed="' + !signup + '">ورود</button></div>' +
       '<form id="auth-form" novalidate>' +
         (signup ? field("name", "نام و نام خانوادگی", "text", "name") + field("phone", "موبایل (برای رسید پرداخت)", "tel", "tel") : "") +
         field("email", "ایمیل", "email", "email") +
         field("password", "رمز عبور" + (signup ? " (حداقل ۸ حرف)" : ""), "password", signup ? "new-password" : "current-password") +
+        (DEMO ? '<p class="hint" style="margin:0">نسخه‌ی نمایشی: هر اسم، ایمیل و رمزی قبوله.</p>' : "") +
         '<div class="error" id="auth-error"></div>' +
-        '<button class="btn block" type="submit">' + (signup ? "ساخت حساب" : "ورود") + ic("back") + "</button>" +
+        '<button class="btn block" type="submit">' + (signup ? "ساخت حساب و رفتن به میز کار" : "ورود به میز کار") + ic("back") + "</button>" +
       "</form>";
   }
   function field(id, label, type, ac) {
     return '<div class="field"><label for="f-' + id + '">' + label + '</label><input class="input" id="f-' + id + '" name="' + id + '" type="' + type + '" autocomplete="' + ac + '" dir="auto"></div>';
   }
+
   function bindLanding() {
+    bindAuth();
+    bindDemo();
+    bindTrial();
+  }
+  function bindAuth() {
     each(document, ".auth-tabs button", function (b) {
-      b.onclick = function () { state.authMode = b.dataset.mode; $("auth").innerHTML = authHTML(); bindLanding(); };
+      b.onclick = function () { state.authMode = b.dataset.mode; $("auth").innerHTML = authHTML(); bindAuth(); };
     });
     $("auth-form").onsubmit = function (ev) {
       ev.preventDefault();
-      var f = ev.target, body = { email: f.email.value, password: f.password.value };
-      if (state.authMode === "signup") { body.name = f.name.value; body.phone = f.phone.value; }
+      var f = ev.target, body = { email: f.email.value, password: f.password.value }, signup = state.authMode === "signup";
+      if (signup) { body.name = f.name.value; body.phone = f.phone.value; }
       $("auth-error").textContent = "";
-      if (DEMO) { state.me = DEMO.me; state.tab = "hunt"; render(); window.scrollTo(0, 0); return; }  // any details will do
+      var welcome = signup ? "حسابت ساخته شد. به میز کار خوش اومدی!" : "خوش برگشتی!";
+      if (DEMO) {  // any details will do
+        state.me = Object.assign({}, DEMO.me, body.name && body.name.trim() ? { name: body.name.trim() } : {}, /@/.test(body.email) ? { email: body.email.trim() } : {});
+        state.tab = "dash"; render(); window.scrollTo(0, 0); toast(welcome);
+        return;
+      }
       api("/api/" + state.authMode, { method: "POST", body: body }).then(function (me) {
-        state.me = me; state.tab = me.active ? "hunt" : "account";
+        state.me = me; state.tab = "dash";
         return loadHunt();
-      }).then(render, function (e) {
+      }).then(function () { render(); window.scrollTo(0, 0); toast(welcome); }, function (e) {
         $("auth-error").textContent = e.code === "invalid" ? "همه‌ی خونه‌ها رو درست پر کن (رمز حداقل ۸ حرف)." : errText(e);
       });
     };
+  }
+
+  // The demo walks through its steps by itself while it's on screen, until someone picks one.
+  function bindDemo() {
+    var seg = $("demo-seg"), stage = $("demo-stage");
+    if (!seg) return;
+    function show(n, auto) {
+      landing.step = n;
+      each(seg, "button", function (b) {
+        var on = Number(b.dataset.step) === n;
+        b.setAttribute("aria-selected", String(on));
+        b.classList.toggle("playing", on && auto);
+      });
+      stage.innerHTML = stepHTML(n);
+    }
+    function pick(n) { stopDemo(); landing.stopped = true; show(n, false); }
+    each(seg, "button", function (b) { b.onclick = function () { pick(Number(b.dataset.step)); }; });
+    stage.addEventListener("click", function (ev) {
+      if (ev.target.closest("[data-step-next]")) pick((landing.step + 1) % STEPS.length);
+    });
+    if (landing.stopped || !motionOK() || !window.IntersectionObserver) return;
+    landing.io = new IntersectionObserver(function (entries) {
+      var seen = entries[entries.length - 1].isIntersecting;
+      clearInterval(landing.timer); landing.timer = null;
+      each(seg, "button", function (b) { b.classList.toggle("playing", seen && Number(b.dataset.step) === landing.step); });
+      if (seen) landing.timer = setInterval(function () { show((landing.step + 1) % STEPS.length, true); }, 5000);
+    }, { threshold: 0.35 });
+    landing.io.observe(stage);
+  }
+  function stopDemo() {
+    clearInterval(landing.timer); landing.timer = null;
+    if (landing.io) { landing.io.disconnect(); landing.io = null; }
+    each($("demo-seg"), "button", function (b) { b.classList.remove("playing"); });
+  }
+
+  function bindTrial() {
+    var box = $("try");
+    if (!box) return;
+    var t = trial();
+    each(box, "[data-t]", function (input) {
+      var s = TRIAL.find(function (x) { return x[0] === input.dataset.t; });
+      input.oninput = function () {
+        t[s[0]] = Number(input.value);
+        $("o-" + s[0]).textContent = s[5](t[s[0]]);
+        $("try-out").innerHTML = trialOutHTML();
+      };
+    });
+    each(box, "[data-f]", function (b) {
+      b.onclick = function () {
+        t.freight = b.dataset.f;
+        each(box, "[data-f]", function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+        $("try-out").innerHTML = trialOutHTML();
+      };
+    });
+    box.addEventListener("click", function (ev) {
+      if (!ev.target.closest("[data-open-calc]")) return;
+      var cs = calcState();
+      Object.assign(cs.input, { title: "", price: t.price, currency: "cny", units: 1, weight_kg: t.weight_kg, dims: { l: null, w: null, h: null }, temu_usd: t.temu_usd, freight: t.freight });
+      cs.custom = null; cs.res = null;
+      go("calc");
+    });
+  }
+
+  // --- the workspace: members' home, with every tool one click away ----------------------------
+
+  var TOOLS = [
+    ["hunt", "شکارهای امروز", "پرفروش‌های Temu و آمازون با تأمین‌کننده‌ی 1688، همه‌ی هزینه‌ها و قیمت فروش پیشنهادی.", false],
+    ["picks", "شکارهای اختصاصی من", "از شکارهای امروز، اون‌هایی که با دسته‌ها و بودجه‌ات جورن؛ هر کدوم فقط برای چند فروشنده.", true],
+    ["analyze", "تحلیل لینک", "لینک Temu یا آمازون بده؛ تأمین‌کننده، مقایسه و قیمت فروش آماده میشه.", true],
+    ["calc", "ماشین‌حساب واردات", "از قیمت 1688 تا سود خالص، با وزن حجمی، نوع حمل و برنامه‌ی اولین محموله.", false],
+    ["account", "حساب و اشتراک", "پلن، مشخصات، دسته‌ها و بودجه‌ی شروع.", false],
+  ];
+
+  function renderDash() {
+    var me = state.me, h = state.hunt, plan = currentPlan();
+    var counts = h && h.counts || {}, total = (counts.green || 0) + (counts.yellow || 0) + (counts.red || 0);
+    var open = h && !h.locked ? h.candidates : null;
+    var fresh = open ? open.filter(function (c) { return c.is_new; }).length : null;
+    var first = (me.name || "").trim().split(/\s+/)[0];
+    var saved = (memo().scenarios || []).length;
+    var status = me.is_admin ? "مدیر سایت: دسترسی کامل به همه‌ی ابزارها."
+      : me.active ? "اشتراک" + (plan ? " «" + esc(plan.name_fa) + "»" : "") + " تا " + esc(faDate(me.paid_until)) + " فعاله. همه‌ی ابزارها باز هستن."
+      : "حسابت آماده‌ست. ماشین‌حساب همین حالا باز و رایگانه؛ شکارها، تأمین‌کننده‌ها و تحلیل لینک با اشتراک باز میشن.";
+    var metric = {
+      hunt: total ? count(counts.green || 0) + " شکار خوب امروز" : "منتظر شکار امروز",
+      picks: !me.active ? "نیاز به اشتراک" : state.picks ? count(state.picks.candidates.length) + " محصول برای تو" : "بر اساس دسته‌ها و بودجه‌ات",
+      analyze: !me.active ? "نیاز به اشتراک" : linksLeftText(),
+      calc: "رایگان" + (saved ? " · " + count(saved) + " حالت ذخیره‌شده" : ""),
+      account: plan ? "پلن " + esc(plan.name_fa) : me.is_admin ? "مدیر سایت" : "بدون اشتراک",
+    };
+    var led = { hunt: total ? "g" : "n", picks: me.active ? "g" : "n", analyze: me.active ? "b" : "n", calc: "b", account: me.active ? "g" : "y" };
+    var tools = TOOLS.map(function (t) {
+      var locked = t[3] && !me.active;
+      return '<button type="button" class="tool t-' + t[0] + (locked ? " locked" : "") + '" data-go="' + t[0] + '" data-tilt>' +
+        '<span class="key">' + ic(t[0]) + "</span>" +
+        '<span class="tool-t">' + t[1] + (locked ? ic("lock") : "") + "</span>" +
+        '<span class="tool-d">' + t[2] + "</span>" +
+        '<span class="tool-m"><span class="led ' + led[t[0]] + '"></span><span id="m-' + t[0] + '">' + metric[t[0]] + "</span>" + ic("back") + "</span>" +
+      "</button>";
+    }).join("");
+    $("main").innerHTML =
+      '<section class="deck">' +
+        '<div class="deck-copy">' +
+          '<span class="deck-tag"><span class="led ' + (h ? "g" : "y") + '"></span>' +
+            (h ? "آخرین شکار: " + esc(faDate(h.started_at)) + (h.sample ? " · داده‌ی نمونه" : "") : "هنوز شکاری انجام نشده") + "</span>" +
+          "<h1>" + (first ? "سلام " + esc(first) + "،" : "سلام،") + "<br>میز کارت آماده‌ست.</h1>" +
+          "<p>" + status + "</p>" +
+          '<div class="deck-actions">' +
+            (me.active ? '<button type="button" class="btn" data-go="hunt">شکارهای امروز' + ic("back") + "</button>"
+              : '<button type="button" class="btn" data-go="account">خرید اشتراک' + ic("coin") + "</button>") +
+            '<button type="button" class="btn ghost" data-go="calc">ماشین‌حساب' + ic("calc") + "</button>" +
+          "</div>" +
+        "</div>" +
+        '<div class="deck-art" aria-hidden="true">' + cratesHTML() + "</div>" +
+      "</section>" +
+      '<div class="plates">' +
+        plateHTML("شکار خوب امروز", total ? count(counts.green || 0) : "—", total ? "از " + count(total) + " محصول بررسی‌شده" : "منتظر اولین شکار", "g", total ? (counts.green || 0) / total : null, "hunt") +
+        plateHTML("جدید امروز", fresh != null ? count(fresh) : "—", fresh != null ? "محصولی که دیروز نبود" : "با اشتراک باز میشه", "b", null, "hunt") +
+        plateHTML("تحلیل لینک", me.active ? linksLeft() : "—", me.active ? "سهمیه‌ی باقی‌مونده‌ی این ماه" : "با اشتراک باز میشه", "y", null, "analyze", "p-links") +
+        plateHTML("بودجه‌ی شروع", "$" + count(Math.round(me.budget_usd || 0)), "برای شکارهای اختصاصی · تغییر", "n", null, "account") +
+      "</div>" +
+      '<div class="rail-h"><h2>ابزارها</h2><span>هر کدوم رو بزنی، همون‌جا باز میشه</span></div>' +
+      '<div class="tools">' + tools + "</div>" +
+      '<div class="dash-row">' + quickHTML() + findsHTML() + "</div>";
+    bindDash();
+  }
+
+  function linksLeft() {
+    var j = state.jobs, plan = currentPlan();
+    if (j && j.quota != null) return count(j.left);
+    return plan ? count(plan.links) : state.config.monthly_links ? count(state.config.monthly_links) : "—";
+  }
+  function linksLeftText() { return linksLeft() + " تحلیل لینک باقی‌مونده"; }
+
+  function plateHTML(k, v, sub, led, meter, go, id) {
+    return '<button type="button" class="plate" data-go="' + go + '"' + (id ? ' id="' + id + '"' : "") + ">" +
+      '<span class="k"><span class="led ' + led + '"></span>' + k + "</span>" +
+      '<span class="v">' + v + "</span>" +
+      (meter != null ? '<span class="meter"><i style="width:' + Math.round(meter * 100) + '%"></i></span>' : "") +
+      '<span class="sub">' + sub + "</span></button>";
+  }
+
+  // Shipping crates on a slowly turning stand, in CSS 3D.
+  function cratesHTML() {
+    function crate(cls, label) {
+      return '<div class="crate ' + cls + '"><i class="f ft"><b>' + label + '</b></i><i class="f bk"><b>' + label + '</b></i><i class="f rt"></i><i class="f lt"></i><i class="f tp"></i><i class="f bt"></i></div>';
+    }
+    return '<div class="scene"><div class="rig"><div class="pad"></div>' + crate("k1", "1688") + crate("k2", "DXB") + crate("k3", "") + "</div></div>";
+  }
+
+  function quickHTML() {
+    var me = state.me, calcUsed = !!memo().last, analysed = !!(state.analysis || state.jobs && state.jobs.items && state.jobs.items.length);
+    var steps = [
+      [true, "حساب ساختی", "خوش اومدی به شکارچی.", null],
+      [me.categories && me.categories.length > 0, "دسته‌ها و بودجه‌ات رو مشخص کن", "تا شکارهای اختصاصی برای خودت انتخاب بشن.", "account"],
+      [calcUsed, "یه محصول رو در ماشین‌حساب بسنج", "قیمت 1688 و وزن کافیه.", "calc"],
+      [!!me.active, "اشتراک بگیر", "شکارها، تأمین‌کننده‌ها و تحلیل لینک باز میشن.", "account"],
+      [analysed, "اولین لینکت رو تحلیل کن", "محصولی که خودت پیدا کردی.", "analyze"],
+    ];
+    var done = steps.filter(function (s) { return s[0]; }).length;
+    return '<section class="panel quick"><div class="card-h"><h2>' + ic("rocket") + "شروع سریع</h2>" +
+      '<span class="num">' + done + "/" + steps.length + "</span></div>" +
+      '<div class="groove" role="progressbar" aria-valuemin="0" aria-valuemax="' + steps.length + '" aria-valuenow="' + done + '" aria-label="پیشرفت شروع"><i style="width:' + Math.round(done / steps.length * 100) + '%"></i></div>' +
+      '<ol class="checklist">' + steps.map(function (s) {
+        return '<li class="' + (s[0] ? "done" : "") + '"><span class="tick">' + ic(s[0] ? "check" : "chev") + "</span><div><b>" + s[1] + "</b><span>" + s[2] + "</span></div>" +
+          (!s[0] && s[3] ? '<button type="button" class="btn ghost small" data-go="' + s[3] + '">برو</button>' : "") + "</li>";
+      }).join("") + "</ol></section>";
+  }
+
+  function findsHTML() {
+    var h = state.hunt;
+    var list = (h && h.candidates || []).slice().sort(function (a, b) {
+      var rank = { green: 0, yellow: 1, red: 2 };
+      return rank[a.verdict] - rank[b.verdict] || b.score - a.score;
+    }).slice(0, 5);
+    var rows = list.map(function (c) {
+      var p = c.pricing;
+      return '<button type="button" class="find" data-go="hunt"><span class="led ' + { green: "g", yellow: "y", red: "r" }[c.verdict] + '"></span>' +
+        '<span class="find-t">' + esc(c.title_fa || c.listing && c.listing.title || "") + "<small>" + esc(catName(c.category)) + "</small></span>" +
+        (p ? '<span class="find-n"><b>' + usd(p.price_usd) + "</b><small>سود " + ltr(usd(p.profit_usd)) + "</small></span>" : '<span class="find-n locked">' + ic("lock") + "</span>") +
+        '<span class="find-s">' + c.score + "</span></button>";
+    }).join("");
+    return '<section class="panel finds"><div class="card-h"><h2>' + ic("spark") + "بهترین‌های امروز</h2>" +
+      '<button type="button" class="btn ghost small" data-go="hunt">همه' + ic("back") + "</button></div>" +
+      (rows ? '<div class="find-list">' + rows + "</div>" + (h.locked ? '<p class="hint">قیمت‌ها و تأمین‌کننده با اشتراک باز میشه.</p>' : "")
+        : '<div class="empty">هنوز شکاری انجام نشده.</div>') + "</section>";
+  }
+
+  function bindDash() {
+    bindTilt($("main"));
+    if (state.jobs === undefined && !DEMO && state.config.links && state.me.active) {
+      state.jobs = null;
+      loadJobs().then(function () {
+        if (state.tab !== "dash" || !$("p-links")) return;
+        $("p-links").querySelector(".v").textContent = linksLeft();
+        var m = $("m-analyze"); if (m) m.textContent = linksLeftText();
+      });
+    }
+  }
+
+  // Tiles lean toward the pointer, with a highlight where it is.
+  function bindTilt(root) {
+    if (!window.matchMedia || !matchMedia("(hover: hover) and (pointer: fine)").matches || !motionOK()) return;
+    each(root, "[data-tilt]", function (el) {
+      el.addEventListener("pointermove", function (ev) {
+        var r = el.getBoundingClientRect(), x = (ev.clientX - r.left) / r.width - 0.5, y = (ev.clientY - r.top) / r.height - 0.5;
+        el.style.transform = "perspective(900px) rotateX(" + (-y * 8).toFixed(2) + "deg) rotateY(" + (x * 10).toFixed(2) + "deg) translateZ(0)";
+        el.style.setProperty("--gx", Math.round((x + 0.5) * 100) + "%");
+        el.style.setProperty("--gy", Math.round((y + 0.5) * 100) + "%");
+      });
+      el.addEventListener("pointerleave", function () { el.style.transform = ""; });
+    });
   }
 
   // --- hunt tab ------------------------------------------------------------------
@@ -794,7 +1202,7 @@
       ? (me.is_admin ? "مدیر سایت: دسترسی کامل." : "اشتراک" + (current ? " «" + esc(current.name_fa) + "»" : "") + " تا " + esc(faDate(me.paid_until)) + " فعاله.")
       : "اشتراک فعالی نداری.";
     return '<div class="page-head"><div><span class="eyebrow">' + esc(me.email) + '</span><h1 class="section-title">حساب من</h1></div>' +
-      '<button type="button" class="btn ghost small" data-logout>' + (DEMO ? "دیدن صفحه‌ی بازدیدکننده" : "خروج از حساب") + ic("logout") + "</button></div>" +
+      '<button type="button" class="btn ghost small" data-logout>' + "خروج از حساب" + ic("logout") + "</button></div>" +
       '<div class="stack">' +
       '<section class="panel"><h2 class="section-title">اشتراک</h2><p class="section-sub">' + status + "</p>" +
         '<div class="plans">' + plansHTML(true) + "</div>" +
@@ -1553,20 +1961,20 @@
     try { history.replaceState(null, "", tab === "calc" ? "#calc" : location.pathname + location.search); } catch (e) { /* sandboxed */ }
   }
   function logout() {
-    if (DEMO) { state.me = null; state.tab = "hunt"; render(); window.scrollTo(0, 0); return; }
+    if (DEMO) { state.me = null; state.tab = "home"; render(); window.scrollTo(0, 0); return; }
     api("/api/logout", { method: "POST" }).then(function () {
-      state.me = null; state.picks = null; state.analysis = null; state.jobs = undefined; state.tab = "hunt"; return loadHunt();
+      state.me = null; state.picks = null; state.analysis = null; state.jobs = undefined; state.tab = "home"; return loadHunt();
     }).then(render);
   }
   function focusAuth(mode) {
     state.authMode = mode;
-    if (state.tab !== "hunt") go("hunt"); else { $("auth").innerHTML = authHTML(); bindLanding(); }
+    if (state.tab !== "home") go("home"); else { $("auth").innerHTML = authHTML(); bindAuth(); }
     var f = $("auth-form");
     if (f) { $("auth").scrollIntoView({ block: "center", behavior: "smooth" }); f.querySelector("input").focus({ preventScroll: true }); }
   }
 
   each($("tabs"), "button", function (b) { b.onclick = function () { go(b.dataset.tab); }; });
-  $("brand-link").onclick = function (ev) { ev.preventDefault(); go("hunt"); };
+  $("brand-link").onclick = function (ev) { ev.preventDefault(); go("home"); };
   $("app").addEventListener("click", function (ev) {
     var t = ev.target.closest("[data-go], [data-logout]");
     if (!t) return;
@@ -1574,10 +1982,10 @@
     if (t.hasAttribute("data-logout")) { logout(); return; }
     var where = t.dataset.go;
     if (where === "signup" || where === "login") { if (state.me) go("account"); else focusAuth(where); }
-    else if (where === "plans") {
-      if (state.me) { go("account"); return; }
-      if (state.tab !== "hunt") go("hunt");
-      var p = $("plans"); if (p) p.scrollIntoView({ block: "start", behavior: "smooth" });
+    else if (where === "plans" || where === "demo") {  // sections of the landing
+      if (state.me) { go(where === "plans" ? "account" : "dash"); return; }
+      if (state.tab !== "home") go("home");
+      var p = $(where); if (p) p.scrollIntoView({ block: "start", behavior: motionOK() ? "smooth" : "auto" });
     } else go(where);
   });
   // Pictures from the image proxy that don't load leave the initial letter behind.

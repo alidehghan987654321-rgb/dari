@@ -23,7 +23,7 @@ from .sources.sample import SampleData
 STATIC = Path(__file__).resolve().parent / "static"
 FONTS_LINK = (
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
-    'family=IBM+Plex+Mono:wght@400;600&family=Vazirmatn:wght@400;700&display=swap">'
+    'family=IBM+Plex+Mono:wght@400;600&family=Vazirmatn:wght@400;700;900&display=swap">'
 )
 
 
