@@ -7,12 +7,13 @@ because the self-hosted ones aren't next to the file.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from pathlib import Path
 
 from .allocate import choose_picks
-from .app import example_links, pricing_settings, public_user
+from .app import Settings, example_links, pricing_settings, public_user
 from .categories import CATEGORIES
 from .engine import Hunter
 from .offers import offer_view
@@ -23,8 +24,22 @@ from .sources.sample import SampleData
 STATIC = Path(__file__).resolve().parent / "static"
 FONTS_LINK = (
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
-    'family=IBM+Plex+Mono:wght@400;600&family=Vazirmatn:wght@400;700;900&display=swap">'
+    'family=IBM+Plex+Mono:wght@400;500;600&family=Vazirmatn:wght@400;500;700;800;900&display=swap">'
 )
+
+
+BRAND_FILE = re.compile(r"/static/brand/([\w.-]+)")
+MIME = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg", ".svg": "image/svg+xml"}
+
+
+def _inline_brand(text: str) -> str:
+    """The logo and background as data URIs, so the page needs nothing next to it."""
+
+    def data_uri(m: re.Match) -> str:
+        path = STATIC / "brand" / m.group(1)
+        return f"data:{MIME[path.suffix]};base64,{base64.b64encode(path.read_bytes()).decode()}"
+
+    return BRAND_FILE.sub(data_uri, text)
 
 
 def _between(text: str, start: str, end: str) -> str:
@@ -48,7 +63,8 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     calc = (STATIC / "calc.js").read_text(encoding="utf-8")
     css = re.sub(r"/\*fonts:start\*/.*?/\*fonts:end\*/", "", css, flags=re.S)
-    markup = _between(html, "<!--app:start-->", "<!--app:end-->")
+    markup = _inline_brand(_between(html, "<!--app:start-->", "<!--app:end-->"))
+    css, js = _inline_brand(css), _inline_brand(js)
 
     sample = SampleData()
     candidates = hunt["candidates"]
@@ -97,6 +113,12 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
             "links_per_request": 10,
             "monthly_links": 30,
             "example_links": example_links(Hunter([sample], sample)),
+            "support": {
+                "name": Settings.support_name,
+                "phone": Settings.support_phone,
+                "email": Settings.support_email,
+            },
+            "media": True,
         },
         "me": me,
         "hunt": {

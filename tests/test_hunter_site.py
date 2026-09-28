@@ -849,7 +849,9 @@ def test_sellers_download_their_products_pictures_and_videos(link_settings, samp
         r = c.get("/media/file", params={"u": m["images"][0]["url"], "name": "گربه", "n": 2})
         assert r.status_code == 200 and r.content == png()
         assert r.headers["content-disposition"].startswith("attachment;")
-        assert "filename*=UTF-8''%DA%AF%D8%B1%D8%A8%D9%87-02.png" in r.headers["content-disposition"]
+        assert (
+            "filename*=UTF-8''%DA%AF%D8%B1%D8%A8%D9%87-02.png" in r.headers["content-disposition"]
+        )
         ready = c.get("/media/file", params={"u": m["images"][0]["url"], "ready": 1})
         with Image.open(io.BytesIO(ready.content)) as im:
             assert ready.headers["content-type"] == "image/jpeg" and im.size == (1200, 1200)
