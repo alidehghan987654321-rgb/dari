@@ -148,6 +148,7 @@
 
   function render() {
     stopDemo();
+    stopRadar();
     var loggedIn = !!state.me;
     if (!loggedIn && !PUBLIC[state.tab]) state.tab = "home";
     if (loggedIn && state.tab === "home") state.tab = "dash";
@@ -485,7 +486,7 @@
   function sharePct() { return Math.round(((state.config.pricing || {}).platform_pct || 0.2) * 100); }
 
   function landingHTML() {
-    var cfg = state.config || {}, pricing = cfg.pricing || {}, ex = example(), share = sharePct();
+    var cfg = state.config || {}, pricing = cfg.pricing || {}, share = sharePct();
     var faq = [
       ["شکارچی برای کیه؟", "برای فروشنده‌های راینومال که از چین جنس میارن و می‌خوان قبل از خرید بدونن چی بیارن، از کجا بخرن و چقدر سود می‌کنن."],
       ["چینی بلد نیستم؛ حساب 1688 لازمه؟", "نه. اطلاعات تأمین‌کننده همین‌جا به فارسیه. فقط لینک رو برای ایجنت خریدت بفرست."],
@@ -511,7 +512,7 @@
             "<div><b>" + share + "%</b><span>سهم راینومال، با ارسال و انبار و تبلیغات</span></div>" +
             "<div><b>" + (cfg.per_product || 3) + "</b><span>فروشنده برای هر محصول، نه بیشتر</span></div></div>" +
         "</div>" +
-        scannerHTML(ex) +
+        radarHTML() +
       "</section>" +
       '<section class="lp-sec band" id="demo"><div class="lp-in">' +
         head("دموی زنده", "یه محصول، از Temu تا <em>سود تو.</em>", "ببین شکارچی در چهار قدم با یه محصول چی کار می‌کنه. عددها همین الان حساب میشن.") +
@@ -551,22 +552,250 @@
       '<button type="button" class="btn" data-demo-enter>ورود مستقیم به میز کار' + ic("back") + "</button></div>" : "";
   }
 
-  // The logo under a sweeping scan line, with the sample product's figures around it.
-  function scannerHTML(r) {
-    var e = EXAMPLE, logo = "/static/brand/logo-512.webp";
-    var hud = function (pos, label, value, cls, extra) {
-      return '<div class="hud' + (cls ? " " + cls : "") + '" style="' + pos + '"><small>' + label + "</small><b>" + value + (extra || "") + "</b></div>";
-    };
-    return '<div class="scanner glass bk beam" aria-label="نمونه: ' + esc(e.title_fa) + '">' +
-      '<div class="grid"></div><img class="mark" src="' + logo + '" alt=""><div class="scan-line"></div>' +
-      (r ? hud("top:9%;right:6%", "خرید از 1688", "¥" + (e.offer.price * e.units).toFixed(2)) +
-        hud("top:9%;left:6%", "تمام‌شده تا دبی", usd(r.landed_usd)) +
-        hud("top:36%;left:4%", "Temu", usd(e.temu.price), "", '<span class="d">' + signed(r.vs_benchmark) + "</span>") +
-        hud("top:52%;right:5%", "قیمت پیشنهادی", usd(r.price_usd), "y") : "") +
-      '<div class="readout"><div><div class="t">' + esc(e.title_fa) + '</div><div class="s">' +
-        (r ? "سود هر عدد " + ltr(usd(r.profit_usd)) + " · حاشیه " + ltr(pct(r.margin)) + " · نمونه" : "نمونه") + "</div></div>" +
-        (r ? '<span class="pill ' + r.verdict + '"><span class="dot"></span>' + VERDICT[r.verdict] + "</span>" : "") + "</div>" +
+  // --- the hero's radar: products pass through, the hunter locks on, costs each one and decides ---
+
+  // Sample listings passing the radar: the 1688 price in yuan for the listing's units, weight in
+  // kg, and the Temu and Amazon prices. Every figure shown is worked out live by calc.js with the
+  // site's settings; `flag` is what the hunt's own checks say (a restricted good, a brand).
+  var RADAR = [
+    { name: "پرکننده‌ی شکاف صندلی خودرو (2 عددی)", cny: 6.65, units: 2, kg: 0.4, temu: 11.99, amazon: 16.99 },
+    { name: "صندلی تاشوی کمپینگ", cny: 48, units: 1, kg: 3.6, temu: 17.99, amazon: 24.99 },
+    { name: "زیرانداز لیسیدنی سگ (2 عددی)", cny: 3.2, units: 2, kg: 0.24, temu: 5.49, amazon: 9.99 },
+    { name: "جاروشارژی خودرو", cny: 38, units: 1, kg: 1.1, temu: 19.99, amazon: 29.99, flag: ["red", "باتری لیتیومی داره؛ ارسالش ممنوعه.", "ممنوع"] },
+    { name: "کیسه‌ی نگهداری زیر تخت (3 عددی)", cny: 8.5, units: 3, kg: 0.6, temu: 15.99, amazon: 21.99 },
+    { name: "آینه‌ی قدی ایستاده", cny: 65, units: 1, kg: 5.5, temu: 27.99, amazon: 39.99 },
+    { name: "کیف نظم‌دهنده‌ی چمدان (6 تایی)", cny: 17, units: 1, kg: 0.7, temu: 13.99, amazon: 19.99 },
+    { name: "پایه‌ی مغناطیسی موبایل خودرو", cny: 9.5, units: 1, kg: 0.15, temu: 11.49, amazon: 19.99, flag: ["yellow", "طرحش شبیه یه برند ثبت‌شده‌ست؛ قبل از خرید بررسی کن.", "ریسک برند"] },
+    { name: "آبچکان کشویی روی سینک", cny: 42, units: 1, kg: 1.9, temu: 24.99, amazon: 32.99 },
+    { name: "چهارپایه‌ی تاشو", cny: 22, units: 1, kg: 2.8, temu: 12.99, amazon: 18.99 },
+    { name: "فرکننده‌ی مو بدون حرارت", cny: 4.5, units: 1, kg: 0.08, temu: 6.99, amazon: 9.99 },
+    { name: "چراغ خواب رومیزی", cny: 28, units: 1, kg: 1.4, temu: 16.99, amazon: 24.99 },
+  ];
+  var RADAR_SAY = { green: "شکار شد", yellow: "با احتیاط", red: "رد شد" };
+  var RADAR_ICON = { green: "check", yellow: "warn", red: "x" };
+
+  // One listing through the hunter: its cost to Dubai, the store's share and the profit at the
+  // price it would sell for. When no profitable price is under Temu, that's the price just under
+  // Temu, and the profit there is a loss.
+  function radarEval(x) {
+    var p = state.config && state.config.pricing;
+    var r = p && quote({ price: x.cny, units: x.units, weight_kg: x.kg, temu_usd: x.temu, amazon_usd: x.amazon });
+    if (!r) return null;
+    var price = r.price_usd, verdict = r.verdict, why;
+    if (r.vs_benchmark > 1 + p.max_premium) {
+      price = Calc.charmDown(x.temu * (1 - p.undercut));
+      why = "سنگینه (" + ltr(x.kg) + " کیلو)؛ کرایه سود رو می‌خوره و زیر قیمت Temu زیان می‌ده.";
+    } else if (verdict === "green") {
+      why = ltr(Math.round((1 - r.vs_benchmark) * 100) + "%") + " ارزون‌تر از Temu، با حاشیه‌ی سود " + ltr(pct(r.margin)) + ".";
+    } else {
+      why = "حاشیه‌ی سودش کمه؛ با احتیاط.";
+    }
+    var tag = null;
+    if (x.flag) { verdict = x.flag[0]; why = x.flag[1]; tag = x.flag[2]; }
+    var cost = r.unit_cost, fees = price * (1 - r.keep);
+    return { name: x.name, verdict: verdict, why: why, tag: tag, price: price, cost: cost, fees: fees, profit: price * r.keep - cost,
+      feesLabel: Math.abs(r.keep - (1 - p.platform_pct)) < 1e-9 ? "سهم راینومال " + sharePct() + "%" : "سهم و کارمزدها" };
+  }
+
+  function radarHTML() {
+    return '<div class="radar glass bk beam" id="radar">' +
+      '<div class="rd-top"><span class="led y"></span><b>رادار شکار</b><span class="rd-src" dir="ltr">TEMU · AMAZON · 1688</span>' +
+        '<span class="rd-tally"><span>بررسی <b id="rd-seen">0</b></span><span class="g">شکار <b id="rd-hit">0</b></span>' +
+        '<span class="r">رد <b id="rd-miss">0</b></span></span></div>' +
+      '<div class="rd-stage" id="rd-stage" aria-hidden="true">' +
+        '<div class="rd-grid"></div><div class="rd-floor rd-rim"></div>' +
+        '<div class="rd-floor"><div class="rd-rings"></div><div class="rd-ticks"></div><div class="rd-sweep" id="rd-sweep"></div><div class="rd-hub"></div></div>' +
+        '<div class="rd-blips" id="rd-blips"></div><div class="rd-lock" id="rd-lock"><i></i></div>' +
+      "</div>" +
+      '<div class="rd-card" id="rd-card">' + radarCardHTML(radarEval(RADAR[0]), false) + "</div>" +
     "</div>";
+  }
+  // What the radar has locked on: where each dollar of the price goes, then profit or loss.
+  function radarCardHTML(e, busy) {
+    if (!e) return '<p class="rd-why">' + ERRORS.unprofitable_settings + "</p>";
+    var loss = e.profit < 0, total = Math.max(e.price, e.cost + e.fees);
+    var w = function (x) { return (Math.max(0, x) / total * 100).toFixed(2) + "%"; };
+    var val = function (x) { return busy ? "···" : x; };
+    return '<div class="rd-card-h"><div class="rd-name"><small>' + (busy ? "در حال تحلیل…" : "قفل روی") + "</small><b>" + esc(e.name) + "</b></div>" +
+        (busy ? '<span class="pill neutral"><span class="dot"></span>تحلیل</span>'
+          : '<span class="pill ' + e.verdict + '">' + ic(RADAR_ICON[e.verdict]) + RADAR_SAY[e.verdict] + "</span>") + "</div>" +
+      '<div class="rd-bar' + (busy ? " busy" : "") + '"><i class="c" style="width:' + w(e.cost) + '"></i><i class="s" style="width:' + w(e.fees) + '"></i>' +
+        (loss ? '<i class="loss" style="inset-inline-start:' + w(e.price) + '"></i><i class="mark" style="inset-inline-start:' + w(e.price) + '"></i>'
+          : '<i class="p" style="width:' + w(e.profit) + '"></i>') + "</div>" +
+      '<div class="rd-cells">' +
+        '<div><span><i class="sw c"></i>تمام‌شده تا دبی</span><b>' + val(usd(e.cost)) + "</b></div>" +
+        '<div><span><i class="sw s"></i>' + e.feesLabel + "</span><b>" + val(usd(e.fees)) + "</b></div>" +
+        "<div><span>" + (loss ? "قیمت زیر Temu" : "قیمت فروش") + "</span><b>" + val(usd(e.price)) + "</b></div>" +
+        '<div class="pl ' + (busy ? "" : loss ? "r" : "g") + '"><span><i class="sw ' + (loss ? "l" : "p") + '"></i>' + (loss ? "زیان هر عدد" : "سود هر عدد") + "</span><b>" +
+          val((loss ? "" : "+") + usd(e.profit)) + "</b></div>" +
+      "</div>" +
+      '<p class="rd-why">' + (busy ? "هزینه‌ها، سهم راینومال و قیمت رقبا در حال محاسبه‌ست." : esc(e.why)) + "</p>";
+  }
+
+  // The radar's animation. The floor is a disc tilted in 3D by CSS; the products are upright
+  // pins in a flat layer above it, placed where the same tilt and perspective put each point.
+  var radar = { raf: 0, io: null, ro: null, onResize: null };
+  var TILT = 58 * Math.PI / 180, PERSP = 900, SPIN_MS = 3400, LANES = [-0.62, -0.3, 0.02, 0.34, 0.62];
+
+  function bindRadar() {
+    stopRadar();
+    var stage = $("rd-stage");
+    if (!stage) return;
+    var floors = stage.querySelectorAll(".rd-floor"), grid = stage.querySelector(".rd-grid");
+    var sweep = $("rd-sweep"), layer = $("rd-blips"), lock = $("rd-lock"), card = $("rd-card");
+    var evals = RADAR.map(radarEval);
+    if (!evals[0]) return;
+    var geo = {}, items = [], next = 1, t = 0, last = 0, held = null, releasedAt = -1e9, wait = {};
+    var tally = { seen: 0, hit: 0, miss: 0 };
+
+    // The largest disc that fits with room above for the far pins' labels and below for its rim.
+    function measure() {
+      var w = stage.clientWidth, h = stage.clientHeight, sn = Math.sin(TILT), cs = Math.cos(TILT);
+      var d = w * 0.88, R, k, top, bottom;
+      for (var i = 0; i < 40; i++, d *= 0.95) {
+        R = d / 2; k = Math.max(0.72, Math.min(1, d / 440));
+        var far = PERSP / (PERSP + LANES[4] * R * sn);
+        top = Math.max(R * cs * PERSP / (PERSP + R * sn), LANES[4] * R * cs * far + 92 * far * k) + 8;
+        bottom = R * cs * PERSP / (PERSP - R * sn) + d * 0.035 + 10;
+        if (top + bottom <= h) break;
+      }
+      geo = { cx: w / 2, cy: top + (h - top - bottom) / 2, R: R, k: k };
+      Array.prototype.forEach.call(floors, function (f, n) {
+        f.style.width = f.style.height = d + "px";
+        f.style.left = (w - d) / 2 + "px";
+        f.style.top = geo.cy - d / 2 + (n === 0 ? d * 0.035 : 0) + "px";  // the rim sits a little lower: the disc's edge
+      });
+      var g = d * 2.2;
+      grid.style.width = grid.style.height = g + "px";
+      grid.style.left = (w - g) / 2 + "px"; grid.style.top = geo.cy - g / 2 + "px";
+    }
+    function project(u, v) {  // a point on the floor, in px from its centre -> where it shows
+      var s = PERSP / (PERSP - v * Math.sin(TILT));
+      return { x: geo.cx + u * s, y: geo.cy + v * Math.cos(TILT) * s, s: s };
+    }
+    function spawn(lane, u, n) {
+      var x = RADAR[n], e = evals[n], el = document.createElement("div");
+      el.className = "rd-pin";
+      el.innerHTML = '<div class="in"><i class="base"></i><i class="stem"></i><span class="head">' + ic("box") + '</span><span class="tag">Temu ' + usd(x.temu) + "</span></div>";
+      layer.appendChild(el);
+      var it = { lane: lane, f: LANES[lane], u: u, n: n, e: e, el: el, state: "new", ping: -1e9, speed: 0.13 + Math.random() * 0.06 };
+      items.push(it);
+      return it;
+    }
+    function chord(f) { return Math.sqrt(1 - f * f); }
+    function setTally() {
+      $("rd-seen").textContent = tally.seen; $("rd-hit").textContent = tally.hit; $("rd-miss").textContent = tally.miss;
+    }
+    function reveal(it) {
+      it.state = "done";
+      it.el.classList.add(it.e.verdict[0]);
+      it.el.querySelector(".head").innerHTML = ic(RADAR_ICON[it.e.verdict]);
+      it.el.querySelector(".tag").textContent = it.e.tag || (it.e.profit < 0 ? "" : "+") + usd(it.e.profit);
+      card.innerHTML = radarCardHTML(it.e, false);
+      if (it.e.verdict === "green") tally.hit++;
+      if (it.e.verdict === "red") tally.miss++;
+      setTally();
+    }
+    function lockOn(it) {
+      held = { it: it, at: t };
+      it.state = "lock";
+      it.el.classList.add("lock");
+      it.el.querySelector(".tag").textContent = "···";
+      lock.classList.remove("on"); void lock.offsetWidth; lock.classList.add("on");
+      card.innerHTML = radarCardHTML(it.e, true);
+    }
+    function release() {
+      var it = held.it;
+      held = null; releasedAt = t;
+      lock.classList.remove("on");
+      it.el.classList.remove("lock");
+      if (it.e.verdict === "green") {  // into the bag
+        it.el.classList.add("caught");
+        it.gone = t + 900;
+      }
+    }
+    function draw() {
+      var ang = (t / SPIN_MS * 360) % 360;
+      sweep.style.transform = "rotate(" + ang + "deg)";
+      items.forEach(function (it) {
+        var v = it.f * geo.R, u = it.u * geo.R, p = project(u, v), c = chord(it.f);
+        var fade = Math.max(0, Math.min(1, (c - Math.abs(it.u)) / 0.14));
+        it.el.style.opacity = fade.toFixed(3);
+        it.el.style.transform = "translate(" + p.x.toFixed(1) + "px," + p.y.toFixed(1) + "px) scale(" + (p.s * geo.k).toFixed(3) + ")";
+        it.el.style.zIndex = String(Math.round(1000 + v));
+        if (held && held.it === it) {
+          lock.style.transform = "translate(" + p.x.toFixed(1) + "px," + (p.y - 46 * p.s * geo.k).toFixed(1) + "px) scale(" + (p.s * geo.k).toFixed(3) + ")";
+        }
+      });
+    }
+    function step(dt) {
+      t += dt;
+      var ang = (t / SPIN_MS * 360) % 360;
+      items.forEach(function (it) {
+        var slow = held && held.it === it ? 0.3 : 1;
+        it.u -= it.speed * slow * dt / 1000;
+        var a = (Math.atan2(it.u, -it.f) * 180 / Math.PI + 360) % 360;
+        var behind = (ang - a + 360) % 360;
+        if (behind < 10 && t - it.ping > 1000 && Math.abs(it.u) < chord(it.f) - 0.05) {  // the sweep just passed it
+          it.ping = t;
+          it.el.classList.remove("ping"); void it.el.offsetWidth; it.el.classList.add("ping");
+          if (it.state === "new") { it.state = "seen"; tally.seen++; setTally(); }
+          if (!held && t - releasedAt > 500 && it.state === "seen" && it.u + chord(it.f) > 0.6 &&
+              Math.hypot(it.u, it.f) < 0.8) lockOn(it);
+        }
+      });
+      if (held && held.it.state === "lock" && t - held.at > 950) reveal(held.it);
+      if (held && t - held.at > 3900) release();
+      items = items.filter(function (it) {
+        var out = it.u < -chord(it.f) - 0.02 || (it.gone && t > it.gone);
+        if (out) { layer.removeChild(it.el); wait[it.lane] = t + 300 + Math.random() * 1800; }
+        return !out;
+      });
+      LANES.forEach(function (f, lane) {
+        var busy = items.some(function (it) { return it.lane === lane; });
+        if (!busy && (wait[lane] || 0) <= t) {
+          spawn(lane, chord(f), next);
+          next = (next + 1) % RADAR.length;
+        }
+      });
+    }
+
+    measure();
+    // Start mid-scan: the first product locked near the centre, others on their way.
+    var first = spawn(2, 0.28, 0);
+    [[0, 0.45], [1, -0.35], [3, 0.7], [4, -0.1]].forEach(function (s) { spawn(s[0], s[1] * chord(LANES[s[0]]), next); next = (next + 1) % RADAR.length; });
+    items.forEach(function (it) { it.state = "seen"; tally.seen++; });
+    t = SPIN_MS * 0.82;
+    held = { it: first, at: t - 1000 };
+    first.el.classList.add("lock"); lock.classList.add("on");
+    reveal(first);
+    draw();
+
+    radar.onResize = function () { measure(); draw(); };
+    if (window.ResizeObserver) { radar.ro = new ResizeObserver(radar.onResize); radar.ro.observe(stage); }
+    else window.addEventListener("resize", radar.onResize);
+    if (!motionOK() || !window.requestAnimationFrame) return;
+
+    function frame(now) {
+      var dt = last ? Math.min(50, now - last) : 16;
+      last = now;
+      step(dt); draw();
+      radar.raf = requestAnimationFrame(frame);
+    }
+    function run(on) {
+      cancelAnimationFrame(radar.raf); radar.raf = 0; last = 0;
+      if (on) radar.raf = requestAnimationFrame(frame);
+    }
+    if (window.IntersectionObserver) {
+      radar.io = new IntersectionObserver(function (entries) { run(entries[entries.length - 1].isIntersecting); }, { threshold: 0.1 });
+      radar.io.observe(stage);
+    } else run(true);
+  }
+  function stopRadar() {
+    cancelAnimationFrame(radar.raf); radar.raf = 0;
+    if (radar.io) { radar.io.disconnect(); radar.io = null; }
+    if (radar.ro) { radar.ro.disconnect(); radar.ro = null; }
+    if (radar.onResize) { window.removeEventListener("resize", radar.onResize); radar.onResize = null; }
   }
 
   function stepHTML(n) {
@@ -727,6 +956,7 @@
 
   function bindLanding() {
     bindAuth();
+    bindRadar();
     bindDemo();
     bindTrial();
   }
