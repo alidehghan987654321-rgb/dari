@@ -1,10 +1,14 @@
 """Persian for the words 1688 pages use most, so sellers can read an offer without Claude.
 
 Attribute names and shop badges repeat across almost every offer, so a fixed list covers
-them; free-text values (materials, sizes...) go to Claude when it's set up.
+them. Values and variant names are mostly colours, sizes, materials and counts: one made of
+words on the list ("黑色大号", "3个装") is put into Persian word by word, and only the rest go
+to Claude (each text once), which keeps the translation bill small.
 """
 
 from __future__ import annotations
+
+import re
 
 ATTRIBUTES = {
     "品牌": "برند",
@@ -64,6 +68,145 @@ VALUES = {
     "亚克力": "اکریلیک",
     "棉": "پنبه",
     "聚酯纤维": "پلی‌استر",
+    # colours
+    "黄色": "زرد",
+    "紫色": "بنفش",
+    "橙色": "نارنجی",
+    "金色": "طلایی",
+    "银色": "نقره‌ای",
+    "卡其色": "خاکی",
+    "咖啡色": "قهوه‌ای",
+    "杏色": "کرم",
+    "深灰": "خاکستری تیره",
+    "浅灰": "خاکستری روشن",
+    "深蓝": "سرمه‌ای",
+    "藏青": "سرمه‌ای",
+    "藏青色": "سرمه‌ای",
+    "天蓝": "آبی آسمانی",
+    "浅蓝": "آبی روشن",
+    "酒红": "زرشکی",
+    "酒红色": "زرشکی",
+    "墨绿": "سبز تیره",
+    "军绿": "سبز ارتشی",
+    "浅绿": "سبز روشن",
+    "玫红": "سرخابی",
+    "彩色": "رنگی",
+    "混色": "رنگ‌های مختلف",
+    "随机": "تصادفی",
+    "随机色": "رنگ تصادفی",
+    "原色": "رنگ طبیعی",
+    "木色": "رنگ چوب",
+    "透明": "شفاف",
+    "透明色": "شفاف",
+    "黑": "مشکی",
+    "白": "سفید",
+    "灰": "خاکستری",
+    "红": "قرمز",
+    "蓝": "آبی",
+    "绿": "سبز",
+    "粉": "صورتی",
+    "黄": "زرد",
+    "紫": "بنفش",
+    "色": "",
+    # sizes and versions
+    "大号": "بزرگ",
+    "中号": "متوسط",
+    "小号": "کوچک",
+    "加大号": "خیلی بزرگ",
+    "特大号": "خیلی بزرگ",
+    "加大": "بزرگ‌تر",
+    "迷你": "مینی",
+    "均码": "فری‌سایز",
+    "标准": "استاندارد",
+    "标准款": "مدل استاندارد",
+    "升级款": "مدل ارتقایافته",
+    "豪华款": "مدل لوکس",
+    "基础款": "مدل ساده",
+    "新款": "مدل جدید",
+    "经典款": "مدل کلاسیک",
+    "款": "مدل",
+    "套装": "ست",
+    "单个": "یک عدد",
+    "单只": "یک عدد",
+    "一对": "یک جفت",
+    "一套": "یک ست",
+    "长款": "بلند",
+    "短款": "کوتاه",
+    "大": "بزرگ",
+    "中": "متوسط",
+    "小": "کوچک",
+    # materials
+    "铝合金": "آلومینیوم",
+    "锌合金": "آلیاژ روی",
+    "金属": "فلز",
+    "铁": "آهن",
+    "钢": "فولاد",
+    "木": "چوب",
+    "实木": "چوب طبیعی",
+    "竹": "بامبو",
+    "玻璃": "شیشه",
+    "陶瓷": "سرامیک",
+    "橡胶": "لاستیک",
+    "尼龙": "نایلون",
+    "帆布": "برزنت",
+    "牛津布": "پارچه‌ی آکسفورد",
+    "无纺布": "پارچه‌ی نبافته",
+    "皮革": "چرم",
+    "真皮": "چرم طبیعی",
+    "纸": "کاغذ",
+    "毛绒": "پرزدار",
+    "涤纶": "پلی‌استر",
+    "亚麻": "کتان",
+    "棉麻": "کتان",
+    "纯棉": "نخ پنبه",
+    "PP": "PP",
+    "ABS": "ABS",
+    "PVC": "PVC",
+    "EVA": "EVA",
+    # who it's for, and extras
+    "男": "مردانه",
+    "女": "زنانه",
+    "男款": "مردانه",
+    "女款": "زنانه",
+    "儿童": "بچگانه",
+    "成人": "بزرگسال",
+    "左": "چپ",
+    "右": "راست",
+    "带": "با",
+    "不带": "بدون",
+    "无": "بدون",
+    "充电款": "شارژی",
+    "电池款": "باتری‌ای",
+    "充电": "شارژی",
+    "电池": "باتری",
+    "带盖": "با درپوش",
+    "带灯": "با چراغ",
+    "可折叠": "تاشو",
+    "折叠": "تاشو",
+    # counts and units, after a number: "3个装" -> "3 عددی"
+    "个装": "عددی",
+    "只装": "عددی",
+    "片装": "عددی",
+    "支装": "عددی",
+    "条装": "عددی",
+    "件套": "تکه‌ای",
+    "个": "عدد",
+    "只": "عدد",
+    "件": "عدد",
+    "片": "عدد",
+    "支": "عدد",
+    "条": "عدد",
+    "包": "بسته",
+    "套": "ست",
+    "对": "جفت",
+    "双": "جفت",
+    "米": "متر",
+    "厘米": "سانتی‌متر",
+    "毫米": "میلی‌متر",
+    "克": "گرم",
+    "千克": "کیلوگرم",
+    "毫升": "میلی‌لیتر",
+    "升": "لیتر",
 }
 
 BADGES = {
@@ -88,8 +231,38 @@ def attribute_fa(name: str) -> str:
     return ATTRIBUTES.get(name.strip(), "")
 
 
+_LONGEST = max(len(k) for k in VALUES)
+_SEPARATORS = re.compile(r"[\s/、,，;；+＋\-_|（）()【】\[\]]+")
+_CJK = re.compile(r"[一-鿿]")
+
+
 def value_fa(value: str) -> str:
-    return VALUES.get(value.strip(), "")
+    """A value or variant name in Persian when it's made only of words on the list (and
+    numbers, sizes like "XL" and the like); "" otherwise, for Claude to translate."""
+    value = value.strip()
+    if value in VALUES:
+        return VALUES[value]
+    parts: list[str] = []
+    for part in filter(None, _SEPARATORS.split(value)):
+        words: list[str] = []
+        i = 0
+        while i < len(part):
+            if not _CJK.match(part[i]):  # a number, a size, a model code: kept as it is
+                j = i
+                while j < len(part) and not _CJK.match(part[j]):
+                    j += 1
+                words.append(part[i:j])
+                i = j
+                continue
+            for size in range(min(_LONGEST, len(part) - i), 0, -1):  # the longest known word
+                if part[i : i + size] in VALUES:
+                    words.append(VALUES[part[i : i + size]])
+                    i += size
+                    break
+            else:
+                return ""  # a word we don't know: this one is for Claude
+        parts.append(" ".join(w for w in words if w))
+    return "، ".join(p for p in parts if p)
 
 
 def badge_fa(badge: str) -> str:

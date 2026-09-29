@@ -527,7 +527,7 @@
       trialHTML() +
       toolsHTML() +
       '<section class="lp-sec band" id="plans"><div class="lp-in">' +
-        head("پلن‌ها", "با رایگان شروع کن، <em>هر وقت خواستی بزرگ‌تر شو.</em>", "پرداخت ماهانه با کارت بانکی، از درگاه زرین‌پال. قرارداد بلندمدت نداره.") +
+        head("پلن‌ها", "با رایگان شروع کن، <em>هر وقت خواستی بزرگ‌تر شو.</em>", "قیمت‌ها به دلاره و به نرخ روز، به تومان با کارت بانکی از درگاه زرین‌پال پرداخت میشه. قرارداد بلندمدت نداره.") +
         '<div class="plans">' + plansHTML(false) + "</div>" +
       "</div></section>" +
       '<section class="lp-sec" id="signup"><div class="lp-in lp-signup">' +
@@ -1645,7 +1645,7 @@
     // Signing up is free: the calculator, the workspace and a taste of the day's hunt.
     var free = buying ? "" : '<div class="plan">' +
       '<div class="label">رایگان</div><div class="for">برای آشنایی</div>' +
-      '<div class="price">0 <small>تومان</small></div>' +
+      '<div class="price"><b dir="ltr">$0</b> <small>رایگان</small></div>' +
       "<ul>" + tick("ماشین‌حساب کامل با قوانین قرارداد") + tick("میز کار و دموی زنده") + tick("نمونه‌ی شکارهای امروز") + "</ul>" +
       '<button type="button" class="btn ghost block" data-go="signup">رایگان شروع کن' + ic("back") + "</button></div>";
     return free + (cfg.plans || []).map(function (p, n) {
@@ -1656,7 +1656,8 @@
       return '<div class="plan' + (mine ? " current" : best ? " best" : "") + '">' +
         '<div class="label">' + esc(p.name_fa) + (mine ? ' <span class="pill blue">پلن فعلی</span>' : best ? ' <span class="pill blue">پیشنهاد ما</span>' : "") + "</div>" +
         (PLAN_FOR[p.id] ? '<div class="for">' + PLAN_FOR[p.id] + "</div>" : "") +
-        '<div class="price">' + toman(p.price_toman) + " <small>تومان در ماه</small></div>" +
+        '<div class="price"><b dir="ltr">' + usd(p.price_usd) + "</b> <small>در ماه</small></div>" +
+        '<div class="price-fa">حدود ' + toman(p.price_toman) + " تومان</div>" +
         "<ul>" + tick(toman(p.links) + " تحلیل لینک در ماه") + tick("شکار روزانه و شکارهای اختصاصی") +
           tick("عکس و ویدیوی آماده‌ی آگهی") + tick("تأمین‌کننده‌ی 1688 به فارسی") + "</ul>" + button + "</div>";
     }).join("");
@@ -2264,7 +2265,7 @@
   function pricingHTML(r) {
     var unit = {
       usd_month: function (v) { return ltr(usd(v)) + " در ماه"; },
-      usd_each: function (v) { return ltr(usd(v)) + " هر بار"; },
+      usd_each: function (v) { return ltr(v > 0 && v < 0.1 ? "$" + String(Number(v.toFixed(4))) : usd(v)) + " هر بار"; },  // a fraction of a cent shows
       share: function (v) { return ltr(pct(v)) + " از قیمت"; },
     };
     var tm = function (v) { return toman(Math.round(v * r.toman_per_usd / 10000) * 10000); };
@@ -2278,7 +2279,7 @@
     var rows = r.plans.map(function (p) {
       var bar = ECON_PARTS.map(function (x, n) { return '<i class="e' + n + '" style="width:' + (Math.max(0, p[x[0]]) / p.price_usd * 100).toFixed(2) + '%" title="' + x[1] + ": " + usd(p[x[0]]) + '"></i>'; }).join("");
       return "<tr><th>" + esc(p.name_fa) + "<small>" + p.links + " تحلیل در ماه</small></th>" +
-        '<td class="num">' + toman(p.price_toman) + "<small>" + usd(p.price_usd) + "</small></td>" +
+        '<td class="num">' + usd(p.price_usd) + "<small>" + toman(p.price_toman) + " تومان</small></td>" +
         '<td class="num">' + usd(p.analyses_usd) + '</td><td class="num">' + usd(p.fixed_usd) + '</td><td class="num">' + usd(p.sales_usd) + "</td>" +
         '<td class="num good">' + usd(p.profit_usd) + "<small>" + tm(p.profit_usd) + " تومان</small></td>" +
         '<td><span class="pill ' + (p.ok ? "green" : "red") + '">' + ic(p.ok ? "check" : "warn") + ltr(pct(p.margin)) + "</span></td>" +
@@ -2290,7 +2291,7 @@
         '</td><td class="num">' + toman(m.profit_toman) + "</td></tr>";
     }).join("");
     return '<div class="econ-head"><div><h2 class="section-title">قیمت‌گذاری پلن‌ها و هزینه‌ها</h2>' +
-        '<p class="section-sub">قیمت هر پلن از هزینه‌هاش و حد سود ساخته میشه: هزینه‌ی تحلیل‌ها + سهمش از هزینه‌ی ثابت، تقسیم بر (1 − سهم درگاه و مالیات و بازاریابی − حد سود)، بعد گرد به بالا تا ...90,000 تومان. هر پلن با سهمیه‌ی کاملش و بدون کش حساب شده، یعنی بدترین حالت.' +
+        '<p class="section-sub">قیمت هر پلن از هزینه‌هاش و حد سود ساخته میشه: هزینه‌ی تحلیل‌ها + سهمش از هزینه‌ی ثابت، تقسیم بر (1 − سهم درگاه و مالیات و بازاریابی − حد سود)، بعد گرد به بالا تا عددی که به 99. دلار تموم میشه؛ تومانش با نرخ روز حساب میشه. هر پلن با سهمیه‌ی کاملش و بدون کش حساب شده، یعنی بدترین حالت. مدل هوش مصنوعی: ' + esc(r.model || "") + "." +
         (DEMO ? " (در سایت واقعی فقط مدیر این بخش رو می‌بینه.)" : "") + "</p></div>" +
         '<div class="econ-kpis"><div><span>حد سود (حاشیه‌ی خالص هدف)</span><b>' + ltr(pct(r.margin)) + '</b><small>کف: ' + ltr(pct(r.min_margin)) + "</small></div>" +
           "<div><span>نقطه‌ی سربه‌سر</span><b>" + (r.break_even == null ? "—" : toman(r.break_even)) + "</b><small>مشترک در ماه</small></div>" +
@@ -2298,7 +2299,7 @@
           "<div><span>نرخ دلار</span><b>" + toman(r.toman_per_usd) + "</b><small>تومان</small></div></div></div>" +
       '<h3 class="econ-h3">دسته‌بندی هزینه‌ها</h3><div class="cost-kinds">' + kinds + "</div>" +
       '<h3 class="econ-h3">هر پلن برای هر مشترک در ماه</h3><div class="econ-legend">' + legend + "</div>" +
-      '<div class="table-wrap"><table class="econ-table"><thead><tr><th>پلن</th><th>قیمت (تومان)</th><th>تحلیل‌ها</th><th>سهم ثابت</th><th>درگاه، مالیات، بازاریابی</th><th>سود خالص</th><th>حاشیه</th><th>قیمت کجا می‌ره</th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
+      '<div class="table-wrap"><table class="econ-table"><thead><tr><th>پلن</th><th>قیمت در ماه</th><th>تحلیل‌ها</th><th>سهم ثابت</th><th>درگاه، مالیات، بازاریابی</th><th>سود خالص</th><th>حاشیه</th><th>قیمت کجا می‌ره</th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
       '<h3 class="econ-h3">ماه با چند مشترک</h3><p class="hint">با این ترکیب مشترک‌ها: ' +
         r.plans.map(function (p) { return esc(p.name_fa) + " " + ltr(pct(r.mix[p.id] || 0)); }).join("، ") + ".</p>" +
       '<div class="table-wrap"><table class="econ-table months"><thead><tr><th>مشترک</th><th>فروش ماهانه</th><th>هزینه‌ی ماهانه</th><th>سود ماهانه</th><th>سود ماهانه (تومان)</th></tr></thead><tbody>' + months + "</tbody></table></div>" +

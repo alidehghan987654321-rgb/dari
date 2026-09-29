@@ -3,8 +3,9 @@
 Costs come in three kinds:
 - fixed, each month, however many subscribe: the data services, hosting, Persian names and the
   rest;
-- per analysis: each product link a subscriber analyses (and the 1688 page it opens) costs a few
-  cents when it isn't in the cache. A plan is costed at its full quota with no cache hits, the
+- per analysis: each product link a subscriber analyses costs a few cents when it isn't in the
+  cache: the data for it, the 1688 page it opens, and Claude for its Persian name and that
+  page's texts (by the model in use). A plan is costed at its full quota with no cache hits, the
   worst case;
 - on each sale, a share of the price: the payment gateway, tax, and marketing and support.
 
@@ -13,9 +14,9 @@ plan for) and the sales costs, and leaves the target net margin:
 
     price = (analyses + share of fixed) / (1 - sales share - margin)
 
-rounded up to a toman price that reads well (…90,000), so the margin ends a little above the
-target. A plan that falls under the floor (a plan priced by hand, a new dollar rate or cost) is
-flagged. Every figure can be changed from the environment (see from_env).
+rounded up to a dollar price ending in .99, so the margin ends a little above the target; the
+toman price follows from the day's rate. A plan that falls under the floor (a plan priced by
+hand, a new cost) is flagged. Every figure can be changed from the environment (see from_env).
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from .translate import DEFAULT_MODEL
+
 
 @dataclass(frozen=True)
 class Cost:
@@ -35,26 +38,71 @@ class Cost:
     note_fa: str = ""
 
 
-FIXED = (
-    Cost("keepa", "داده‌ی آمازون (Keepa)", 53, "پلن پایه‌ی Keepa، 49 یورو در ماه"),
-    Cost(
-        "apify", "داده‌ی Temu و 1688 (Apify)", 60, "اشتراک Apify و شکار روزانه، حدود 2 دلار در روز"
-    ),
-    Cost(
-        "hosting", "سرور و دیتابیس (Cloudflare)", 25, "Workers Paid، کانتینر سایت و پشتیبان در R2"
-    ),
-    Cost("names", "اسم فارسی و ترجمه (Claude)", 10, "حدود 1,500 محصول تازه در ماه"),
-    Cost("misc", "دامنه، ایمیل و متفرقه", 5),
-)
-PER_ANALYSIS = (
-    Cost(
-        "lookup",
-        "داده‌ی هر تحلیل لینک",
-        0.04,
-        "Keepa یا Apify و جستجوی تصویری 1688، وقتی در کش نیست",
-    ),
-    Cost("page", "صفحه‌ی 1688 داخل سایت", 0.01, "بار اولی که باز میشه؛ بعدش یه هفته در کش"),
-)
+# Claude's list prices per million tokens (input, output).
+CLAUDE_PRICES = {
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-opus-5": (5.0, 25.0),
+}
+
+
+def ai_usd(model: str) -> float:
+    """What Claude costs for one analysis at most: its Persian name (a 25th of a request) and
+    its 1688 page's texts (one request, up to 25 of them). Models that think write more. An
+    unknown model is costed like Opus 5."""
+    price_in, price_out = CLAUDE_PRICES.get(model, CLAUDE_PRICES["claude-opus-5"])
+    tokens_in, tokens_out = 615, 540 + (0 if model.startswith("claude-haiku") else 310)
+    return round((tokens_in * price_in + tokens_out * price_out) / 1e6, 4)
+
+
+def fixed_costs(model: str) -> tuple[Cost, ...]:
+    return (
+        Cost(
+            "keepa",
+            "داده‌ی آمازون (Keepa)",
+            53,
+            "پلن پایه‌ی Keepa، 49 یورو در ماه؛ برای بدترین حالت هم کافیه",
+        ),
+        Cost(
+            "apify",
+            "داده‌ی Temu و 1688 (Apify)",
+            35,
+            "اشتراک و شکار روزانه؛ محصولی که تا 7 روز پیش جستجو شده دوباره جستجو نمیشه",
+        ),
+        Cost(
+            "hosting",
+            "سرور و دیتابیس (Cloudflare)",
+            25,
+            "Workers Paid، کانتینر سایت و پشتیبان در R2",
+        ),
+        # the hunt's own names and pages: about 1,500 new products and 1,000 pages a month
+        Cost("names", "اسم و ترجمه‌ی شکار روزانه (Claude)", round(1000 * ai_usd(model), 2), model),
+        Cost("misc", "دامنه، ایمیل و متفرقه", 5),
+    )
+
+
+def analysis_costs(model: str) -> tuple[Cost, ...]:
+    return (
+        Cost(
+            "lookup",
+            "داده‌ی هر تحلیل لینک",
+            0.03,
+            "Keepa یا Apify و جستجوی تصویری 1688 با 6 نتیجه، وقتی در کش نیست",
+        ),
+        Cost("page", "صفحه‌ی 1688 داخل سایت", 0.01, "بار اولی که باز میشه؛ بعدش دو هفته در کش"),
+        Cost(
+            "ai",
+            "اسم و ترجمه با Claude",
+            ai_usd(model),
+            model + "؛ واژه‌های رایج از فرهنگ لغت خود سایت",
+        ),
+    )
+
+
+FIXED = fixed_costs(DEFAULT_MODEL)
+PER_ANALYSIS = analysis_costs(DEFAULT_MODEL)
 SALES = (
     Cost("gateway", "کارمزد درگاه پرداخت", 0.01, "زرین‌پال"),
     Cost("tax", "مالیات بر ارزش افزوده", 0.10, "اگه مشمول نیستی صفرش کن"),
@@ -64,9 +112,10 @@ SALES = (
 MIX = {"basic": 0.5, "pro": 0.35, "business": 0.15}
 
 
-def charm_toman(toman: float) -> int:
-    """The first price ending in 90,000 at or above this one: 1,361,000 -> 1,390,000."""
-    return max(90_000, math.ceil((toman + 10_000) / 100_000) * 100_000 - 10_000)
+def charm_usd(usd: float) -> float:
+    """The first price ending in .99 at or above this one: 4.95 -> 4.99, 5.10 -> 5.99."""
+    price = math.ceil(usd) - 0.01
+    return round(price if price >= usd - 1e-9 else price + 1, 2)
 
 
 @dataclass
@@ -74,6 +123,7 @@ class Economics:
     fixed: tuple[Cost, ...] = FIXED
     per_analysis: tuple[Cost, ...] = PER_ANALYSIS
     sales: tuple[Cost, ...] = SALES
+    model: str = DEFAULT_MODEL  # Claude's model, for the record
     margin: float = 0.40  # the net margin a plan's price is set for
     min_margin: float = 0.30  # under this, a plan is flagged
     subscribers: int = 200  # paying subscribers the fixed costs are spread over
@@ -102,8 +152,9 @@ class Economics:
             raise ValueError("sales costs and the margin leave nothing to cover the costs")
         return (links * self.analysis_usd + self.fixed_share_usd) / keep
 
-    def price_toman(self, links: int, toman_per_usd: float) -> int:
-        return charm_toman(self.price_usd(links) * toman_per_usd)
+    def price(self, links: int) -> float:
+        """A plan's price in dollars, as sold: rounded up to .99."""
+        return charm_usd(self.price_usd(links))
 
     def plan(self, links: int, price_usd: float) -> dict[str, float]:
         """What one subscriber of a plan brings in and costs us a month, at worst."""
@@ -168,6 +219,7 @@ class Economics:
 
         return {
             "toman_per_usd": toman_per_usd,
+            "model": self.model,
             "margin": self.margin,
             "min_margin": self.min_margin,
             "subscribers": self.subscribers,
@@ -184,10 +236,12 @@ class Economics:
 
     @classmethod
     def from_env(cls) -> Economics:
-        """HUNTER_MARGIN, HUNTER_MIN_MARGIN, HUNTER_SUBSCRIBERS, and HUNTER_COSTS: a JSON object
-        from a cost's key to its value, e.g. {"keepa": 53, "lookup": 0.03, "tax": 0}."""
+        """HUNTER_MARGIN, HUNTER_MIN_MARGIN, HUNTER_SUBSCRIBERS, HUNTER_CLAUDE_MODEL (its AI
+        costs), and HUNTER_COSTS: a JSON object from a cost's key to its value, e.g.
+        {"keepa": 53, "lookup": 0.03, "tax": 0}."""
         env = os.environ.get
         costs = json.loads(env("HUNTER_COSTS") or "{}")
+        model = env("HUNTER_CLAUDE_MODEL") or DEFAULT_MODEL
 
         def set_values(items: tuple[Cost, ...]) -> tuple[Cost, ...]:
             return tuple(
@@ -195,9 +249,10 @@ class Economics:
             )
 
         return cls(
-            fixed=set_values(FIXED),
-            per_analysis=set_values(PER_ANALYSIS),
+            fixed=set_values(fixed_costs(model)),
+            per_analysis=set_values(analysis_costs(model)),
             sales=set_values(SALES),
+            model=model,
             margin=float(env("HUNTER_MARGIN", "0.40")),
             min_margin=float(env("HUNTER_MIN_MARGIN", "0.30")),
             subscribers=int(env("HUNTER_SUBSCRIBERS", "200")),

@@ -91,8 +91,8 @@ class Settings:
     link_hunter: Hunter | None = None  # analyses the product links sellers paste
     monthly_links: int = 30  # analyses per 30 days for a seller without a plan (e.g. granted)
     links_per_request: int = 10
-    cache_hours: float = 72  # a product analysed this recently is answered from the cache
-    offer_cache_hours: float = 24 * 7  # 1688 offer pages shown on the site
+    cache_hours: float = 24 * 7  # a product analysed this recently is answered from the cache
+    offer_cache_hours: float = 24 * 14  # 1688 offer pages shown on the site
     image_client: httpx.Client | None = None  # for the image proxy (tests pass a fake)
     namer: PersianNamer | None = None  # Persian product names with Claude
     cron_secret: str = ""  # lets a scheduler start the daily hunt (POST /internal/hunt)
@@ -133,7 +133,8 @@ class Settings:
             per_product=int(env("HUNTER_SELLERS_PER_PRODUCT", "3")),
             link_hunter=link_hunter(),
             monthly_links=int(env("HUNTER_MONTHLY_LINKS", "30")),
-            cache_hours=float(env("HUNTER_CACHE_HOURS", "72")),
+            cache_hours=float(env("HUNTER_CACHE_HOURS", "168")),
+            offer_cache_hours=float(env("HUNTER_OFFER_CACHE_HOURS", "336")),
             namer=PersianNamer.from_env(),
             cron_secret=env("HUNTER_CRON_SECRET", ""),
             admins=tuple(

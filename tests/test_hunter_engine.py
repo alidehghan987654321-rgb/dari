@@ -564,6 +564,49 @@ def test_the_hunt_searches_1688_once_per_category():
     assert all(len(set(b)) == len(b) for b in supplier.batches)
 
 
+def test_the_hunt_reuses_what_it_found_lately_and_asks_for_fewer_results():
+    sample = SampleData()
+
+    class Counting:
+        def __init__(self):
+            self.searched, self.limits = [], set()
+
+        def by_images(self, urls, limit):
+            self.searched += urls
+            self.limits.add(limit)
+            return sample.by_images(urls, limit)
+
+        def by_image(self, url, limit):
+            self.searched.append(url)
+            self.limits.add(limit)
+            return sample.by_image(url, limit)
+
+        def by_keyword(self, q, limit):
+            return []
+
+    first = Counting()
+    found = Hunter([sample], first, results=6).hunt()
+    assert first.limits == {6} and found.candidates
+    assert all(c.searched_at for c in found.candidates)
+    earlier = {c.listing.url: c.to_dict() for c in found.candidates}
+
+    again = Counting()
+    hunter = Hunter([sample], again, known=lambda x: earlier.get(x.url), reuse_days=7)
+    second = hunter.hunt()
+    reused = {c.listing.image_url for c in found.candidates}
+    assert not reused & set(again.searched)  # none of those searched on 1688 again
+    by_id = {c.id: c for c in second.candidates}
+    for c in found.candidates:
+        assert by_id[c.id].offer.id == c.offer.id and by_id[c.id].searched_at == c.searched_at
+
+    # a week-old search is done again
+    for c in earlier.values():
+        c["searched_at"] = "2000-01-01T00:00:00+00:00"
+    stale = Counting()
+    Hunter([sample], stale, known=lambda x: earlier.get(x.url), reuse_days=7).hunt()
+    assert reused <= set(stale.searched)
+
+
 def test_batched_1688_search_maps_results_to_pictures():
     def handler(request):
         body = json.loads(request.content)
@@ -643,6 +686,23 @@ def test_names_use_the_sites_digits():
     answer = json.dumps({"items": [{"id": "a", "fa": "درپوش سیلیکونی (۱۲ عددی) ٪۵"}]})
     names = PersianNamer(FakeClaude(text=answer), "claude-opus-5").translate({"a": "x"})
     assert names == {"a": "درپوش سیلیکونی (12 عددی) %5"}
+
+
+def test_haiku_names_products_unless_another_model_is_set(monkeypatch):
+    from hunter import translate
+
+    assert translate.DEFAULT_MODEL == "claude-haiku-4-5"
+
+
+def test_values_made_of_known_words_need_no_claude():
+    from hunter.glossary import value_fa
+
+    assert value_fa("黑色") == "مشکی"
+    assert value_fa("黑色大号") == "مشکی بزرگ"
+    assert value_fa("白色/2个装") == "سفید، 2 عددی"
+    assert value_fa("红色 XL") == "قرمز، XL"
+    assert value_fa("500毫升") == "500 میلی‌لیتر"
+    assert value_fa("汽车座椅") == ""  # a word the list doesn't have: for Claude
 
 
 def test_a_cheaper_model_skips_effort_and_fallback():

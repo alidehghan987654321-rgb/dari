@@ -57,6 +57,12 @@ def live_sources() -> tuple[list, object | None]:
     return markets, supplier
 
 
+def supplier_results() -> int:
+    """1688 offers asked for in each search: every result is paid for, and the best offer and
+    two backups come from the first few."""
+    return max(3, int(os.environ.get("HUNTER_1688_RESULTS", "6")))
+
+
 def link_hunter() -> Hunter | None:
     """The hunter that analyses the links sellers paste on the site: the live sources, or
     the sample data with HUNTER_SAMPLE=1 (for trying the site out)."""
@@ -66,5 +72,5 @@ def link_hunter() -> Hunter | None:
         return Hunter([sample], sample, cfg)
     markets, supplier = live_sources()
     if markets and supplier is not None:
-        return Hunter(markets, supplier, cfg)
+        return Hunter(markets, supplier, cfg, results=supplier_results())
     return None

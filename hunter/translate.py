@@ -2,8 +2,9 @@
 
 Optional: it runs when ANTHROPIC_API_KEY is set (and the `anthropic` package is
 installed, see hunter/requirements.txt). The model is HUNTER_CLAUDE_MODEL, by default
-claude-opus-5; a cheaper model such as claude-haiku-4-5 also does this job. Titles go
-25 to a request and the answer is a JSON list, so a product costs well under a cent.
+claude-haiku-4-5: short names and translations don't need a bigger model, and it costs a
+fifth of Opus. Titles go 25 to a request and the answer is a JSON list, so a product costs
+a few hundredths of a cent.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_MODEL = "claude-haiku-4-5"
 BATCH = 25
 SYSTEM = (
     "You name e-commerce products in Persian for Iranian sellers who import from China. "

@@ -116,6 +116,7 @@ class Candidate:
     matches: list[MarketListing] = field(default_factory=list)  # the product on the other markets
     level: dict = field(default_factory=dict)  # the supplier's level, see scoring.supplier_level
     is_new: bool = False  # not in the previous daily hunt
+    searched_at: str = ""  # when its 1688 offers were searched (a later hunt may reuse them)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

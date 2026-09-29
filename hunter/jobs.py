@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 
 from .categories import Category, hunt_categories
 from .db import Database
 from .engine import HuntResult, Hunter
+from .links import link_key
 from .pricing import PricingConfig
 from .sources.sample import SampleData
 from .translate import PersianNamer, name_candidates
-from .wiring import live_sources
+from .wiring import live_sources, supplier_results
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +37,11 @@ def run_hunt(
     per_category: int = 20,
 ) -> tuple[int, dict, HuntResult]:
     """Hunt (live, or the bundled sample data), name the finds in Persian and save them."""
+    reuse_days = float(os.environ.get("HUNTER_REUSE_DAYS", "7"))
+
+    def known(listing):  # what an earlier hunt or analysis found for this listing
+        return db.cached(link_key(listing.url), reuse_days * 24) if listing.url else None
+
     if sample:
         data_source = SampleData()
         hunter, note = Hunter([data_source], data_source, cfg), data_source.note
@@ -42,7 +49,10 @@ def run_hunt(
         markets, supplier = live_sources()
         if not markets or supplier is None:
             raise NoSources(NO_SOURCES)
-        hunter, note = Hunter(markets, supplier, cfg), ""
+        hunter = Hunter(
+            markets, supplier, cfg, results=supplier_results(), known=known, reuse_days=reuse_days
+        )
+        note = ""
     result = hunter.hunt(categories or hunt_categories(), per_category)
     result.sample, result.note = sample, note
     data = result.to_dict()

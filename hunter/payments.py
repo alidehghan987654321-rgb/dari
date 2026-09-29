@@ -41,8 +41,8 @@ class Plan:
 
 
 # The tiers and their monthly analyses. Their prices come from what they cost us and the
-# target margin (economics.py), in dollars since the costs are, turned into toman with the day's
-# rate; a tier given a price_usd (HUNTER_PLANS) is sold at that instead.
+# target margin (economics.py), in dollars (ending in .99) since the costs are, and are turned
+# into toman with the day's rate; a tier given a price_usd (HUNTER_PLANS) is sold at that.
 PLAN_TIERS = [
     {"id": "basic", "name_fa": "پایه", "days": 30, "links": 30},
     {"id": "pro", "name_fa": "حرفه‌ای", "days": 30, "links": 100},
@@ -65,8 +65,8 @@ def make_plans(
             usd = float(t["price_usd"])
             toman = to_toman(usd, toman_per_usd)
         else:
-            toman = econ.price_toman(int(t["links"]), toman_per_usd)
-            usd = round(toman / toman_per_usd, 2)
+            usd = econ.price(int(t["links"]))
+            toman = to_toman(usd, toman_per_usd)
         plans.append(
             Plan(
                 id=t["id"],

@@ -23,13 +23,15 @@ def offer_view(detail: OfferDetail, namer: PersianNamer | None, db) -> dict:
     view["level"] = supplier_level(detail.offer)
     view["badges_fa"] = [badge_fa(b) or b for b in detail.badges]
 
-    # Chinese texts without a glossary entry: the title, attribute values, variant names.
-    texts = {"title": detail.offer.title}
+    # Chinese texts the glossary can't put into Persian go to Claude: the title (unless the
+    # product already has a Persian name), attribute values and variant names.
+    texts = {} if detail.title_fa else {"title": detail.offer.title}
     for i, (_, value) in enumerate(detail.attributes):
         if not value_fa(value):
             texts[f"attr:{i}"] = value
     for i, sku in enumerate(detail.skus):
-        texts[f"sku:{i}"] = sku["name"]
+        if not value_fa(sku["name"]):
+            texts[f"sku:{i}"] = sku["name"]
     texts = {k: v for k, v in texts.items() if v and CJK.search(v)}
     fa = translate(texts, namer, db)
 
@@ -39,7 +41,8 @@ def offer_view(detail: OfferDetail, namer: PersianNamer | None, db) -> dict:
         for i, (name, value) in enumerate(detail.attributes)
     ]
     view["skus_fa"] = [
-        {**sku, "name_fa": fa.get(f"sku:{i}", "")} for i, sku in enumerate(detail.skus)
+        {**sku, "name_fa": value_fa(sku["name"]) or fa.get(f"sku:{i}", "")}
+        for i, sku in enumerate(detail.skus)
     ]
     return view
 

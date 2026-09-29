@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from hunter.app import Settings, create_app
 from hunter.db import Database
 from hunter.engine import Hunter
-from hunter.economics import Economics, charm_toman
+from hunter.economics import Economics, ai_usd, analysis_costs, charm_usd, fixed_costs
 from hunter.payments import DemoGateway, PaymentError, Zarinpal, make_plans
 from hunter.preview import build_preview
 from hunter.sources.sample import SampleData
@@ -553,38 +553,49 @@ def test_each_plan_has_its_own_quota(link_settings):
         assert c.get("/api/analyses").json()["quota"] == 4
 
 
-def test_plans_are_priced_from_their_costs_and_the_margin():
+def test_plans_are_priced_in_dollars_from_their_costs_and_the_margin():
     basic, pro, business = make_plans(234_500)
+    assert (basic.price_usd, pro.price_usd, business.price_usd) == (4.99, 12.99, 34.99)
     assert (basic.price_toman, pro.price_toman, business.price_toman) == (
-        1_390_000,
-        3_490_000,
-        9_490_000,
+        1_170_000,
+        3_050_000,
+        8_210_000,
     )
     assert (basic.links, pro.links, business.links) == (30, 100, 300)
-    assert basic.price_usd == round(1_390_000 / 234_500, 2)
-    assert make_plans(300_000)[0].price_toman == 1_790_000  # the dollar's rate moves the price
+    assert make_plans(300_000)[0].price_toman == 1_500_000  # the rate moves the toman price only
     # a tier priced by hand keeps its price
-    assert (
-        make_plans(234_500, [{"id": "x", "name_fa": "x", "price_usd": 6, "links": 30}])[
-            0
-        ].price_toman
-        == 1_410_000
-    )
+    hand = make_plans(234_500, [{"id": "x", "name_fa": "x", "price_usd": 6, "links": 30}])[0]
+    assert (hand.price_usd, hand.price_toman) == (6, 1_410_000)
 
 
 def test_every_plan_keeps_the_target_margin_at_its_worst():
     econ = Economics()
     report = econ.report(make_plans(234_500), 234_500)
     for row in report["plans"]:
-        assert row["ok"] and econ.margin <= row["margin"] < econ.margin + 0.02
+        assert row["ok"] and econ.margin <= row["margin"] < econ.margin + 0.03
         # the parts add up to the price
         parts = row["analyses_usd"] + row["fixed_usd"] + row["sales_usd"] + row["profit_usd"]
         assert parts == pytest.approx(row["price_usd"], abs=0.02)
     assert [k["key"] for k in report["kinds"]] == ["fixed", "analysis", "sales"]
-    assert report["kinds"][0]["total"] == econ.fixed_usd == 153
-    fixed, per_sub = econ.fixed_usd, report["break_even"]
-    assert per_sub == 24 and report["months"][0]["subscribers"] == 50
-    assert all(m["profit_usd"] > 0 for m in report["months"]) and fixed > 0
+    assert report["kinds"][0]["total"] == pytest.approx(econ.fixed_usd)
+    assert report["model"] == "claude-haiku-4-5"
+    assert report["break_even"] == 22 and report["months"][0]["subscribers"] == 50
+    assert all(m["profit_usd"] > 0 for m in report["months"])
+
+
+def test_the_ai_cost_follows_the_model():
+    assert ai_usd("claude-haiku-4-5") == pytest.approx(0.0033, abs=0.0002)
+    assert ai_usd("claude-opus-5") == pytest.approx(0.024, abs=0.001)
+    assert ai_usd("claude-opus-5-5") < ai_usd("claude-opus-5")
+    assert ai_usd("something-new") == ai_usd("claude-opus-5")  # unknown: costed like Opus 5
+    haiku = Economics()
+    opus = Economics(
+        fixed=fixed_costs("claude-opus-5"),
+        per_analysis=analysis_costs("claude-opus-5"),
+        model="claude-opus-5",
+    )
+    assert opus.analysis_usd > haiku.analysis_usd and opus.fixed_usd > haiku.fixed_usd
+    assert opus.price(100) > haiku.price(100)
 
 
 def test_a_plan_under_the_margin_floor_is_flagged():
@@ -594,23 +605,26 @@ def test_a_plan_under_the_margin_floor_is_flagged():
 
 
 def test_costs_and_margin_from_env(monkeypatch):
-    monkeypatch.setenv("HUNTER_COSTS", '{"tax": 0, "keepa": 40, "lookup": 0.03}')
+    monkeypatch.setenv("HUNTER_COSTS", '{"tax": 0, "keepa": 40, "lookup": 0.02}')
     monkeypatch.setenv("HUNTER_MARGIN", "0.5")
     monkeypatch.setenv("HUNTER_SUBSCRIBERS", "400")
+    monkeypatch.setenv("HUNTER_CLAUDE_MODEL", "claude-opus-5-5")
     s = Settings.from_env()
-    assert s.economics.margin == 0.5 and s.economics.subscribers == 400
-    assert s.economics.fixed_usd == 140 and s.economics.analysis_usd == pytest.approx(0.04)
-    assert s.economics.sales_share == pytest.approx(0.11)
-    report = s.economics.report(s.plans, s.toman_per_usd)
+    econ = s.economics
+    assert econ.margin == 0.5 and econ.subscribers == 400 and econ.model == "claude-opus-5-5"
+    assert econ.fixed_usd == pytest.approx(40 + 35 + 25 + 5 + 1000 * ai_usd("claude-opus-5-5"))
+    assert econ.analysis_usd == pytest.approx(0.02 + 0.01 + ai_usd("claude-opus-5-5"))
+    assert econ.sales_share == pytest.approx(0.11)
+    report = econ.report(s.plans, s.toman_per_usd)
     assert all(r["ok"] and r["margin"] >= 0.5 for r in report["plans"])
-    assert s.plans[0].price_toman == charm_toman(s.economics.price_usd(30) * s.toman_per_usd)
+    assert s.plans[0].price_usd == charm_usd(econ.price_usd(30))
 
 
 def test_charm_prices():
-    assert charm_toman(1_361_968) == 1_390_000
-    assert charm_toman(1_395_000) == 1_490_000
-    assert charm_toman(1_390_000) == 1_390_000
-    assert charm_toman(5_000) == 90_000
+    assert charm_usd(4.95) == 4.99
+    assert charm_usd(4.99) == 4.99
+    assert charm_usd(5.0) == 5.99
+    assert charm_usd(12.1) == 12.99
 
 
 def test_pricing_report_is_for_admins(settings):
@@ -720,6 +734,40 @@ def test_offer_view_translates_chinese_with_claude(link_settings, sample_hunt):
         assert v["skus_fa"][0]["name_fa"].startswith("فا:")
 
 
+def test_offer_view_sends_claude_only_what_the_glossary_cant_do(tmp_path):
+    from hunter.models import OfferDetail, SupplierOffer
+    from hunter.offers import offer_view
+
+    sent = []
+
+    class Namer:
+        def translate_texts(self, texts):
+            sent.append(dict(texts))
+            return {k: "فا:" + v for k, v in texts.items()}
+
+    offer = SupplierOffer(id="1", title="汽车座椅缝隙收纳盒", url="u", image_url="", price_cny=6)
+    detail = OfferDetail(
+        offer=offer,
+        attributes=[["颜色", "黑色"], ["材质", "皮革塑料"], ["适用车型", "通用型号"]],
+        skus=[
+            {"name": "黑色 大号", "price_cny": 6, "stock": 9},
+            {"name": "奇怪款式", "price_cny": 6},
+        ],
+        title_fa="پرکننده‌ی شکاف صندلی خودرو",
+    )
+    view = offer_view(detail, Namer(), Database(str(tmp_path / "o.db")))
+    assert sent == [{"通用型号": "通用型号", "奇怪款式": "奇怪款式"}]  # no title, no known words
+    assert view["title_fa"] == "پرکننده‌ی شکاف صندلی خودرو"
+    assert ["جنس", "چرم پلاستیک"] in view["attributes_fa"]
+    assert [s["name_fa"] for s in view["skus_fa"]] == ["مشکی، بزرگ", "فا:奇怪款式"]
+
+
+def test_longer_caches_by_default(monkeypatch):
+    assert Settings().cache_hours == 24 * 7 and Settings().offer_cache_hours == 24 * 14
+    monkeypatch.setenv("HUNTER_OFFER_CACHE_HOURS", "48")
+    assert Settings.from_env().offer_cache_hours == 48
+
+
 def test_image_proxy_only_fetches_product_pictures(link_settings):
     fetched = []
 
@@ -785,7 +833,7 @@ def test_calculator_settings_in_config(client, settings):
 def test_toman_rate_from_env(monkeypatch):
     monkeypatch.setenv("HUNTER_TOMAN_PER_USD", "250000")
     s = Settings.from_env()
-    assert s.toman_per_usd == 250_000 and s.plans[0].price_toman == 1_490_000
+    assert s.toman_per_usd == 250_000 and s.plans[0].price_toman == 1_250_000  # $4.99
 
 
 def test_health_check(tmp_path, sample_hunt):

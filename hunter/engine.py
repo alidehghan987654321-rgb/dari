@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .categories import Category, classify, find_category, hunt_categories, pack_qty
 from .models import Candidate, MarketListing, SupplierOffer
@@ -70,10 +70,22 @@ class Hunter:
         markets: list[MarketSource],
         supplier: SupplierSource,
         cfg: PricingConfig | None = None,
+        *,
+        results: int = 6,
+        known: Callable[[MarketListing], dict | None] | None = None,
+        reuse_days: float = 7,
     ):
         self.markets = markets
         self.supplier = supplier
         self.cfg = cfg or PricingConfig()
+        # 1688 offers asked for in each search; every result is paid for, and the best one
+        # and two backups come from the first few.
+        self.results = results
+        # A listing's earlier find (a Candidate dict), if there is one: a product that stays
+        # a bestseller for days isn't searched on 1688 or matched again until its search is
+        # reuse_days old; it's only priced afresh.
+        self.known = known
+        self.reuse_days = reuse_days
 
     def hunt(
         self, categories: Iterable[Category] | None = None, per_category: int = 20
@@ -90,11 +102,21 @@ class Hunter:
                 except Exception:
                     log.exception("%s: couldn't list %s", market.name, category.key)
                     skipped["market_error"] = skipped.get("market_error", 0) + 1
-            # One 1688 image search for the whole category instead of one per product.
-            offers = self.prefetch_offers([x.image_url for x in listings if x.image_url])
+            earlier = {x.id: e for x in listings if (e := self.recent(x))}
+            # One 1688 image search for the whole category instead of one per product, and
+            # only for the products not searched lately.
+            offers = self.prefetch_offers(
+                [x.image_url for x in listings if x.image_url and x.id not in earlier]
+            )
             for listing in listings:
                 listing.category = listing.category or category.key
-                candidate = self.evaluate(listing, category, skipped, offers.get(listing.image_url))
+                candidate = self.evaluate(
+                    listing,
+                    category,
+                    skipped,
+                    offers.get(listing.image_url),
+                    earlier.get(listing.id),
+                )
                 if candidate:
                     kept = best.get(candidate.offer.id)
                     if kept is None or candidate.score > kept.score:
@@ -111,12 +133,24 @@ class Hunter:
             skipped=skipped,
         )
 
+    def recent(self, listing: MarketListing) -> dict | None:
+        """This listing's earlier find, if its 1688 search is younger than reuse_days."""
+        found = self.known(listing) if self.known else None
+        when = (found or {}).get("searched_at")
+        if not when:
+            return None
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(when)
+        except ValueError:
+            return None
+        return found if age < timedelta(days=self.reuse_days) else None
+
     def prefetch_offers(self, image_urls: list[str]) -> dict[str, list[SupplierOffer]]:
         """1688 offers for many pictures in one search, where the source can do that."""
         if not image_urls or not hasattr(self.supplier, "by_images"):
             return {}
         try:
-            return self.supplier.by_images(list(dict.fromkeys(image_urls)), 10)
+            return self.supplier.by_images(list(dict.fromkeys(image_urls)), self.results)
         except Exception:
             log.exception("Batched 1688 search failed; searching one by one")
             return {}
@@ -127,15 +161,24 @@ class Hunter:
         category: Category,
         skipped: dict[str, int],
         offers: list[SupplierOffer] | None = None,
+        earlier: dict | None = None,
     ) -> Candidate | None:
         def skip(reason: str) -> None:
             skipped[reason] = skipped.get(reason, 0) + 1
 
+        searched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if earlier:  # searched lately: the same offers and matches, priced with today's prices
+            offers = [
+                SupplierOffer(**o) for o in [earlier["offer"], *earlier.get("alternatives", [])]
+            ]
+            searched_at = earlier["searched_at"]
         try:
             if offers is None:
-                offers = self.supplier.by_image(listing.image_url, 10)
+                offers = self.supplier.by_image(listing.image_url, self.results)
             if not offers:
-                offers = self.supplier.by_keyword(f"{category.zh_query} {listing.title[:40]}", 10)
+                offers = self.supplier.by_keyword(
+                    f"{category.zh_query} {listing.title[:40]}", self.results
+                )
         except Exception:
             log.exception("1688 search failed for %s", listing.url)
             skip("supplier_error")
@@ -152,7 +195,10 @@ class Hunter:
             offer.weight_kg * units if offer.weight_kg else category.default_weight_kg * units
         )
 
-        matches = self.find_matches(listing)
+        if earlier:
+            matches = [MarketListing(**m) for m in earlier.get("matches", [])]
+        else:
+            matches = self.find_matches(listing)
         on = {x.source: x for x in [listing, *matches]}
         temu, amazon = on.get("temu"), on.get("amazon")
         if temu:
@@ -198,6 +244,7 @@ class Hunter:
             starter_capital_usd=round(starter_qty * pricing.landed_usd, 2),
             alternatives=ranked[1:3],
             matches=matches,
+            searched_at=searched_at,
             level=supplier_level(offer),
         )
 
