@@ -599,175 +599,502 @@
 
   function radarHTML() {
     return '<div class="radar glass bk beam" id="radar">' +
-      '<div class="rd-top"><span class="led y"></span><b>رادار شکار</b><span class="rd-src" dir="ltr">TEMU · AMAZON · 1688</span>' +
+      '<div class="rd-top"><span class="rd-eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span><b>رادار شکار</b>' +
+        '<span class="rd-src" dir="ltr">TEMU · AMAZON · 1688</span>' +
         '<span class="rd-tally"><span>بررسی <b id="rd-seen">0</b></span><span class="g">شکار <b id="rd-hit">0</b></span>' +
         '<span class="r">رد <b id="rd-miss">0</b></span></span></div>' +
-      '<div class="rd-stage" id="rd-stage" aria-hidden="true">' +
-        '<div class="rd-grid"></div><div class="rd-floor rd-rim"></div>' +
-        '<div class="rd-floor"><div class="rd-rings"></div><div class="rd-ticks"></div><div class="rd-sweep" id="rd-sweep"></div><div class="rd-hub"></div></div>' +
-        '<div class="rd-blips" id="rd-blips"></div><div class="rd-lock" id="rd-lock"><i></i></div>' +
-      "</div>" +
+      '<div class="rd-stage" id="rd-stage" aria-hidden="true"><canvas></canvas><div class="rd-labels" id="rd-labels"></div></div>' +
       '<div class="rd-card" id="rd-card">' + radarCardHTML(radarEval(RADAR[0]), false) + "</div>" +
     "</div>";
   }
-  // What the radar has locked on: where each dollar of the price goes, then profit or loss.
+  // What the radar has locked on: the margin as a ring, where each dollar of the price goes, then
+  // profit or loss. Figures carry data-v so they can count up when they appear.
   function radarCardHTML(e, busy) {
     if (!e) return '<p class="rd-why">' + ERRORS.unprofitable_settings + "</p>";
-    var loss = e.profit < 0, total = Math.max(e.price, e.cost + e.fees);
+    var loss = e.profit < 0, total = Math.max(e.price, e.cost + e.fees), m = e.profit / e.price;
+    var tone = busy ? "" : { green: "g", yellow: "y", red: "r" }[e.verdict];
     var w = function (x) { return (Math.max(0, x) / total * 100).toFixed(2) + "%"; };
-    var val = function (x) { return busy ? "···" : x; };
-    return '<div class="rd-card-h"><div class="rd-name"><small>' + (busy ? "در حال تحلیل…" : "قفل روی") + "</small><b>" + esc(e.name) + "</b></div>" +
+    var val = function (x, sign) {
+      return busy ? "···" : '<span data-v="' + x.toFixed(2) + '"' + (sign ? ' data-sign="1"' : "") + ">" + (sign && x >= 0 ? "+" : "") + usd(x) + "</span>";
+    };
+    var arc = busy ? 0 : Math.min(1, Math.abs(m)) * 119.4;
+    return '<div class="rd-card-h">' +
+        '<div class="rd-gauge ' + tone + '" title="حاشیه‌ی ' + (loss ? "زیان" : "سود") + '"><svg viewBox="0 0 44 44"><circle class="bg" cx="22" cy="22" r="19"/>' +
+          '<circle class="fg" cx="22" cy="22" r="19" data-arc="' + arc.toFixed(1) + '" style="stroke-dasharray:' + arc.toFixed(1) + ' 200"/></svg>' +
+          "<b>" + (busy ? "··" : (loss ? "−" : "") + Math.round(Math.abs(m) * 100) + "%") + "</b></div>" +
+        '<div class="rd-name"><small>' + (busy ? "در حال تحلیل…" : "قفل روی") + "</small><b>" + esc(e.name) + "</b></div>" +
         (busy ? '<span class="pill neutral"><span class="dot"></span>تحلیل</span>'
           : '<span class="pill ' + e.verdict + '">' + ic(RADAR_ICON[e.verdict]) + RADAR_SAY[e.verdict] + "</span>") + "</div>" +
-      '<div class="rd-bar' + (busy ? " busy" : "") + '"><i class="c" style="width:' + w(e.cost) + '"></i><i class="s" style="width:' + w(e.fees) + '"></i>' +
+      (busy ? '<div class="rd-bar busy"></div>' : '<div class="rd-bar"><i class="c" style="width:' + w(e.cost) + '"></i><i class="s" style="width:' + w(e.fees) + '"></i>' +
         (loss ? '<i class="loss" style="inset-inline-start:' + w(e.price) + '"></i><i class="mark" style="inset-inline-start:' + w(e.price) + '"></i>'
-          : '<i class="p" style="width:' + w(e.profit) + '"></i>') + "</div>" +
+          : '<i class="p" style="width:' + w(e.profit) + '"></i>') + "</div>") +
       '<div class="rd-cells">' +
-        '<div><span><i class="sw c"></i>تمام‌شده تا دبی</span><b>' + val(usd(e.cost)) + "</b></div>" +
-        '<div><span><i class="sw s"></i>' + e.feesLabel + "</span><b>" + val(usd(e.fees)) + "</b></div>" +
-        "<div><span>" + (loss ? "قیمت زیر Temu" : "قیمت فروش") + "</span><b>" + val(usd(e.price)) + "</b></div>" +
+        '<div><span><i class="sw c"></i>تمام‌شده تا دبی</span><b>' + val(e.cost) + "</b></div>" +
+        '<div><span><i class="sw s"></i>' + e.feesLabel + "</span><b>" + val(e.fees) + "</b></div>" +
+        "<div><span>" + (loss ? "قیمت زیر Temu" : "قیمت فروش") + "</span><b>" + val(e.price) + "</b></div>" +
         '<div class="pl ' + (busy ? "" : loss ? "r" : "g") + '"><span><i class="sw ' + (loss ? "l" : "p") + '"></i>' + (loss ? "زیان هر عدد" : "سود هر عدد") + "</span><b>" +
-          val((loss ? "" : "+") + usd(e.profit)) + "</b></div>" +
+          val(e.profit, true) + "</b></div>" +
       "</div>" +
       '<p class="rd-why">' + (busy ? "هزینه‌ها، سهم راینومال و قیمت رقبا در حال محاسبه‌ست." : esc(e.why)) + "</p>";
   }
 
-  // The radar's animation. The floor is a disc tilted in 3D by CSS; the products are upright
-  // pins in a flat layer above it, placed where the same tilt and perspective put each point.
+  // The radar, drawn on a canvas: a thick disc in 3D with a sweep and a curtain of light behind it,
+  // the logo floating over a beam in the middle, and the products as boxes. Unscanned boxes are
+  // wireframes; the sweep makes them solid. The hunter locks on, scans the box and decides: a hunt
+  // is lifted into the logo, a reject breaks up. Labels are HTML over the canvas, placed by the
+  // same projection.
   var radar = { raf: 0, io: null, ro: null, onResize: null };
-  var TILT = 58 * Math.PI / 180, PERSP = 900, SPIN_MS = 3400, LANES = [-0.62, -0.3, 0.02, 0.34, 0.62];
+  var TILT = 57 * Math.PI / 180, SPIN_MS = 3600, LANES = [-0.66, -0.38, 0.3, 0.6];  // clear of the logo in the middle
+  var BOX = 0.12, PYLON = 0.48, THICK = 0.07, TAU = Math.PI * 2;
+  var YELLOW = [250, 197, 7], GREEN = [52, 211, 153], RED = [248, 113, 113], AMBER = [251, 146, 60], WHITE = [235, 235, 235];
+  function rgba(c, a) { return "rgba(" + Math.round(c[0]) + "," + Math.round(c[1]) + "," + Math.round(c[2]) + "," + a + ")"; }
+  function shade(c, k) { return [Math.min(255, c[0] * k), Math.min(255, c[1] * k), Math.min(255, c[2] * k)]; }
+  function mix(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]; }
+  function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+  function shortName(s) { return s.length > 24 ? s.slice(0, 23) + "…" : s; }
 
   function bindRadar() {
     stopRadar();
     var stage = $("rd-stage");
     if (!stage) return;
-    var floors = stage.querySelectorAll(".rd-floor"), grid = stage.querySelector(".rd-grid");
-    var sweep = $("rd-sweep"), layer = $("rd-blips"), lock = $("rd-lock"), card = $("rd-card");
-    var evals = RADAR.map(radarEval);
-    if (!evals[0]) return;
-    var geo = {}, items = [], next = 1, t = 0, last = 0, held = null, releasedAt = -1e9, wait = {};
+    var cv = stage.querySelector("canvas"), ctx = cv.getContext && cv.getContext("2d");
+    var labels = $("rd-labels"), card = $("rd-card"), evals = RADAR.map(radarEval);
+    if (!ctx || !evals[0]) return;
+    var sn = Math.sin(TILT), cs = Math.cos(TILT), moving = false;
+    var geo = {}, items = [], sparks = [], motes = [], wait = {}, glows = {};
+    var next = 1, t = 0, last = 0, held = null, releasedAt = -1e9, flash = -1e9, tween = null;
     var tally = { seen: 0, hit: 0, miss: 0 };
+    var logo = new Image();
+    logo.onload = function () { if (!moving) draw(); };
+    logo.src = "/static/brand/logo-192.png";
+    for (var i = 0; i < 28; i++) motes.push({ a: Math.random() * TAU, r: Math.sqrt(Math.random()) * 0.95, h: Math.random() * 0.7, sp: 0.00004 + Math.random() * 0.00006 });
 
-    // The largest disc that fits with room above for the far pins' labels and below for its rim.
+    // A point over the disc (u right, v towards the viewer, h up; in radii) -> the screen.
+    function at(u, v, h) {
+      var R = geo.R, z = (v * sn + h * cs) * R, s = geo.P / (geo.P - z);
+      return { x: geo.cx + u * R * s, y: geo.cy + (v * cs - h * sn) * R * s, s: s };
+    }
+    function polar(a, r, h, u0, v0) { return at((u0 || 0) + Math.sin(a) * r, (v0 || 0) - Math.cos(a) * r, h || 0); }
+    function circle(r, h, u0, v0, n) {
+      var pts = [];
+      n = n || 96;
+      for (var k = 0; k < n; k++) pts.push(polar(k / n * TAU, r, h, u0, v0));
+      return pts;
+    }
+    function path(pts) {
+      ctx.beginPath();
+      for (var k = 0; k < pts.length; k++) k ? ctx.lineTo(pts[k].x, pts[k].y) : ctx.moveTo(pts[k].x, pts[k].y);
+      ctx.closePath();
+    }
+    function line(a, b) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
+    function glow(c) {  // a soft round light in colour c, drawn once and reused
+      var key = c.join();
+      if (glows[key]) return glows[key];
+      var g = document.createElement("canvas");
+      g.width = g.height = 64;
+      var x = g.getContext("2d"), grd = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grd.addColorStop(0, rgba(c, 1)); grd.addColorStop(0.3, rgba(c, 0.4)); grd.addColorStop(1, rgba(c, 0));
+      x.fillStyle = grd; x.fillRect(0, 0, 64, 64);
+      return (glows[key] = g);
+    }
+    function light(p, r, c, a) {
+      if (a <= 0.01) return;
+      var was = ctx.globalAlpha;
+      ctx.globalAlpha = was * Math.min(1, a);
+      ctx.drawImage(glow(c), p.x - r, p.y - r, r * 2, r * 2);
+      ctx.globalAlpha = was;
+    }
+
+    // The largest disc that fits, with room above for the logo and the far labels, below for its rim.
     function measure() {
-      var w = stage.clientWidth, h = stage.clientHeight, sn = Math.sin(TILT), cs = Math.cos(TILT);
-      var d = w * 0.88, R, k, top, bottom;
-      for (var i = 0; i < 40; i++, d *= 0.95) {
-        R = d / 2; k = Math.max(0.72, Math.min(1, d / 440));
-        var far = PERSP / (PERSP + LANES[4] * R * sn);
-        top = Math.max(R * cs * PERSP / (PERSP + R * sn), LANES[4] * R * cs * far + 92 * far * k) + 8;
-        bottom = R * cs * PERSP / (PERSP - R * sn) + d * 0.035 + 10;
-        if (top + bottom <= h) break;
+      var w = stage.clientWidth, h = stage.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      geo = { cx: w / 2, cy: 0, R: w * 0.45, dpr: dpr };
+      for (var n = 0; n < 40; n++, geo.R *= 0.95) {
+        geo.P = geo.R * 4.4;
+        var top = Math.min(at(0, -1, 0).y, at(0, 0, PYLON + 0.2).y, at(0, LANES[0], BOX * 1.2).y - 46);
+        var bottom = at(0, 1, -THICK).y + 10;
+        if (bottom - top <= h - 12 || n === 39) { geo.cy = (h - (bottom - top)) / 2 - top; break; }
       }
-      geo = { cx: w / 2, cy: top + (h - top - bottom) / 2, R: R, k: k };
-      Array.prototype.forEach.call(floors, function (f, n) {
-        f.style.width = f.style.height = d + "px";
-        f.style.left = (w - d) / 2 + "px";
-        f.style.top = geo.cy - d / 2 + (n === 0 ? d * 0.035 : 0) + "px";  // the rim sits a little lower: the disc's edge
-      });
-      var g = d * 2.2;
-      grid.style.width = grid.style.height = g + "px";
-      grid.style.left = (w - g) / 2 + "px"; grid.style.top = geo.cy - g / 2 + "px";
+      geo.k = Math.max(0.78, Math.min(1.1, geo.R / 210));
     }
-    function project(u, v) {  // a point on the floor, in px from its centre -> where it shows
-      var s = PERSP / (PERSP - v * Math.sin(TILT));
-      return { x: geo.cx + u * s, y: geo.cy + v * Math.cos(TILT) * s, s: s };
-    }
+
     function spawn(lane, u, n) {
-      var x = RADAR[n], e = evals[n], el = document.createElement("div");
-      el.className = "rd-pin";
-      el.innerHTML = '<div class="in"><i class="base"></i><i class="stem"></i><span class="head">' + ic("box") + '</span><span class="tag">Temu ' + usd(x.temu) + "</span></div>";
-      layer.appendChild(el);
-      var it = { lane: lane, f: LANES[lane], u: u, n: n, e: e, el: el, state: "new", ping: -1e9, speed: 0.13 + Math.random() * 0.06 };
+      var el = document.createElement("div");
+      el.className = "rd-tag";
+      labels.appendChild(el);
+      var it = { lane: lane, v: LANES[lane], u: u, h: 0, n: n, e: evals[n], x: RADAR[n], el: el, state: "new",
+        ping: -1e9, matAt: null, speed: 0.12 + Math.random() * 0.05, rot: Math.random() * TAU,
+        spin: (Math.random() < 0.5 ? -1 : 1) * (0.00022 + Math.random() * 0.0002),
+        size: BOX * (0.85 + Math.random() * 0.35), tall: 0.72 + Math.random() * 0.3, scale: 1, fade: 1 };
+      tag(it, '<bdi>Temu ' + usd(it.x.temu) + "</bdi>", "");
       items.push(it);
       return it;
     }
-    function chord(f) { return Math.sqrt(1 - f * f); }
-    function setTally() {
+    function chord(v) { return Math.sqrt(Math.max(0, 1 - v * v)); }
+    function tag(it, html, cls) { it.el.innerHTML = html; it.el.className = "rd-tag" + (cls ? " " + cls : ""); }
+    function tone(e) { return { green: "g", yellow: "y", red: "r" }[e.verdict]; }
+    function colour(e) { return { green: GREEN, yellow: AMBER, red: RED }[e.verdict]; }
+    function setTally(bump) {
       $("rd-seen").textContent = tally.seen; $("rd-hit").textContent = tally.hit; $("rd-miss").textContent = tally.miss;
+      var b = bump && $(bump);
+      if (b && moving) { b.classList.remove("bump"); void b.offsetWidth; b.classList.add("bump"); }
     }
-    function reveal(it) {
-      it.state = "done";
-      it.el.classList.add(it.e.verdict[0]);
-      it.el.querySelector(".head").innerHTML = ic(RADAR_ICON[it.e.verdict]);
-      it.el.querySelector(".tag").textContent = it.e.tag || (it.e.profit < 0 ? "" : "+") + usd(it.e.profit);
-      card.innerHTML = radarCardHTML(it.e, false);
-      if (it.e.verdict === "green") tally.hit++;
-      if (it.e.verdict === "red") tally.miss++;
-      setTally();
+    function burst(it, c, n, up) {
+      for (var k = 0; k < n; k++) {
+        sparks.push({ u: it.u + (Math.random() - 0.5) * it.size, v: it.v + (Math.random() - 0.5) * it.size, h: it.h + Math.random() * it.size * it.tall,
+          du: (Math.random() - 0.5) * 0.0007, dv: (Math.random() - 0.5) * 0.0007, dh: (up ? 0.0004 : 0.0001) + Math.random() * 0.0006,
+          life: 700 + Math.random() * 700, max: 1400, c: c });
+      }
     }
+    function floatText(it, text, cls) {
+      if (!moving) return;
+      var p = at(it.u, it.v, it.h + it.size * it.tall + 0.03), el = document.createElement("div");
+      el.className = "rd-float " + cls;
+      el.innerHTML = "<bdi>" + esc(text) + "</bdi>";
+      el.style.transform = "translate(" + p.x.toFixed(1) + "px," + (p.y - 46 * geo.k).toFixed(1) + "px)";  // above the label
+      el.addEventListener("animationend", function () { if (el.parentNode) el.parentNode.removeChild(el); });
+      labels.appendChild(el);
+    }
+    function showCard(e, busy) {
+      card.innerHTML = radarCardHTML(e, busy);
+      if (busy || !moving) return;
+      var fg = card.querySelector(".fg");  // the ring fills, the figures count up
+      fg.style.strokeDasharray = "0 200"; void fg.getBoundingClientRect(); fg.style.strokeDasharray = fg.dataset.arc + " 200";
+      tween = { at: t, els: Array.prototype.map.call(card.querySelectorAll("[data-v]"), function (el) {
+        return { el: el, v: Number(el.dataset.v), sign: !!el.dataset.sign };
+      }) };
+    }
+    function stepTween() {
+      if (!tween) return;
+      var p = clamp01((t - tween.at) / 700), k = 1 - Math.pow(1 - p, 3);
+      tween.els.forEach(function (x) { var v = x.v * k; x.el.textContent = (x.sign && v >= 0 ? "+" : "") + usd(v); });
+      if (p >= 1) tween = null;
+    }
+
     function lockOn(it) {
       held = { it: it, at: t };
       it.state = "lock";
-      it.el.classList.add("lock");
-      it.el.querySelector(".tag").textContent = "···";
-      lock.classList.remove("on"); void lock.offsetWidth; lock.classList.add("on");
-      card.innerHTML = radarCardHTML(it.e, true);
+      tag(it, "<b>" + esc(shortName(it.x.name)) + "</b><small>در حال تحلیل…</small>", "lock");
+      showCard(it.e, true);
+    }
+    function reveal(it) {
+      var e = it.e, cls = tone(e), value = e.tag || (e.profit < 0 ? "" : "+") + usd(e.profit);
+      it.state = "done";
+      tag(it, "<b>" + esc(shortName(e.name)) + '</b><small class="' + cls + '">' + ic(RADAR_ICON[e.verdict]) + RADAR_SAY[e.verdict] +
+        " · <bdi>" + esc(value) + "</bdi></small>", "lock " + cls);
+      showCard(e, false);
+      if (moving) { burst(it, colour(e), 24, true); floatText(it, value, cls); }
+      if (e.verdict === "green") tally.hit++;
+      if (e.verdict === "red") tally.miss++;
+      setTally(e.verdict === "green" ? "rd-hit" : e.verdict === "red" ? "rd-miss" : null);
     }
     function release() {
-      var it = held.it;
+      var it = held.it, e = it.e;
       held = null; releasedAt = t;
-      lock.classList.remove("on");
-      it.el.classList.remove("lock");
-      if (it.e.verdict === "green") {  // into the bag
-        it.el.classList.add("caught");
-        it.gone = t + 900;
+      if (e.verdict === "green") {  // lifted into the logo
+        it.fly = { at: t, u: it.u, v: it.v };
+        tag(it, "<bdi>+" + usd(e.profit) + "</bdi>", "g");
+      } else if (e.verdict === "red") {  // breaks up
+        it.dissolve = t;
+        burst(it, RED, 46, false);
+        tag(it, "<bdi>" + esc(e.tag || usd(e.profit)) + "</bdi>", "r");
+      } else {
+        tag(it, "<bdi>" + esc(e.tag || usd(e.profit)) + "</bdi>", "y");
       }
     }
-    function draw() {
-      var ang = (t / SPIN_MS * 360) % 360;
-      sweep.style.transform = "rotate(" + ang + "deg)";
-      items.forEach(function (it) {
-        var v = it.f * geo.R, u = it.u * geo.R, p = project(u, v), c = chord(it.f);
-        var fade = Math.max(0, Math.min(1, (c - Math.abs(it.u)) / 0.14));
-        it.el.style.opacity = fade.toFixed(3);
-        it.el.style.transform = "translate(" + p.x.toFixed(1) + "px," + p.y.toFixed(1) + "px) scale(" + (p.s * geo.k).toFixed(3) + ")";
-        it.el.style.zIndex = String(Math.round(1000 + v));
-        if (held && held.it === it) {
-          lock.style.transform = "translate(" + p.x.toFixed(1) + "px," + (p.y - 46 * p.s * geo.k).toFixed(1) + "px) scale(" + (p.s * geo.k).toFixed(3) + ")";
-        }
-      });
-    }
+
     function step(dt) {
       t += dt;
-      var ang = (t / SPIN_MS * 360) % 360;
+      var sweep = (t / SPIN_MS) * TAU % TAU;
       items.forEach(function (it) {
-        var slow = held && held.it === it ? 0.3 : 1;
-        it.u -= it.speed * slow * dt / 1000;
-        var a = (Math.atan2(it.u, -it.f) * 180 / Math.PI + 360) % 360;
-        var behind = (ang - a + 360) % 360;
-        if (behind < 10 && t - it.ping > 1000 && Math.abs(it.u) < chord(it.f) - 0.05) {  // the sweep just passed it
+        it.rot += it.spin * dt * (it.fly ? 10 : 1);
+        if (it.fly) {
+          var p = clamp01((t - it.fly.at) / 1300), q = p * p * (3 - 2 * p);
+          it.u = it.fly.u * (1 - q); it.v = it.fly.v * (1 - q); it.h = PYLON * Math.pow(q, 0.7); it.scale = 1 - 0.8 * q;
+          if (p >= 1) { it.gone = true; flash = t; }
+          return;
+        }
+        if (it.dissolve) {
+          it.fade = 1 - clamp01((t - it.dissolve) / 650);
+          if (it.fade <= 0) it.gone = true;
+          return;
+        }
+        it.u -= it.speed * (held && held.it === it ? 0.25 : 1) * dt / 1000;
+        if (it.u < -chord(it.v) - 0.03) { it.gone = true; return; }
+        var a = (Math.atan2(it.u, -it.v) + TAU) % TAU;
+        if ((sweep - a + TAU) % TAU < 0.18 && t - it.ping > 1200 && Math.abs(it.u) < chord(it.v) - 0.04) {  // the sweep just passed it
           it.ping = t;
-          it.el.classList.remove("ping"); void it.el.offsetWidth; it.el.classList.add("ping");
-          if (it.state === "new") { it.state = "seen"; tally.seen++; setTally(); }
-          if (!held && t - releasedAt > 500 && it.state === "seen" && it.u + chord(it.f) > 0.6 &&
-              Math.hypot(it.u, it.f) < 0.8) lockOn(it);
+          if (it.state === "new") { it.state = "seen"; it.matAt = t; tally.seen++; setTally(); }
+          if (!held && t - releasedAt > 600 && it.state === "seen" && it.u + chord(it.v) > 0.55 && Math.hypot(it.u, it.v) < 0.8) lockOn(it);
         }
       });
-      if (held && held.it.state === "lock" && t - held.at > 950) reveal(held.it);
-      if (held && t - held.at > 3900) release();
+      if (held && held.it.state === "lock" && t - held.at > 1100) reveal(held.it);
+      if (held && t - held.at > 4200) release();
       items = items.filter(function (it) {
-        var out = it.u < -chord(it.f) - 0.02 || (it.gone && t > it.gone);
-        if (out) { layer.removeChild(it.el); wait[it.lane] = t + 300 + Math.random() * 1800; }
-        return !out;
+        if (!it.gone) return true;
+        labels.removeChild(it.el);
+        wait[it.lane] = t + 400 + Math.random() * 1600;
+        return false;
       });
-      LANES.forEach(function (f, lane) {
-        var busy = items.some(function (it) { return it.lane === lane; });
-        if (!busy && (wait[lane] || 0) <= t) {
-          spawn(lane, chord(f), next);
+      LANES.forEach(function (v, lane) {
+        if ((wait[lane] || 0) <= t && !items.some(function (it) { return it.lane === lane; })) {
+          spawn(lane, chord(v) + 0.02, next);
           next = (next + 1) % RADAR.length;
         }
       });
+      sparks = sparks.filter(function (s) {
+        s.life -= dt; s.u += s.du * dt; s.v += s.dv * dt; s.h = Math.max(0, s.h + s.dh * dt); s.dh -= 0.0000014 * dt;
+        return s.life > 0;
+      });
+      motes.forEach(function (m) { m.h += m.sp * dt; if (m.h > 0.75) { m.h = 0; m.a = Math.random() * TAU; m.r = Math.sqrt(Math.random()) * 0.95; } });
+      stepTween();
+    }
+
+    function floor() {
+      var c0 = at(0, 0, 0), k, a, p1, p2;
+      // the grid around the disc, drifting the way the products go
+      var fade = ctx.createRadialGradient(c0.x, c0.y, geo.R * 0.5, c0.x, c0.y, geo.R * 2.2);
+      fade.addColorStop(0, rgba(YELLOW, 0.17)); fade.addColorStop(1, rgba(YELLOW, 0));
+      ctx.strokeStyle = fade; ctx.lineWidth = 1; ctx.beginPath();
+      var drift = (t * 0.00004) % 0.3;
+      for (var g = -2.4; g <= 2.41; g += 0.3) {
+        line(at(g - drift, -2.4, 0), at(g - drift, 2.4, 0));
+        line(at(-2.4, g, 0), at(2.4, g, 0));
+      }
+      ctx.stroke();
+      // the disc's edge, lit
+      var upper = [], lower = [];
+      for (k = 0; k <= 48; k++) { a = Math.PI / 2 + k / 48 * Math.PI; upper.push(polar(a, 1, 0)); lower.push(polar(a, 1, -THICK)); }
+      path(upper.concat(lower.reverse()));
+      var side = ctx.createLinearGradient(0, at(0, 1, 0).y, 0, at(0, 1, -THICK).y);
+      side.addColorStop(0, rgba(YELLOW, 0.5)); side.addColorStop(0.45, "rgba(80,60,4,.95)"); side.addColorStop(1, "rgba(18,15,6,.98)");
+      ctx.fillStyle = side; ctx.fill();
+      ctx.globalCompositeOperation = "lighter";
+      var strip = [];
+      for (k = 0; k <= 60; k++) strip.push(polar(Math.PI / 2 + k / 60 * Math.PI, 1, -THICK * 0.55));
+      ctx.beginPath();
+      strip.forEach(function (p, n) { n ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+      ctx.setLineDash([2, 7]); ctx.lineDashOffset = -t * 0.02;
+      ctx.strokeStyle = rgba(YELLOW, 0.9); ctx.lineWidth = 2; ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalCompositeOperation = "source-over";
+      // the face
+      var rim = circle(1, 0);
+      path(rim); ctx.fillStyle = "rgba(15,14,10,.94)"; ctx.fill();
+      ctx.save(); path(rim); ctx.clip();
+      ctx.translate(c0.x, c0.y); ctx.scale(1, cs * 1.08);
+      var face = ctx.createRadialGradient(0, 0, 0, 0, 0, geo.R * 1.05);
+      face.addColorStop(0, rgba(YELLOW, 0.24)); face.addColorStop(0.45, rgba(YELLOW, 0.06)); face.addColorStop(0.9, rgba(YELLOW, 0.03)); face.addColorStop(1, rgba(YELLOW, 0.16));
+      ctx.fillStyle = face; ctx.fillRect(-geo.R * 2, -geo.R * 2, geo.R * 4, geo.R * 4);
+      ctx.restore();
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (k = 0; k < 24; k++) { a = k / 24 * TAU; line(polar(a, 0.12, 0), polar(a, 0.86, 0)); }
+      ctx.strokeStyle = rgba(YELLOW, 0.07); ctx.stroke();
+      [0.25, 0.5, 0.75].forEach(function (r) { path(circle(r, 0)); ctx.strokeStyle = rgba(YELLOW, 0.3); ctx.stroke(); });
+      ctx.beginPath(); line(at(-1, 0, 0), at(1, 0, 0)); line(at(0, -1, 0), at(0, 1, 0));
+      ctx.strokeStyle = rgba(YELLOW, 0.24); ctx.stroke();
+      ctx.beginPath();
+      for (k = 0; k < 72; k++) if (k % 6) { a = k / 72 * TAU; line(polar(a, 0.935, 0), polar(a, 0.975, 0)); }
+      ctx.strokeStyle = rgba(YELLOW, 0.5); ctx.lineWidth = 1.1; ctx.stroke();
+      ctx.beginPath();
+      for (k = 0; k < 12; k++) { a = k / 12 * TAU; line(polar(a, 0.87, 0), polar(a, 0.975, 0)); }
+      ctx.strokeStyle = rgba(YELLOW, 0.95); ctx.lineWidth = 2.2; ctx.stroke();
+      path(rim); ctx.strokeStyle = rgba(YELLOW, 0.85); ctx.lineWidth = 1.8; ctx.stroke();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = rgba(YELLOW, 0.14); ctx.lineWidth = 7; ctx.stroke();
+      // pulses from the middle
+      for (k = 0; k < 2; k++) {
+        var ph = (t / 2800 + k / 2) % 1;
+        path(circle(Math.max(0.01, ph), 0)); ctx.strokeStyle = rgba(YELLOW, 0.4 * (1 - ph)); ctx.lineWidth = 1.5; ctx.stroke();
+      }
+      // the sweep, its trail and the curtain of light standing on its edge
+      var A = (t / SPIN_MS) * TAU % TAU, o = at(0, 0, 0), N = 28, span = 1.25;
+      for (k = 0; k < N; k++) {
+        var a0 = A - (k + 1) / N * span, a1 = A - k / N * span;
+        ctx.beginPath(); ctx.moveTo(o.x, o.y);
+        p1 = polar(a0, 1, 0); p2 = polar((a0 + a1) / 2, 1, 0); var p3 = polar(a1, 1, 0);
+        ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y); ctx.closePath();
+        ctx.fillStyle = rgba(YELLOW, 0.28 * Math.pow(1 - k / N, 2)); ctx.fill();
+      }
+      for (k = 0; k < 7; k++) {
+        var ak = A - k * 0.05, hk = 0.32 * (1 - k / 7), f1 = polar(ak, 1, 0), f2 = polar(ak, 1, hk);
+        var wall = ctx.createLinearGradient(f1.x, f1.y, f2.x, f2.y);
+        wall.addColorStop(0, rgba(YELLOW, 0.15 * (1 - k / 7))); wall.addColorStop(1, rgba(YELLOW, 0));
+        path([o, f1, f2, at(0, 0, hk)]); ctx.fillStyle = wall; ctx.fill();
+      }
+      p1 = polar(A, 1, 0);
+      ctx.beginPath(); line(o, p1); ctx.strokeStyle = "rgba(255,232,140,.95)"; ctx.lineWidth = 2; ctx.stroke();
+      light(p1, 18 * geo.k, YELLOW, 0.9);
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    function pylon() {
+      var f = clamp01(1 - (t - flash) / 600), bob = Math.sin(t / 700) * 0.015;
+      var base = at(0, 0, 0), top = at(0, 0, PYLON + bob), k;
+      // a small drum the beam rises from
+      path(circle(0.075, 0.035, 0, 0, 40)); ctx.fillStyle = "rgba(24,20,8,.95)"; ctx.fill();
+      ctx.strokeStyle = rgba(YELLOW, 0.9); ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.globalCompositeOperation = "lighter";
+      light(base, 46 * geo.k, YELLOW, 0.5 + 0.4 * f);
+      var bw = 8 * base.s * geo.k, beam = ctx.createLinearGradient(0, base.y, 0, top.y);
+      beam.addColorStop(0, rgba(YELLOW, 0.6)); beam.addColorStop(1, rgba(YELLOW, 0.03));
+      ctx.fillStyle = beam; ctx.beginPath();
+      ctx.moveTo(base.x - bw, base.y); ctx.lineTo(base.x + bw, base.y); ctx.lineTo(top.x + bw * 0.35, top.y); ctx.lineTo(top.x - bw * 0.35, top.y);
+      ctx.closePath(); ctx.fill();
+      for (k = 0; k < 3; k++) {  // rings climbing the beam
+        var ph = (t / 2400 + k / 3) % 1;
+        path(circle(0.05 + 0.06 * (1 - ph), 0.04 + ph * PYLON * 0.8, 0, 0, 40));
+        ctx.strokeStyle = rgba(YELLOW, 0.55 * (1 - ph)); ctx.lineWidth = 1.2; ctx.stroke();
+      }
+      var size = 84 * top.s * geo.k * (1 + 0.14 * f);
+      light(top, size * (0.95 + 0.5 * f), YELLOW, 0.3 + 0.5 * f);
+      ctx.globalCompositeOperation = "source-over";
+      if (logo.complete && logo.naturalWidth) ctx.drawImage(logo, top.x - size / 2, top.y - size / 2, size, size);
+    }
+
+    function box(it) {
+      var e = it.e, hs = it.size / 2 * it.scale, H = it.size * it.tall * it.scale, h0 = it.h;
+      var edge = it.fly || it.dissolve ? 1 : clamp01((chord(it.v) - Math.abs(it.u)) / 0.12);
+      var alpha = edge * it.fade, locked = held && held.it === it, k, p;
+      if (alpha <= 0.01) return alpha;
+      var decided = it.state === "done" || it.fly || it.dissolve, c = decided ? colour(e) : YELLOW;
+      var mat = it.matAt == null ? 0 : moving ? clamp01((t - it.matAt) / 500) : 1;
+      ctx.globalAlpha = alpha;
+      // shadow, and light on the floor under a decided box
+      path(circle(hs * 1.55, 0.001, it.u, it.v, 24)); ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fill();
+      ctx.globalCompositeOperation = "lighter";
+      if (decided || locked) light(at(it.u, it.v, 0), 34 * at(it.u, it.v, 0).s * geo.k, c, 0.45 * alpha);
+      var pinged = clamp01((t - it.ping) / 800);
+      if (pinged < 1) {
+        path(circle(hs * (1.4 + 2.6 * pinged), 0.001, it.u, it.v, 32));
+        ctx.strokeStyle = rgba(YELLOW, 0.7 * (1 - pinged) * alpha); ctx.lineWidth = 1.5; ctx.stroke();
+      }
+      if (locked) {  // a turning ring on the floor
+        ctx.setLineDash([6, 5]); ctx.lineDashOffset = -t * 0.03;
+        path(circle(hs * 2.7, 0.002, it.u, it.v, 44)); ctx.strokeStyle = rgba(YELLOW, 0.95); ctx.lineWidth = 1.6; ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (it.fly) {  // the lift
+        var fb = at(it.fly.u, it.fly.v, 0), ft = at(it.u, it.v, h0 + H), beamW = 12 * fb.s * geo.k;
+        var lift = ctx.createLinearGradient(0, fb.y, 0, ft.y);
+        lift.addColorStop(0, rgba(GREEN, 0.5)); lift.addColorStop(1, rgba(GREEN, 0));
+        ctx.fillStyle = lift; ctx.beginPath(); ctx.moveTo(fb.x - beamW, fb.y); ctx.lineTo(fb.x + beamW, fb.y); ctx.lineTo(ft.x, ft.y); ctx.closePath(); ctx.fill();
+      }
+      ctx.globalCompositeOperation = "source-over";
+      // the box
+      var cn = [];
+      for (k = 0; k < 4; k++) { var a = it.rot + k * Math.PI / 2; cn.push([it.u + Math.cos(a) * hs * Math.SQRT2, it.v + Math.sin(a) * hs * Math.SQRT2]); }
+      var B = cn.map(function (q) { return at(q[0], q[1], h0); }), T = cn.map(function (q) { return at(q[0], q[1], h0 + H); });
+      var camV = geo.P / geo.R * sn, faces = [];
+      for (k = 0; k < 4; k++) {
+        var k2 = (k + 1) % 4, mu = (cn[k][0] + cn[k2][0]) / 2, mv = (cn[k][1] + cn[k2][1]) / 2, nu = mu - it.u, nv = mv - it.v, nl = Math.hypot(nu, nv) || 1;
+        nu /= nl; nv /= nl;
+        if (nu * -mu + nv * (camV - mv) > 0) faces.push({ pts: [B[k], B[k2], T[k2], T[k]], lum: 0.52 + 0.4 * Math.max(0, -0.55 * nu + 0.6 * nv), k: k });
+      }
+      faces.push({ pts: T, lum: 1.08, top: true });
+      var body = it.dissolve || decided && e.verdict === "red" ? mix(YELLOW, RED, 0.6) : YELLOW;
+      function lerp(a, b, f) { return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f }; }
+      faces.forEach(function (fc) {
+        path(fc.pts);
+        if (mat > 0) {
+          ctx.globalAlpha = alpha * mat;
+          ctx.fillStyle = rgba(shade(body, fc.lum), 1); ctx.fill();
+          // packing tape across the top and down two sides
+          ctx.fillStyle = "rgba(70,48,0,.55)";
+          if (fc.top) { path([lerp(T[0], T[1], 0.42), lerp(T[0], T[1], 0.58), lerp(T[3], T[2], 0.58), lerp(T[3], T[2], 0.42)]); ctx.fill(); }
+          else if (fc.k === 0 || fc.k === 2) {
+            var s0 = fc.pts, top0 = lerp(s0[3], s0[2], 0.42), top1 = lerp(s0[3], s0[2], 0.58);
+            path([top0, top1, lerp(top1, lerp(s0[0], s0[1], 0.58), 0.45), lerp(top0, lerp(s0[0], s0[1], 0.42), 0.45)]); ctx.fill();
+          }
+          path(fc.pts); ctx.strokeStyle = "rgba(60,42,0,.55)"; ctx.lineWidth = 1; ctx.stroke();
+        }
+        if (mat < 1) {  // still a hologram
+          ctx.globalAlpha = alpha * (1 - mat);
+          ctx.fillStyle = "rgba(235,235,235,.07)"; ctx.fill();
+          ctx.strokeStyle = rgba(WHITE, 0.75); ctx.lineWidth = 1.2; ctx.stroke();
+        }
+      });
+      if (mat < 1) {  // the hidden edges of a wireframe
+        ctx.globalAlpha = alpha * (1 - mat) * 0.35;
+        ctx.beginPath();
+        for (k = 0; k < 4; k++) { line(B[k], B[(k + 1) % 4]); line(B[k], T[k]); }
+        ctx.strokeStyle = rgba(WHITE, 0.8); ctx.stroke();
+      }
+      ctx.globalAlpha = alpha;
+      if (decided) {  // outlined in the verdict's colour
+        ctx.globalCompositeOperation = "lighter";
+        faces.forEach(function (fc) { path(fc.pts); ctx.strokeStyle = rgba(c, 0.9); ctx.lineWidth = 1.4; ctx.stroke(); });
+        ctx.globalCompositeOperation = "source-over";
+      }
+      if (locked) {
+        var scanned = it.state === "lock";
+        ctx.globalCompositeOperation = "lighter";
+        if (scanned) {  // a plane of light scanning the box
+          var hsn = h0 + H * (0.5 + 0.5 * Math.sin(t / 170)), sq = [];
+          for (k = 0; k < 4; k++) { var ang = it.rot + k * Math.PI / 2; sq.push(at(it.u + Math.cos(ang) * hs * 1.9, it.v + Math.sin(ang) * hs * 1.9, hsn)); }
+          path(sq); ctx.fillStyle = rgba(YELLOW, 0.22); ctx.fill(); ctx.strokeStyle = rgba(YELLOW, 0.95); ctx.lineWidth = 1.2; ctx.stroke();
+        }
+        // a link to the logo, with data running along it
+        var from = at(it.u, it.v, h0 + H), to = at(0, 0, PYLON);
+        var link = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+        link.addColorStop(0, rgba(c, 0.85)); link.addColorStop(1, rgba(c, 0.1));
+        ctx.beginPath(); line(from, to); ctx.strokeStyle = link; ctx.lineWidth = 1.3; ctx.stroke();
+        for (k = 0; k < 3; k++) {
+          var f = (t / 600 + k / 3) % 1;
+          light({ x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f }, 6 * geo.k, c, 0.9);
+        }
+        // corner brackets round the box
+        var xs = B.concat(T).map(function (q) { return q.x; }), ys = B.concat(T).map(function (q) { return q.y; });
+        var grow = moving ? 1 + 0.6 * (1 - clamp01((t - held.at) / 300)) : 1, pad = 9 * geo.k * grow, len = 9 * geo.k;
+        var x0 = Math.min.apply(null, xs) - pad, x1 = Math.max.apply(null, xs) + pad, y0 = Math.min.apply(null, ys) - pad, y1 = Math.max.apply(null, ys) + pad;
+        ctx.beginPath();
+        [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]].forEach(function (b) {
+          ctx.moveTo(b[0] + b[2] * len, b[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(b[0], b[1] + b[3] * len);
+        });
+        ctx.strokeStyle = rgba(c, 1); ctx.lineWidth = 2; ctx.stroke();
+        ctx.globalCompositeOperation = "source-over";
+      }
+      ctx.globalAlpha = 1;
+      return alpha;
+    }
+
+    function place(it, alpha) {  // the label over a box
+      var show = it.state === "lock" || it.state === "done" || it.fly || it.dissolve || (it.state === "seen" && t - it.ping < 1500);
+      if (!moving && it.state === "seen") show = false;
+      var a = show ? alpha * (it.state === "seen" ? 1 - clamp01((t - it.ping - 1000) / 500) : 1) * (it.fly ? 1 - clamp01((t - it.fly.at) / 900) : 1) : 0;
+      it.el.style.opacity = a.toFixed(3);
+      if (a <= 0) return;
+      var p = at(it.u, it.v, it.h + it.size * it.tall * it.scale + 0.03);
+      it.el.style.transform = "translate(" + p.x.toFixed(1) + "px," + (p.y - 6 * geo.k).toFixed(1) + "px) translate(-50%,-100%)";
+    }
+
+    function draw() {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
+      floor();
+      var sorted = items.slice().sort(function (a, b) { return a.v - b.v; }), middle = false;
+      sorted.forEach(function (it) {
+        if (!middle && it.v >= 0) { pylon(); middle = true; }
+        place(it, box(it));
+      });
+      if (!middle) pylon();
+      ctx.globalCompositeOperation = "lighter";
+      sparks.forEach(function (s) { light(at(s.u, s.v, s.h), 5 * geo.k, s.c, s.life / s.max * 1.4); });
+      motes.forEach(function (m) { light(polar(m.a, m.r, m.h), 3 * geo.k, YELLOW, 0.5 * (1 - m.h / 0.75)); });
+      ctx.globalCompositeOperation = "source-over";
     }
 
     measure();
     // Start mid-scan: the first product locked near the centre, others on their way.
-    var first = spawn(2, 0.28, 0);
-    [[0, 0.45], [1, -0.35], [3, 0.7], [4, -0.1]].forEach(function (s) { spawn(s[0], s[1] * chord(LANES[s[0]]), next); next = (next + 1) % RADAR.length; });
-    items.forEach(function (it) { it.state = "seen"; tally.seen++; });
-    t = SPIN_MS * 0.82;
-    held = { it: first, at: t - 1000 };
-    first.el.classList.add("lock"); lock.classList.add("on");
+    var first = spawn(2, 0.3, 0);
+    [[0, 0.45], [1, -0.4], [3, -0.2]].forEach(function (s) { spawn(s[0], s[1] * chord(LANES[s[0]]), next); next = (next + 1) % RADAR.length; });
+    items.forEach(function (it) { it.state = "seen"; it.matAt = -1e9; tally.seen++; });
+    t = SPIN_MS * 0.8;
+    held = { it: first, at: t - 1200 };
+    first.state = "lock";
     reveal(first);
     draw();
 
@@ -783,7 +1110,7 @@
       radar.raf = requestAnimationFrame(frame);
     }
     function run(on) {
-      cancelAnimationFrame(radar.raf); radar.raf = 0; last = 0;
+      cancelAnimationFrame(radar.raf); radar.raf = 0; last = 0; moving = on;
       if (on) radar.raf = requestAnimationFrame(frame);
     }
     if (window.IntersectionObserver) {
