@@ -81,8 +81,8 @@ class Settings:
     public_url: str = "http://localhost:8100"  # where the site is reached; for the payment callback
     brand: str = "شکارچی"
     gateway: Gateway | None = None  # None: no online payment, an admin activates sellers
-    toman_per_usd: float = 234_500  # the free-market rate; plan prices and the calculator
-    plans: list[Plan] = field(default_factory=lambda: make_plans(234_500))
+    toman_per_usd: float = 255_000  # the free-market rate; plan prices and the calculator
+    plans: list[Plan] = field(default_factory=lambda: make_plans(255_000))
     economics: Economics = field(default_factory=Economics)  # what the plans cost us; their margin
     pricing: PricingConfig = field(default_factory=PricingConfig)
     per_product: int = 3  # sellers per product
@@ -115,7 +115,7 @@ class Settings:
             gateway = DemoGateway()
         elif env("ZARINPAL_MERCHANT_ID"):
             gateway = Zarinpal(env("ZARINPAL_MERCHANT_ID"), sandbox=env("ZARINPAL_SANDBOX") == "1")
-        toman_per_usd = float(env("HUNTER_TOMAN_PER_USD", "234500"))
+        toman_per_usd = float(env("HUNTER_TOMAN_PER_USD") or "255000")  # empty: the default
         economics = Economics.from_env()
         return cls(
             db_path=env("HUNTER_DB", cls.db_path),

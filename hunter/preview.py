@@ -101,15 +101,15 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
         "config": {
             "brand": "شکارچی",
             "online_payment": True,
-            "plans": [p.__dict__ for p in make_plans(234_500)],
-            "pricing_report": Economics().report(make_plans(234_500), 234_500),
+            "plans": [p.__dict__ for p in make_plans(255_000)],
+            "pricing_report": Economics().report(make_plans(255_000), 255_000),
             "categories": [
                 {"key": c.key, "fa": c.fa, "restricted": c.restricted, "note_fa": c.note_fa}
                 for c in CATEGORIES.values()
             ],
             "hunt": {"started_at": hunt["started_at"], "sample": True},
             "pricing": pricing_settings(pricing),
-            "toman_per_usd": 234_500,
+            "toman_per_usd": 255_000,
             "per_product": 3,
             "links": True,
             "links_per_request": 10,

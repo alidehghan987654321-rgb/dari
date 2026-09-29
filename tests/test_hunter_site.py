@@ -826,7 +826,7 @@ def test_https_sites_ask_for_https_only(settings):
 
 def test_calculator_settings_in_config(client, settings):
     cfg = client.get("/api/config").json()
-    assert cfg["toman_per_usd"] == settings.toman_per_usd == 234_500
+    assert cfg["toman_per_usd"] == settings.toman_per_usd == 255_000
     assert cfg["per_product"] == settings.per_product
 
 
@@ -847,7 +847,7 @@ def test_preview_carries_the_calculator(sample_hunt):
     page = build_preview(sample_hunt)
     assert "window.HunterCalc" in page or "root.HunterCalc" in page
     assert page.index("HunterCalc = api") < page.index("var Calc = window.HunterCalc")
-    assert '"toman_per_usd": 234500' in page
+    assert '"toman_per_usd": 255000' in page
 
 
 def test_admins_from_the_setting_and_granting_from_the_site(settings):

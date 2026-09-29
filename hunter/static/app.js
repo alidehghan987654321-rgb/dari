@@ -2395,7 +2395,7 @@
     return {
       title: "", price: 21, currency: "cny", units: 1, weight_kg: 0.35, dims: { l: null, w: null, h: null },
       temu_usd: 12.99, amazon_usd: 19.99, market: "prepaid", items_per_cart: p.items_per_cart, freight: "site", license: "new",
-      qty: p.min_starter_qty, monthly_sales: 40, toman_per_usd: state.config.toman_per_usd || 234500, cfg: {},
+      qty: p.min_starter_qty, monthly_sales: 40, toman_per_usd: state.config.toman_per_usd || 255000, cfg: {},
     };
   }
   function calcState() {
