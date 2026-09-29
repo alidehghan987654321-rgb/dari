@@ -44,7 +44,7 @@ class Plan:
 PLAN_TIERS = [
     {"id": "basic", "name_fa": "پایه", "days": 30, "price_usd": 6, "links": 30},
     {"id": "pro", "name_fa": "حرفه‌ای", "days": 30, "price_usd": 15, "links": 100},
-    {"id": "business", "name_fa": "تجاری", "days": 30, "price_usd": 40, "links": 300},
+    {"id": "business", "name_fa": "حرفه‌ای+", "days": 30, "price_usd": 40, "links": 300},
 ]
 
 

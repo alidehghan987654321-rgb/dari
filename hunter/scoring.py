@@ -156,7 +156,7 @@ def assess(
         pros.append(f"{offer.years} سال سابقه در 1688")
     elif offer.years is not None and offer.years < 2:
         supplier -= 2
-        cons.append("تأمین‌کننده‌ی تازه‌کار (کمتر از ۲ سال در 1688)")
+        cons.append("تأمین‌کننده‌ی تازه‌کار (کمتر از 2 سال در 1688)")
     if offer.repurchase_rate is not None and offer.repurchase_rate >= 0.3:
         pros.append(f"نرخ خرید مجدد از این تأمین‌کننده {offer.repurchase_rate:.0%}")
     elif offer.repurchase_rate is not None and offer.repurchase_rate < 0.15:

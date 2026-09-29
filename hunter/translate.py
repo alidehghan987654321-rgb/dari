@@ -20,14 +20,18 @@ BATCH = 25
 SYSTEM = (
     "You name e-commerce products in Persian for Iranian sellers who import from China. "
     "For each item, write a short, natural Persian product name (at most 8 words) that "
-    "says what the product is. Keep pack counts and sizes (for example «۲ عددی»), keep "
+    "says what the product is. Keep pack counts and sizes (for example «2 عددی»), write numbers with digits 0-9, keep "
     "brand names as they are, and drop marketing words. Answer for every id you are given."
 )
 SYSTEM_TEXTS = (
     "You translate short Chinese texts from 1688 wholesale product pages (titles, "
     "attribute values, variant names) into short, plain Persian for Iranian sellers. Keep "
-    "numbers, units and model codes as they are. Answer for every id you are given."
+    "numbers (digits 0-9), units and model codes as they are. Answer for every id you are given."
 )
+# The site writes every number with the digits 0-9; Persian or Arabic-Indic ones in an answer
+# are turned into those.
+LATIN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٪٫", "01234567890123456789%.")
+
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -124,7 +128,7 @@ class PersianNamer:
         text = next((b.text for b in response.content if b.type == "text"), "")
         items = json.loads(text).get("items", [])
         return {
-            x["id"]: x["fa"].strip()
+            x["id"]: x["fa"].strip().translate(LATIN_DIGITS)
             for x in items
             if isinstance(x, dict) and x.get("id") in chunk and str(x.get("fa", "")).strip()
         }

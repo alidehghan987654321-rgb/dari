@@ -607,7 +607,7 @@ def test_1688_offers_are_shown_on_our_site(link_settings, sample_hunt):
         v = c.get("/api/offer", params={"url": gap["offer"]["url"]}).json()
         assert v["offer"]["shop_name"] == gap["offer"]["shop_name"]
         assert ["جنس", "چرم مصنوعی (PU)"] in v["attributes_fa"]  # glossary, no Claude needed
-        assert "ارسال ظرف ۴۸ ساعت" in v["badges_fa"]
+        assert "ارسال ظرف 48 ساعت" in v["badges_fa"]
         assert v["level"]["key"] in ("gold", "silver", "bronze") and v["skus_fa"]
         alt = c.get("/api/offer", params={"url": gap["alternatives"][0]["url"]})
         assert alt.status_code == 200  # a backup supplier the site found is fine too

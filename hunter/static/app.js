@@ -30,7 +30,7 @@
   var HASH_MESSAGES = {
     paid: "پرداخت انجام شد و اشتراکت فعاله. 🎉",
     "pay-cancelled": "پرداخت لغو شد.",
-    "pay-failed": "پرداخت تأیید نشد. اگه پولی کم شده، ظرف ۷۲ ساعت برمی‌گرده.",
+    "pay-failed": "پرداخت تأیید نشد. اگه پولی کم شده، ظرف 72 ساعت برمی‌گرده.",
   };
   var VERDICT = { green: "شکار خوب", yellow: "با احتیاط", red: "نیار" };
   var TITLES = { dash: "میز کار", media: "عکس و ویدیو", hunt: "شکارهای امروز", picks: "شکارهای اختصاصی من", analyze: "تحلیل لینک", calc: "ماشین‌حساب واردات", account: "حساب من" };
@@ -49,12 +49,12 @@
   function cny(n) { return n == null ? "—" : "¥" + Number(n).toFixed(2); }
   function pct(n) { return n == null || isNaN(n) ? "—" : Math.round(n * 100) + "%"; }
   function signed(ratio) { var d = Math.round((ratio - 1) * 100); return (d > 0 ? "+" : "") + d + "%"; }
-  function ltr(x) { return "\u2066" + x + "\u2069"; }  // a figure inside Persian text, kept in order
+  function ltr(x) { return "\u200E" + x + "\u200E"; }  // a figure inside Persian text, kept in order (LRM: shows nowhere)
   function count(n) { return n == null ? "—" : Number(n).toLocaleString("en-US"); }
-  function toman(n) { return Number(n).toLocaleString("fa-IR"); }
+  function toman(n) { return Number(n).toLocaleString("en-US"); }  // one kind of digit everywhere: 0-9
   function round1000(n) { return Math.round(n / 1000) * 1000; }
   function faDate(iso) {
-    try { return new Date(iso).toLocaleDateString("fa-IR", { year: "numeric", month: "long", day: "numeric" }); }
+    try { return new Date(iso).toLocaleDateString("fa-IR-u-nu-latn", { year: "numeric", month: "long", day: "numeric" }); }
     catch (e) { return iso; }
   }
   function catName(key) {
@@ -77,10 +77,10 @@
   // Support and the project's manager (/api/config "support").
   function support() { return (state.config && state.config.support) || {}; }
   function phoneText(p) { var d = String(p || "").replace(/\D/g, ""); return d.length === 11 ? d.slice(0, 4) + " " + d.slice(4, 7) + " " + d.slice(7) : p; }
-  function supportLine() {
+  function supportLine(lead) {
     var s = support();
     if (!s.name && !s.phone && !s.email) return "";
-    return "پشتیبانی و مدیر پروژه: <b>" + esc(s.name) + "</b>" +
+    return (lead == null ? "سؤالی داری؟ " : lead) + "پشتیبانی و مدیر پروژه: <b>" + esc(s.name) + "</b>" +
       (s.phone ? ' · <a href="tel:' + esc(s.phone) + '" dir="ltr">' + esc(phoneText(s.phone)) + "</a>" : "") +
       (s.email ? ' · <a href="mailto:' + esc(s.email) + '" dir="ltr">' + esc(s.email) + "</a>" : "");
   }
@@ -164,7 +164,7 @@
     topbar(brand, loggedIn);
     sideFoot(loggedIn);
     $("foot").innerHTML = '<div class="foot-in"><span>© ' + esc(brand) +
-      " — ابزار فروشنده‌های راینومال؛ اعداد تخمینی‌اند و جای خرید نمونه رو نمی‌گیرن.</span>" +
+      "، همراه فروشنده‌های راینومال از 1688 تا فروش. عددها برآوردی‌اند؛ قبل از سفارش اصلی، نمونه بگیر.</span>" +
       '<span class="support">' + supportLine() + "</span></div>";
     var main = $("main");
     if (state.tab === "calc") renderCalc();
@@ -188,7 +188,7 @@
         '<nav class="guest-links" aria-label="بخش‌ها">' + link("home", "معرفی") + '<button type="button" data-go="demo">دمو</button>' +
           link("calc", "ماشین‌حساب") + '<button type="button" data-go="plans">تعرفه‌ها</button></nav>' +
         '<div class="topbar-end"><button type="button" class="nav-login" data-go="login">ورود</button>' +
-          '<button type="button" class="btn small" data-go="signup">شروع کن</button></div>';
+          '<button type="button" class="btn small" data-go="signup">رایگان شروع کن</button></div>';
       return;
     }
     var plan = currentPlan();
@@ -225,7 +225,7 @@
           (c.listing && c.listing.title && c.title_fa ? '<div class="card-sub">' + esc(c.listing.title) + "</div>" : "") +
           '<div class="card-cat"><span>' + esc(catName(c.category)) + '</span><span class="pill ' + c.verdict + '"><span class="dot"></span>' + VERDICT[c.verdict] + "</span>" +
             (c.is_new ? '<span class="pill new">جدید امروز</span>' : "") + "</div></div>" +
-        '<div class="score ' + c.verdict + '" title="امتیاز از ۱۰۰">' + c.score + "<small>امتیاز</small></div>" +
+        '<div class="score ' + c.verdict + '" title="امتیاز از 100">' + c.score + "<small>امتیاز</small></div>" +
       "</div>";
     if (c.locked) {
       return '<article class="card locked v-' + c.verdict + '">' + head +
@@ -271,7 +271,7 @@
   function costTable(p, packQty, weightKg) {
     var cfg = state.config.pricing || {}, share = Math.round((cfg.platform_pct || 0) * 100);
     var split = (cfg.platform_split || []).map(function (x) {
-      return '<tr class="sub"><td>' + (SPLIT_FA[x[0]] || x[0]) + " (" + toman(Math.round(x[1] * 100)) + "٪)</td><td>" + usd(p.price_usd * x[1]) + "</td></tr>";
+      return '<tr class="sub"><td>' + (SPLIT_FA[x[0]] || x[0]) + " (" + toman(Math.round(x[1] * 100)) + "%)</td><td>" + usd(p.price_usd * x[1]) + "</td></tr>";
     }).join("");
     var opt = function (label, v) { return v ? row(label, v) : ""; };
     return '<table class="costs"><tbody>' +
@@ -280,7 +280,7 @@
       row("حمل تا انبار دبی (" + Number(weightKg).toFixed(2) + " کیلو)", p.freight_usd) +
       opt("بسته‌بندی", p.packaging_usd) +
       '<tr class="total"><td>تمام‌شده تا انبار دبی</td><td>' + usd(p.landed_usd) + "</td></tr>" +
-      row("سهم راینومال (" + toman(share) + "٪ از قیمت فروش)", p.platform_fee_usd) + split +
+      row("سهم راینومال (" + toman(share) + "% از قیمت فروش)", p.platform_fee_usd) + split +
       opt("سهم ارسال به مشتری", p.last_mile_usd) +
       opt("درگاه پرداخت", p.gateway_usd) +
       opt("تبلیغات خودت", p.marketing_usd) +
@@ -349,7 +349,7 @@
       (alts ? '<details class="alts"><summary>' + toman(c.alternatives.length) + " تأمین‌کننده‌ی جایگزین</summary><ul>" + alts + "</ul></details>" : "") +
       '<details class="howto"><summary>چطور بخرم؟</summary><ol>' +
         "<li>«کپی لینک برای ایجنت» رو بزن و لینک رو برای ایجنت خریدت بفرست؛ اسم چینی محصول هم بالا هست تا اشتباه نشه.</li>" +
-        "<li>اول ۱ تا ۳ عدد نمونه بخر و جنس، اندازه و بسته‌بندی رو چک کن.</li>" +
+        "<li>اول 1 تا 3 عدد نمونه بخر و جنس، اندازه و بسته‌بندی رو چک کن.</li>" +
         "<li>برای سفارش اصلی (حداقل " + count(c.starter_qty) + " عدد) قیمت پلکانی رو از تأمین‌کننده بپرس و عکس محموله قبل از ارسال بخواه.</li>" +
         "<li>ارسال به انبار دبی و منشأ «ساخت چین» در اسناد.</li>" +
       "</ol></details>" +
@@ -457,7 +457,7 @@
   // One product through the whole pipeline, for the demo. The listing and supplier are
   // sample data; every price below them is worked out live by calc.js with the site's settings.
   var EXAMPLE = {
-    title_fa: "پرکننده‌ی شکاف صندلی خودرو، چرمی با جیب (۲ عددی)",
+    title_fa: "پرکننده‌ی شکاف صندلی خودرو، چرمی با جیب (2 عددی)",
     temu: { title: "2 Pack Car Seat Gap Filler, PU Leather Organizer with Storage Pocket", price: 11.99 },
     amazon: { price: 16.99, sold: 5000 },
     offer: {
@@ -466,7 +466,7 @@
     },
     units: 2, weight_kg: 0.4,
   };
-  var STEPS = ["پرفروش", "تأمین‌کننده", "هزینه‌ها", "قیمت و حکم"];
+  var STEPS = ["پیدا کن", "از منبع بخر", "هزینه‌ها", "قیمت و سود"];
   var FREIGHTS = [["sea", "دریایی"], ["site", "معمول"], ["air", "هوایی"]];
   var landing = { step: 0, timer: null, io: null, stopped: false, trial: null };
 
@@ -485,33 +485,37 @@
   function sharePct() { return Math.round(((state.config.pricing || {}).platform_pct || 0.2) * 100); }
 
   function landingHTML() {
-    var cfg = state.config || {}, ex = example(), share = sharePct();
+    var cfg = state.config || {}, pricing = cfg.pricing || {}, ex = example(), share = sharePct();
     var faq = [
-      ["داده‌ها از کجا میان؟", "قیمت و فروش Temu و آمازون از سرویس‌های داده‌ی بازار (Keepa و Apify) خونده میشه و تأمین‌کننده با جستجوی تصویری در 1688 پیدا میشه. هر محصول کنار لینکش نشون داده میشه تا خودت هم ببینی."],
-      ["سهم راینومال چقدره و چی رو پوشش می‌ده؟", toman(share) + "٪ از قیمت نهایی. ارسال به مشتری، بسته‌بندی نهایی، انبارداری در دبی، تبلیغات، تخفیف‌ها و حتی مرجوعی‌ها همه از همین سهمه. پس قیمت فروش همون فرمول قرارداده: (بهای تمام‌شده + سود تو) ÷ " + toman(1 - share / 100) + ". ماشین‌حساب هم دقیقاً همین رو حساب می‌کنه."],
-      ["امتیاز پنل هم در حساب‌وکتاب هست؟", "آره. در ماشین‌حساب مشخص می‌کنی امتیاز پنل (" + ltr(usd((cfg.pricing || {}).license_usd || 10000)) + " در " + toman((cfg.pricing || {}).license_installments || 10) + " قسط) رو می‌دی یا معافی؛ بعد می‌بینی چند ماه سود لازمه تا برگرده و سود خالص سال اولت چقدره."],
-      ["اعداد چقدر دقیقن؟", "هزینه‌ها با فرض‌های رایج حساب میشن (کرایه‌ی هر کیلو، ایجنت) و همه‌شون در ماشین‌حساب قابل تغییرن. قبل از سفارش اصلی حتماً نمونه بخر و نرخ حمل رو از پلتفرم واسطت بپرس."],
-      ["عکس و ویدیوی محصول رو از کجا بیارم؟", "از بخش «عکس و ویدیو». عکس‌ها و ویدیوهای هر محصول از 1688، Temu و آمازون از طریق سرور ما دانلود میشن (از داخل ایران هم باز میشه)، هم اصلی و هم نسخه‌ی مربعی آماده‌ی آگهی."],
-      ["چرا هر محصول فقط به چند فروشنده داده میشه؟", "اگه همه یه محصول رو بیارن، قیمت‌ها می‌شکنه. شکارهای اختصاصی بین فروشنده‌ها پخش میشن تا هر کس بازار خودش رو داشته باشه."],
-      ["پشتیبانی با کیه؟", supportLine()],
+      ["شکارچی برای کیه؟", "برای فروشنده‌های راینومال که از چین جنس میارن و می‌خوان قبل از خرید بدونن چی بیارن، از کجا بخرن و چقدر سود می‌کنن."],
+      ["چینی بلد نیستم؛ حساب 1688 لازمه؟", "نه. اطلاعات تأمین‌کننده همین‌جا به فارسیه. فقط لینک رو برای ایجنت خریدت بفرست."],
+      ["قیمت نهایی و سهم راینومال رو حساب می‌کنه؟", "بله، با فرمول خود قرارداد: (بهای تمام‌شده + سود تو) ÷ " + (1 - share / 100).toFixed(1) +
+        ". سهم " + share + "% راینومال ارسال، بسته‌بندی، انبار، تبلیغات و مرجوعی رو پوشش می‌ده؛ هزینه‌ی دیگه‌ای نداری."],
+      ["امتیاز پنل هم حساب میشه؟", "بله. ماشین‌حساب نشون می‌ده امتیاز پنل (" + ltr(usd(pricing.license_usd || 10000)) + " در " +
+        (pricing.license_installments || 10) + " قسط) چند ماهه از سودت برمی‌گرده. شریک قبلی راینومال هستی؟ معافی."],
+      ["عکس و ویدیوی محصول هم می‌گیرم؟", "بله. برای هر محصول، اصلی یا مربعی آماده‌ی آگهی؛ از داخل ایران هم دانلود میشه."],
+      ["داده‌ها از کجا میان؟", "از خود Temu، آمازون و 1688. کنار هر محصول لینکش هست تا با چشم خودت ببینی."],
+      ["عددها چقدر دقیقن؟", "برآوردی دقیق، نه قطعی. کرایه و هزینه‌ها رو در ماشین‌حساب با عدد خودت عوض کن و قبل از سفارش اصلی، نمونه بگیر."],
+      ["چرا هر محصول فقط به چند فروشنده می‌رسه؟", "تا قیمت‌ها نشکنه. هر محصول حداکثر به " + (cfg.per_product || 3) + " فروشنده داده میشه؛ بازار مال خودت می‌مونه."],
+      ["پشتیبانی با کیه؟", "با خود ما، مستقیم. " + supportLine("")],
     ];
     return '<div class="lp">' + demoBarHTML() +
       '<section class="lp-hero">' +
         "<div>" +
-          '<span class="lp-eyebrow" dir="ltr">1688 → DUBAI → RHINOMALL</span>' +
-          "<h1>محصول درست،<br><em>قیمت درست.</em></h1>" +
-          '<p class="lp-lead">شکارچی هر روز پرفروش‌های Temu و آمازون رو پیدا می‌کنه، همون جنس رو در 1688 نشونت می‌ده و قیمت فروشی پیشنهاد می‌کنه که هم از Temu ارزون‌تره هم با سهم راینومال برات سود داره.</p>' +
-          '<div class="lp-ctas"><button type="button" class="btn shine" data-go="signup">شروع رایگان' + ic("back") + "</button>" +
-            '<button type="button" class="btn ghost" data-go="demo">' + ic("play") + "دیدن دمو</button></div>" +
-          '<div class="lp-stats"><div><b>3</b><span>بازار زیر نظر</span></div><div><b>' + share + '%</b><span>سهم راینومال، همه‌چیز با خودش</span></div>' +
-            "<div><b>" + (cfg.per_product || 3) + "</b><span>فروشنده برای هر محصول</span></div></div>" +
+          '<span class="lp-eyebrow fa">مخصوص فروشنده‌های راینومال</span>' +
+          "<h1>چی بیاری، از کجا بخری،<br><em>چند بفروشی.</em></h1>" +
+          '<p class="lp-lead">پرفروش‌های هر روز Temu و آمازون، همون جنس در 1688، و قیمتی که از Temu ارزون‌تره. سهم راینومال از قبل کم شده؛ عددی که می‌بینی، سود خودته.</p>' +
+          '<div class="lp-ctas"><button type="button" class="btn shine" data-go="signup">رایگان شروع کن' + ic("back") + "</button>" +
+            '<button type="button" class="btn ghost" data-go="demo">' + ic("play") + "ببین چطور کار می‌کنه</button></div>" +
+          '<div class="lp-stats"><div><b>3</b><span>بازار، هر روز زیر نظر</span></div>' +
+            "<div><b>" + share + "%</b><span>سهم راینومال، با ارسال و انبار و تبلیغات</span></div>" +
+            "<div><b>" + (cfg.per_product || 3) + "</b><span>فروشنده برای هر محصول، نه بیشتر</span></div></div>" +
         "</div>" +
         scannerHTML(ex) +
       "</section>" +
       '<section class="lp-sec band" id="demo"><div class="lp-in">' +
-        head("DEMO", "یه محصول، از Temu تا <em>قیمت فروش تو.</em>",
-          "موتور شکار با هر محصول همین چهار کار رو می‌کنه. این یه نمونه‌ست و عددهاش همین الان با فرمول‌های سایت و قرارداد راینومال حساب شدن.") +
-        '<div class="lp-seg" role="tablist" aria-label="مرحله‌های دمو" id="demo-seg">' + STEPS.map(function (s, n) {
+        head("دموی زنده", "یه محصول، از Temu تا <em>سود تو.</em>", "ببین شکارچی در چهار قدم با یه محصول چی کار می‌کنه. عددها همین الان حساب میشن.") +
+        '<div class="lp-seg" role="tablist" aria-label="قدم‌های دمو" id="demo-seg">' + STEPS.map(function (s, n) {
           return '<button type="button" role="tab" data-step="' + n + '" aria-selected="' + (n === landing.step) + '"><span class="n">0' + (n + 1) + "</span>" + s + "</button>";
         }).join("") + "</div>" +
         '<div class="lp-stage glass bk" id="demo-stage" role="tabpanel">' + stepHTML(landing.step) + "</div>" +
@@ -519,31 +523,31 @@
       trialHTML() +
       toolsHTML() +
       '<section class="lp-sec band" id="plans"><div class="lp-in">' +
-        head("PLANS", "یه پلن برای هر اندازه.", "اشتراک ماهانه با کارت بانکی، از درگاه زرین‌پال. ماشین‌حساب همیشه رایگانه.") +
+        head("پلن‌ها", "با رایگان شروع کن، <em>هر وقت خواستی بزرگ‌تر شو.</em>", "پرداخت ماهانه با کارت بانکی، از درگاه زرین‌پال. قرارداد بلندمدت نداره.") +
         '<div class="plans">' + plansHTML(false) + "</div>" +
       "</div></section>" +
       '<section class="lp-sec" id="signup"><div class="lp-in lp-signup">' +
-        '<div>' + head("SIGN UP", "میز کارت <em>آماده‌ست.</em>", "یه حساب بساز؛ همون لحظه میز کار با همه‌ی ابزارها برات باز میشه.") +
+        '<div>' + head("ثبت‌نام", "یه دقیقه تا <em>اولین شکار.</em>", "ثبت‌نام رایگانه و کارت بانکی نمی‌خواد. همون لحظه میز کارت با همه‌ی ابزارها باز میشه.") +
           '<ul class="lp-checks">' + [
-            "میز کار با شکارهای امروز، ماشین‌حساب و تحلیل لینک",
-            "عکس و ویدیوی هر محصول، آماده‌ی دانلود برای آگهی",
-            "حساب‌وکتاب دقیق با سهم و قوانین قرارداد راینومال",
-            "پشتیبانی: " + esc((cfg.support || {}).name || ""),
+            "شکارهای امروز، ماشین‌حساب و تحلیل لینک، روی یه میز کار",
+            "عکس و ویدیوی آماده‌ی آگهی برای هر محصول",
+            "حساب‌وکتاب دقیق با قوانین قرارداد راینومال",
+            "هر سؤالی داشتی، پشتیبانی کنارته" + ((cfg.support || {}).name ? ": " + esc(cfg.support.name) : ""),
           ].map(function (t) { return "<li>" + ic("check") + "<span>" + t + "</span></li>"; }).join("") + "</ul></div>" +
         '<div class="glass bk auth" id="auth">' + authHTML() + "</div>" +
       "</div></section>" +
-      '<section class="lp-sec band" id="faq"><div class="lp-in lp-narrow">' + head("FAQ", "سؤال‌های رایج.", "") +
+      '<section class="lp-sec band" id="faq"><div class="lp-in lp-narrow">' + head("سؤال‌ها", "جواب کوتاه، <em>خیال راحت.</em>", "") +
         '<div class="lp-faq">' + faq.map(function (q) { return "<details><summary>" + q[0] + "</summary><p>" + q[1] + "</p></details>"; }).join("") + "</div>" +
       "</div></section>" +
     "</div>";
   }
   function head(eyebrow, title, sub) {
-    return '<div class="lp-head"><p class="lp-eyebrow" dir="ltr">' + eyebrow + '</p><h2 class="lp-title">' + title + "</h2>" +
+    return '<div class="lp-head"><p class="lp-eyebrow fa">' + eyebrow + '</p><h2 class="lp-title">' + title + "</h2>" +
       (sub ? '<p class="lp-sub">' + sub + "</p>" : "") + "</div>";
   }
   // In the demo there's no server: this jumps straight to what a seller sees after signing up.
   function demoBarHTML() {
-    return DEMO ? '<div class="lp-demo-bar"><span>نسخه‌ی نمایشی: برای دیدن صفحه‌ی بعد از ثبت‌نام، هر اسم و ایمیلی قبوله.</span>' +
+    return DEMO ? '<div class="lp-demo-bar"><span>نسخه‌ی نمایشی: هر اسم و ایمیلی قبوله.</span>' +
       '<button type="button" class="btn" data-demo-enter>ورود مستقیم به میز کار' + ic("back") + "</button></div>" : "";
   }
 
@@ -569,14 +573,14 @@
     var e = EXAMPLE, o = e.offer, r = example(), share = sharePct();
     var copy, visual;
     if (n === 0) {
-      copy = ["پیدا کردن پرفروش", "هر روز پرفروش‌های Temu و آمازون در دسته‌های مجاز بررسی میشن. این یکی در آمازون ماهی حدود " +
-        toman(e.amazon.sold) + " تا فروش داره و وزنش سبکه؛ یعنی حمل ارزون."];
+      copy = ["پرفروش رو پیدا کن", "هر روز پرفروش‌های Temu و آمازون بررسی میشن. این یکی ماهی حدود " +
+        toman(e.amazon.sold) + " فروش در آمازون داره و سبکه؛ یعنی حمل ارزون."];
       visual = '<div class="ex-box ex-listing"><div class="ex-img">' + ic("box") + '<span class="ex-badge">Temu</span></div><div>' +
         '<p class="ex-en" dir="ltr">' + esc(e.temu.title) + '</p><p class="ex-fa">' + esc(e.title_fa) + "</p>" +
         '<div class="ex-cells"><div><span>Temu</span><b>' + usd(e.temu.price) + "</b></div>" +
         "<div><span>آمازون</span><b>" + usd(e.amazon.price) + "</b><small>~" + count(e.amazon.sold) + " فروش در ماه</small></div></div></div></div>";
     } else if (n === 1) {
-      copy = ["همون جنس در 1688", "با جستجوی تصویری، همون محصول در 1688 پیدا میشه: تأمین‌کننده، سابقه، امتیاز و قیمت پلکانی. به فارسی و بدون نیاز به حساب 1688."];
+      copy = ["همون جنس، از منبع", "با جستجوی تصویری، همین محصول در 1688 پیدا میشه: تأمین‌کننده، سابقه، امتیاز و قیمت پلکانی؛ همه به فارسی."];
       var facts = ["کارخانه", o.location, toman(o.years) + " سال در 1688", "امتیاز " + o.rating, "خرید مجدد " + pct(o.repurchase), "حداقل سفارش " + toman(o.moq)];
       visual = '<div class="ex-box"><div class="ex-shop">' + ic("factory") + "<span>" + esc(o.shop) + "</span></div>" +
         '<p class="ex-zh" lang="zh">' + esc(o.title) + "</p>" +
@@ -585,11 +589,11 @@
           return "<div><span>از " + toman(t[0]) + " عدد</span><b>¥" + t[1].toFixed(2) + "</b></div>";
         }).join("") + "</div></div>";
     } else if (n === 2) {
-      copy = ["همه‌ی هزینه‌ها", r ? "تو فقط هزینه‌ی رسوندن جنس تا انبار دبی رو می‌دی؛ ارسال به مشتری، بسته‌بندی، انبار و تبلیغات از سهم " +
-        toman(share) + "٪ راینومال پرداخت میشه. این محصول تا انبار دبی " + ltr(usd(r.landed_usd)) + " تموم میشه." : ERRORS.unprofitable_settings];
+      copy = ["همه‌ی هزینه‌ها، شفاف", r ? "تو فقط تا انبار دبی خرج می‌کنی. ارسال، بسته‌بندی، انبار و تبلیغات از سهم " +
+        share + "% راینومال پرداخت میشه. این محصول تا دبی " + ltr(usd(r.landed_usd)) + " تموم میشه." : ERRORS.unprofitable_settings];
       var rows = r ? [
         ["خرید از کارخونه (" + toman(e.units) + " عدد)", r.factory_usd], ["ایجنت و حمل داخل چین", r.china_side_usd],
-        ["حمل تا انبار دبی", r.freight_usd], ["سهم راینومال (" + toman(share) + "٪ از قیمت)", r.platform_fee_usd, "share"],
+        ["حمل تا انبار دبی", r.freight_usd], ["سهم راینومال (" + toman(share) + "% از قیمت)", r.platform_fee_usd, "share"],
       ] : [];
       if (r && r.packaging_usd) rows.splice(3, 0, ["بسته‌بندی", r.packaging_usd]);
       var max = Math.max.apply(null, rows.map(function (x) { return x[1]; }).concat([0.01]));
@@ -597,7 +601,7 @@
         return '<div class="ex-row"><span>' + x[0] + '</span><i><s class="' + (x[2] || "") + '" style="width:' + Math.max(2, Math.round(x[1] / max * 100)) + '%"></s></i><b>' + usd(x[1]) + "</b></div>";
       }).join("") + (r ? '<div class="ex-row total"><span>تمام‌شده تا انبار دبی</span><b>' + usd(r.landed_usd) + "</b></div>" : "") + "</div>";
     } else {
-      copy = ["قیمت و حکم", "قیمتی کمی زیر Temu که بعد از سهم راینومال هنوز سود تو بمونه، با حکم سبز، زرد یا قرمز و دلیل‌هاش؛ برای همه‌ی شکارهای هر روز."];
+      copy = ["قیمت آماده، سود روشن", "قیمتی کمی زیر Temu که بعد از سهم راینومال هم سودت رو نگه می‌داره؛ با حکم سبز، زرد یا قرمز و دلیلش."];
       visual = r ? '<div class="ex-box ex-verdict"><span class="pill ' + r.verdict + '"><span class="dot"></span>' + VERDICT[r.verdict] + "</span>" +
         '<div class="ex-big">' + usd(r.price_usd) + "</div><p>قیمت فروش پیشنهادی در راینومال</p>" +
         '<div class="ex-cells"><div><span>Temu</span><b>' + usd(e.temu.price) + "</b><small>" + ltr(signed(r.vs_benchmark)) + "</small></div>" +
@@ -606,7 +610,7 @@
     }
     return '<div class="ex-copy"><span class="ex-n" dir="ltr">STEP 0' + (n + 1) + " / 0" + STEPS.length + "</span><h3>" + copy[0] + "</h3><p>" + copy[1] + "</p>" +
       (n === STEPS.length - 1
-        ? '<button type="button" class="btn" data-go="signup">شکارهای امروز رو ببین' + ic("back") + "</button>"
+        ? '<button type="button" class="btn" data-go="signup">شکارهای امروزت رو ببین' + ic("back") + "</button>"
         : '<button type="button" class="lp-link" data-step-next>مرحله‌ی بعد' + ic("chev") + "</button>") +
       '</div><div class="ex-vis">' + visual + "</div>";
   }
@@ -627,7 +631,7 @@
   function trialHTML() {
     var t = trial();
     return '<section class="lp-sec" id="try"><div class="lp-in">' +
-      head("LIVE CALCULATOR", "عددهای خودت رو <em>امتحان کن.</em>", "قیمت 1688، وزن و قیمت Temu رو تغییر بده؛ قیمت فروش، سهم راینومال، سود و حکم همون لحظه حساب میشه.") +
+      head("ماشین‌حساب زنده", "قبل از خرید، <em>سودت رو ببین.</em>", "سه عدد رو تغییر بده؛ قیمت فروش و سودت همون لحظه حساب میشه.") +
       '<div class="lp-try"><div class="glass bk lp-controls">' +
         TRIAL.map(function (s) {
           return '<div class="lp-slider"><div class="row"><label for="t-' + s[0] + '">' + s[1] + '</label><output id="o-' + s[0] + '" dir="ltr">' + s[5](t[s[0]]) + "</output></div>" +
@@ -658,42 +662,49 @@
       '<ul class="tr-legend">' + parts.map(function (p) {
         return '<li><span class="sw c' + partIndex(p.key) + '"></span><span>' + partName(p.key) + '</span><b dir="ltr">' + usd(p.value) + "</b></li>";
       }).join("") + "</ul>" +
-      '<button type="button" class="btn ghost" data-open-calc>باز کردن در ماشین‌حساب کامل' + ic("calc") + "</button>";
+      '<button type="button" class="btn ghost" data-open-calc>حساب‌وکتاب کامل در ماشین‌حساب' + ic("calc") + "</button>";
   }
 
+  // What each tool does for the seller: the feature's name, then the benefit.
   var TOOL_LIST = [
-    ["hunt", "hunt", "شکار روزانه", "هر روز محصول‌های تازه با حکم سبز، زرد یا قرمز و برچسب «جدید امروز».", false],
-    ["picks", "picks", "شکار اختصاصی", "بر اساس دسته‌ها و بودجه‌ات؛ هر محصول فقط برای چند فروشنده.", true],
-    ["analyze", "analyze", "تحلیل لینک", "لینک Temu یا آمازون بده؛ تأمین‌کننده، هزینه‌ها و قیمت آماده میشه.", true],
-    ["media", "media", "عکس و ویدیوی محصول", "عکس‌ها و ویدیوهای هر محصول از 1688، Temu و آمازون؛ اصلی و مربعی آماده‌ی آگهی.", true],
-    ["calc", "calc", "ماشین‌حساب واردات", "قیمت با فرمول قرارداد راینومال، امتیاز پنل، و برنامه‌ی اولین محموله به تومان.", false],
-    ["account", "factory", "1688 به فارسی", "عکس، مشخصات، مدل‌ها و قیمت پلکانی تأمین‌کننده؛ بدون نیاز به حساب 1688.", true],
+    ["hunt", "شکار روزانه", "هر صبح، پرفروش‌های تازه", "دیگه لازم نیست ساعت‌ها بگردی؛ هر روز فهرست تازه با حکم سبز، زرد یا قرمز منتظرته."],
+    ["analyze", "تحلیل لینک", "هر لینکی، یه جواب روشن", "لینک Temu یا آمازون رو بده؛ تأمین‌کننده، هزینه‌ها و قیمت فروش رو تحویل بگیر."],
+    ["media", "عکس و ویدیو", "آگهی آماده، بی‌دردسر", "عکس و ویدیوی هر محصول، اصلی یا مربعی آماده‌ی آگهی؛ از داخل ایران هم دانلود میشه."],
+    ["calc", "ماشین‌حساب واردات", "سود خالص، قبل از خرید", "با فرمول قرارداد راینومال ببین چقدر برات می‌مونه و پولت کی برمی‌گرده."],
+    ["world", "1688 به فارسی", "1688، بدون چینی و بدون حساب", "عکس، مشخصات، مدل‌ها و قیمت پلکانی تأمین‌کننده، همه به فارسی."],
+    ["factory", "بدون واسطه‌گر", "کارخونه، نه دلال", "تأمین‌کننده‌ها با سابقه و امتیاز رتبه می‌گیرن و کارخونه‌ها جلوترن؛ از منبع بخر."],
   ];
   function toolsHTML() {
     return '<section class="lp-sec" id="tools"><div class="lp-in">' +
-      head("TOOLS", "همه‌ی ابزارها، <em>یه میز کار.</em>", "بعد از ثبت‌نام همه‌ی این‌ها روی میز کارت منتظرن.") +
+      head("ابزارها", "هر چی برای فروش لازم داری، <em>یه جا.</em>", "بعد از ثبت‌نام، همه روی میز کارت منتظرن.") +
       '<div class="lp-tools">' + TOOL_LIST.map(function (t) {
         return '<article class="glass bk tool-card">' + (t[0] === "media" ? '<span class="new">جدید</span>' : "") +
-          '<span class="ib">' + ic(t[1]) + "</span><h3>" + t[2] + "</h3><p>" + t[3] + "</p></article>";
+          '<span class="ib">' + ic(t[0]) + '</span><span class="kind">' + t[1] + "</span><h3>" + t[2] + "</h3><p>" + t[3] + "</p></article>";
       }).join("") + "</div></div></section>";
   }
 
+  // Who each plan is for; the names and prices come from the server.
+  var PLAN_FOR = { basic: "برای شروع کار", pro: "برای فروشنده‌ی جدی", business: "برای فروش پرحجم" };
   function plansHTML(buying) {
     var cfg = state.config, current = currentPlan();
-    return (cfg.plans || []).map(function (p, n) {
-      var mine = current && current.id === p.id;
+    var tick = function (t) { return "<li>" + ic("check") + "<span>" + t + "</span></li>"; };
+    // Signing up is free: the calculator, the workspace and a taste of the day's hunt.
+    var free = buying ? "" : '<div class="plan">' +
+      '<div class="label">رایگان</div><div class="for">برای آشنایی</div>' +
+      '<div class="price">0 <small>تومان</small></div>' +
+      "<ul>" + tick("ماشین‌حساب کامل با قوانین قرارداد") + tick("میز کار و دموی زنده") + tick("نمونه‌ی شکارهای امروز") + "</ul>" +
+      '<button type="button" class="btn ghost block" data-go="signup">رایگان شروع کن' + ic("back") + "</button></div>";
+    return free + (cfg.plans || []).map(function (p, n) {
+      var mine = current && current.id === p.id, best = !buying && n === 1;
       var button = buying
         ? '<button type="button" class="btn block" data-plan="' + esc(p.id) + '"' + (cfg.online_payment ? "" : " disabled") + ">" + (mine ? "تمدید" : "خرید") + " با درگاه" + ic("coin") + "</button>"
-        : '<button type="button" class="btn ' + (n === 1 ? "" : "ghost ") + 'block" data-go="signup">انتخاب' + ic("back") + "</button>";
-      return '<div class="plan' + (mine ? " current" : !buying && n === 1 ? " best" : "") + '">' +
-        '<div class="label">' + esc(p.name_fa) + (mine ? ' <span class="pill blue">پلن فعلی</span>' : !buying && n === 1 ? ' <span class="pill blue">پیشنهاد ما</span>' : "") + "</div>" +
+        : '<button type="button" class="btn ' + (best ? "" : "ghost ") + 'block" data-go="signup">همین رو می‌خوام' + ic("back") + "</button>";
+      return '<div class="plan' + (mine ? " current" : best ? " best" : "") + '">' +
+        '<div class="label">' + esc(p.name_fa) + (mine ? ' <span class="pill blue">پلن فعلی</span>' : best ? ' <span class="pill blue">پیشنهاد ما</span>' : "") + "</div>" +
+        (PLAN_FOR[p.id] ? '<div class="for">' + PLAN_FOR[p.id] + "</div>" : "") +
         '<div class="price">' + toman(p.price_toman) + " <small>تومان در ماه</small></div>" +
-        "<ul>" +
-          "<li>" + ic("check") + "<span>" + toman(p.links) + " تحلیل لینک در ماه</span></li>" +
-          "<li>" + ic("check") + "<span>شکار روزانه و شکارهای اختصاصی</span></li>" +
-          "<li>" + ic("check") + "<span>عکس و ویدیوی محصول‌ها برای دانلود</span></li>" +
-          "<li>" + ic("check") + "<span>ماشین‌حساب با قوانین قرارداد راینومال</span></li>" +
-        "</ul>" + button + "</div>";
+        "<ul>" + tick(toman(p.links) + " تحلیل لینک در ماه") + tick("شکار روزانه و شکارهای اختصاصی") +
+          tick("عکس و ویدیوی آماده‌ی آگهی") + tick("تأمین‌کننده‌ی 1688 به فارسی") + "</ul>" + button + "</div>";
     }).join("");
   }
 
@@ -704,10 +715,10 @@
       '<form id="auth-form" novalidate>' +
         (signup ? field("name", "نام و نام خانوادگی", "text", "name") + field("phone", "موبایل (برای رسید پرداخت)", "tel", "tel") : "") +
         field("email", "ایمیل", "email", "email") +
-        field("password", "رمز عبور" + (signup ? " (حداقل ۸ حرف)" : ""), "password", signup ? "new-password" : "current-password") +
+        field("password", "رمز عبور" + (signup ? " (حداقل 8 حرف)" : ""), "password", signup ? "new-password" : "current-password") +
         (DEMO ? '<p class="hint" style="margin:0">نسخه‌ی نمایشی: هر اسم، ایمیل و رمزی قبوله.</p>' : "") +
         '<div class="error" id="auth-error"></div>' +
-        '<button class="btn block" type="submit">' + (signup ? "ساخت حساب و رفتن به میز کار" : "ورود به میز کار") + ic("back") + "</button>" +
+        '<button class="btn block" type="submit">' + (signup ? "ساخت حساب رایگان" : "ورود به میز کار") + ic("back") + "</button>" +
       "</form>";
   }
   function field(id, label, type, ac) {
@@ -739,7 +750,7 @@
         state.me = me; state.tab = "dash";
         return loadHunt();
       }).then(function () { render(); window.scrollTo(0, 0); toast(welcome); }, function (e) {
-        $("auth-error").textContent = e.code === "invalid" ? "همه‌ی خونه‌ها رو درست پر کن (رمز حداقل ۸ حرف)." : errText(e);
+        $("auth-error").textContent = e.code === "invalid" ? "همه‌ی خونه‌ها رو درست پر کن (رمز حداقل 8 حرف)." : errText(e);
       });
     };
   }
@@ -940,7 +951,7 @@
     main.innerHTML =
       '<div class="page-head"><div><span class="eyebrow">برای آگهی‌ت در راینومال</span><h1 class="section-title">عکس و ویدیوی محصول‌ها</h1>' +
       '<p class="section-sub" style="margin:0">عکس‌ها و ویدیوهای هر محصول از 1688، Temu و آمازون، از طریق سرور ما (از داخل ایران هم دانلود میشه). هر عکس رو اصلی بگیر یا مربعی سفید ' + ltr("1200×1200") + " که فروشگاه‌ها می‌خوان.</p></div></div>" +
-      '<div class="notice info"><b>قرارداد راینومال:</b> فقط عکسی رو در آگهی بذار که واقعاً همون کالای انبارت رو نشون بده؛ اطلاعات غلط درباره‌ی محصول تخلفه (بند ۱۱-۲). هر ماه یه بار هم می‌تونی از راینومال عکس واضح کالای خودت در انبار رو بخوای (بند ۳-۴).</div>' +
+      '<div class="notice info"><b>قرارداد راینومال:</b> فقط عکسی رو در آگهی بذار که واقعاً همون کالای انبارت رو نشون بده؛ اطلاعات غلط درباره‌ی محصول تخلفه (بند 11-2). هر ماه یه بار هم می‌تونی از راینومال عکس واضح کالای خودت در انبار رو بخوای (بند 3-4).</div>' +
       (list.length
         ? '<div class="media"><nav class="glass bk media-list" aria-label="محصول‌ها">' + list.map(function (c) {
             return '<button type="button" data-mid="' + esc(c.id) + '" aria-current="' + (c.id === state.mediaId) + '"><span class="sq">' + esc((c.title_fa || "?").trim().charAt(0)) + '</span><span class="t">' +
@@ -1273,7 +1284,7 @@
       '<div class="stack">' +
       '<section class="panel"><h2 class="section-title">اشتراک</h2><p class="section-sub">' + status + "</p>" +
         '<div class="plans">' + plansHTML(true) + "</div>" +
-        (cfg.online_payment ? "" : '<p class="hint">پرداخت آنلاین هنوز فعال نشده؛ بعد از کارت‌به‌کارت، پشتیبانی اشتراکت رو فعال می‌کنه: ' + supportLine() + "</p>") +
+        (cfg.online_payment ? "" : '<p class="hint">پرداخت آنلاین هنوز فعال نشده؛ بعد از کارت‌به‌کارت، پشتیبانی اشتراکت رو فعال می‌کنه. ' + supportLine("") + "</p>") +
         '<div class="error" id="pay-error"></div></section>' +
       '<form class="panel" id="profile-form"><h2 class="section-title">مشخصات و علاقه‌مندی</h2>' +
         '<p class="section-sub">شکارهای اختصاصی از روی این دسته‌ها و بودجه‌ات انتخاب میشن. هیچ دسته‌ای نزنی یعنی همه.</p>' +
@@ -1348,7 +1359,7 @@
   function partIndex(key) { return PARTS.findIndex(function (x) { return x[0] === key; }) + 1; }
   function partName(key) {
     var n = PARTS.find(function (x) { return x[0] === key; })[1];
-    return key === "fee" ? n + " (" + toman(sharePct()) + "٪)" : n;
+    return key === "fee" ? n + " (" + toman(sharePct()) + "%)" : n;
   }
   // Parts with nothing in them (the contract has no gateway, ads or returns cut) aren't shown.
   function visibleParts(parts) { return parts.filter(function (p) { return p.key === "profit" || Math.abs(p.value) >= 0.005; }); }
@@ -1359,9 +1370,9 @@
     ["packaging_usd", "بسته‌بندی هر عدد، دلار", "$"], ["cny_per_usd", "یوان در هر دلار", ""],
   ];
   var FREIGHT_NOTE = {
-    sea: "دریایی: ارزون ولی کند، حدود ۳ تا ۶ هفته",
+    sea: "دریایی: ارزون ولی کند، حدود 3 تا 6 هفته",
     site: "نرخ پیش‌فرض سایت (ترکیب رایج)",
-    air: "هوایی: سریع ولی گرون، حدود ۱ هفته",
+    air: "هوایی: سریع ولی گرون، حدود 1 هفته",
     custom: "نرخی که خودت وارد کردی",
   };
 
@@ -1428,9 +1439,9 @@
       '<button type="button" class="btn ghost small" id="calc-reset">شروع از اول' + ic("reset") + "</button></div>" +
       '<div class="calc">' + calcFormHTML(cs.input) + '<div class="calc-out" id="calc-out"></div></div>' +
       (state.me ? "" :
-        '<section class="panel guest-cta" style="margin-top:20px"><div><h2 class="section-title">محصول‌هایی که این حساب‌وکتاب رو پاس می‌کنن، هر روز آماده</h2>' +
+        '<section class="panel guest-cta" style="margin-top:20px"><div><h2 class="section-title">هر روز محصول‌هایی که این حساب‌وکتاب رو پاس می‌کنن، آماده‌ی تو</h2>' +
         '<p class="section-sub" style="margin:0">موتور شکار هر روز پرفروش‌های Temu و آمازون رو با همین فرمول‌ها حساب می‌کنه و سبزها رو با تأمین‌کننده‌ی 1688 تحویلت می‌ده.</p></div>' +
-        '<button type="button" class="btn" data-go="signup">ساخت حساب' + ic("back") + "</button></section>");
+        '<button type="button" class="btn" data-go="signup">رایگان شروع کن' + ic("back") + "</button></section>");
     bindCalc();
     calcUpdate();
   }
@@ -1468,7 +1479,7 @@
         '<div class="two">' + nf("temu_usd", "قیمت Temu، دلار", i.temu_usd, 0.01) + nf("amazon_usd", "قیمت آمازون، دلار", i.amazon_usd, 0.01) + "</div>" +
         '<div class="field"><span class="label">امتیاز پنل راینومال (' + ltr(usd(state.config.pricing.license_usd || 0)) + ")</span>" +
           seg("license", [["new", "پرداخت می‌کنم"], ["exempt", "معافم (شریک قبلی)"]]) +
-          '<span class="hint">در ' + toman(state.config.pricing.license_installments || 10) + " قسط از درآمد؛ شرکای قبلی معافن (بند ۴ قرارداد).</span></div>" +
+          '<span class="hint">در ' + toman(state.config.pricing.license_installments || 10) + " قسط از درآمد؛ شرکای قبلی معافن (بند 4 قرارداد).</span></div>" +
         nf("items_per_cart", "چند قلم در هر سفارش مشتری", i.items_per_cart, 1, '<span class="hint">هزینه‌ی ارسال بین اقلام یه سفارش تقسیم میشه</span>')) +
       group(3, "truck", "حمل تا انبار دبی",
         seg("freight", [["sea", "دریایی", "ship"], ["site", "ترکیبی", "truck"], ["air", "هوایی", "plane"]]) +
@@ -1534,7 +1545,7 @@
     var w = res && res.weight;
     $("calc-vol").textContent = w && w.volumetric > 0
       ? "وزن حجمی " + ltr(w.volumetric.toFixed(2)) + " کیلو؛ " + (w.volumetric > w.actual ? "از وزن واقعی بیشتره، پس کرایه روی وزن حجمی حساب میشه." : "کمتر از وزن واقعیه، کرایه روی وزن واقعی حساب میشه.")
-      : "طول × عرض × ارتفاع ÷ ۶۰۰۰. اگه از وزن واقعی بیشتر باشه، کرایه روی اون حساب میشه.";
+      : "طول × عرض × ارتفاع ÷ 6000. اگه از وزن واقعی بیشتر باشه، کرایه روی اون حساب میشه.";
   }
 
   function calcUpdate() {
@@ -1822,7 +1833,7 @@
       out.push('<text class="fa" x="' + cx + '" y="' + (T - 10) + '" text-anchor="' + (cx > W - 70 ? "end" : "middle") + '">برگشت پول</text>');
     }
     box.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="وضعیت نقدی اولین محموله در پایان هر ماه">' + out.join("") + "</svg>" +
-      '<div class="chart-note">' + ic("info") + "<span>هر ستون: وضعیت پولت در پایان هر ماه (ماه‌ها به فارسی). زیر صفر یعنی هنوز سرمایه‌ات کامل برنگشته" + (Math.ceil(qty / monthly) > 12 ? "؛ فقط ۱۲ ماه اول نشون داده شده" : "") + ".</span></div>";
+      '<div class="chart-note">' + ic("info") + "<span>هر ستون: وضعیت پولت در پایان هر ماه. زیر صفر یعنی هنوز سرمایه‌ات کامل برنگشته" + (Math.ceil(qty / monthly) > 12 ? "؛ فقط 12 ماه اول نشون داده شده" : "") + ".</span></div>";
     each(box, "path[data-m]", function (p) {
       p.addEventListener("pointerenter", function () {
         var m = Number(p.dataset.m), r = box.querySelector("svg").getBoundingClientRect(), k = r.width / W, bb = p.getBBox();
@@ -1893,9 +1904,9 @@
         tile("سود خالص سال اول", s.first_year_usd != null ? usd(s.first_year_usd) : "—",
           s.first_year_usd != null ? tm(s.first_year_toman) + (s.license_usd ? " (بعد از امتیاز پنل)" : "") : "فروش ماهانه رو وارد کن") +
       "</div>" +
-      (s.over_shelf ? '<div class="notice" style="margin:12px 0 0"><b>بیش از ' + toman(s.shelf_months) + " ماه در انبار:</b> طبق بند ۱۱-۵ قرارداد، کالایی که به‌خاطر کم‌کاری فروشنده بیش از " +
-        toman(s.shelf_months) + " ماه در انبار راینومال بمونه باید ظرف ۳۰ روز خارج بشه. با " + toman(monthly) + " فروش در ماه، حداکثر " + toman(s.max_qty_on_shelf) + " عدد بفرست.</div>" : "") +
-      '<p class="hint" style="margin:10px 0 0">تسویه‌ی راینومال هفتگیه: درخواست برداشت تا شنبه، حسابرسی یکشنبه، واریز ریالی دوشنبه (بند ۸ قرارداد).</p>' +
+      (s.over_shelf ? '<div class="notice" style="margin:12px 0 0"><b>بیش از ' + toman(s.shelf_months) + " ماه در انبار:</b> طبق بند 11-5 قرارداد، کالایی که به‌خاطر کم‌کاری فروشنده بیش از " +
+        toman(s.shelf_months) + " ماه در انبار راینومال بمونه باید ظرف 30 روز خارج بشه. با " + toman(monthly) + " فروش در ماه، حداکثر " + toman(s.max_qty_on_shelf) + " عدد بفرست.</div>" : "") +
+      '<p class="hint" style="margin:10px 0 0">تسویه‌ی راینومال هفتگیه: درخواست برداشت تا شنبه، حسابرسی یکشنبه، واریز ریالی دوشنبه (بند 8 قرارداد).</p>' +
       '<div class="chart" id="calc-cash"></div>';
   }
 
@@ -1945,10 +1956,10 @@
           return c.now ? '<td><span class="pill ' + c.now.verdict + '"><span class="dot"></span>' + VERDICT[c.now.verdict] + "</span></td>" : "<td>—</td>";
         }).join("") + "</tr></tbody></table></div>";
     }
-    box.innerHTML = cardHead("مقایسه‌ی حالت‌ها", "table", "تا ۴ حالت رو کنار هم ببین؛ فقط در همین مرورگر ذخیره میشه.", actions) + body;
+    box.innerHTML = cardHead("مقایسه‌ی حالت‌ها", "table", "تا 4 حالت رو کنار هم ببین؛ فقط در همین مرورگر ذخیره میشه.", actions) + body;
     $("calc-save").onclick = function () {
       var cs = state.calc, all = memo().scenarios || [];
-      if (all.length >= 4) { toast("حداکثر ۴ حالت؛ اول یکی رو پاک کن."); return; }
+      if (all.length >= 4) { toast("حداکثر 4 حالت؛ اول یکی رو پاک کن."); return; }
       all.push({ name: cs.input.title || "حالت " + toman(all.length + 1), input: clone(cs.input), custom: cs.custom });
       memoSet({ scenarios: all });
       renderScenarios();
@@ -1994,7 +2005,7 @@
     ];
     if (s.cash_back_months != null) lines.push("برگشت کامل سرمایه: حدود " + toman(s.cash_back_months) + " ماه");
     if (s.license_months != null) lines.push("امتیاز پنل راینومال از سود: حدود " + toman(s.license_months) + " ماه");
-    if (s.over_shelf) lines.push("⚠️ فروش کل محموله بیش از " + toman(s.shelf_months) + " ماه طول می‌کشه (بند ۱۱-۵ قرارداد)");
+    if (s.over_shelf) lines.push("⚠️ فروش کل محموله بیش از " + toman(s.shelf_months) + " ماه طول می‌کشه (بند 11-5 قرارداد)");
     lines.push("وضعیت: " + VERDICT[now.verdict] + " " + mark);
     if (!DEMO) lines.push((state.config.brand || "شکارچی") + " · " + location.origin + "/#calc");
     return lines.join("\n");

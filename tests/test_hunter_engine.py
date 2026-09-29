@@ -639,6 +639,12 @@ def test_persian_names_in_batches_with_json_output():
     assert params["output_config"]["format"]["type"] == "json_schema"
 
 
+def test_names_use_the_sites_digits():
+    answer = json.dumps({"items": [{"id": "a", "fa": "درپوش سیلیکونی (۱۲ عددی) ٪۵"}]})
+    names = PersianNamer(FakeClaude(text=answer), "claude-opus-5").translate({"a": "x"})
+    assert names == {"a": "درپوش سیلیکونی (12 عددی) %5"}
+
+
 def test_a_cheaper_model_skips_effort_and_fallback():
     claude = FakeClaude()
     PersianNamer(claude, "claude-haiku-4-5").translate({"temu:1": "Lamp"})
