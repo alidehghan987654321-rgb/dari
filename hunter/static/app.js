@@ -149,6 +149,7 @@
   function render() {
     stopDemo();
     stopRadar();
+    stopWorld();
     var loggedIn = !!state.me;
     if (!loggedIn && !PUBLIC[state.tab]) state.tab = "home";
     if (loggedIn && state.tab === "home") state.tab = "dash";
@@ -500,7 +501,7 @@
       ["چرا هر محصول فقط به چند فروشنده می‌رسه؟", "تا قیمت‌ها نشکنه. هر محصول حداکثر به " + (cfg.per_product || 3) + " فروشنده داده میشه؛ بازار مال خودت می‌مونه."],
       ["پشتیبانی با کیه؟", "با خود ما، مستقیم. " + supportLine("")],
     ];
-    return '<div class="lp">' + demoBarHTML() +
+    return '<div class="lp">' + worldHTML() + demoBarHTML() +
       '<section class="lp-hero">' +
         "<div>" +
           '<span class="lp-eyebrow fa">مخصوص فروشنده‌های راینومال</span>' +
@@ -603,7 +604,13 @@
         '<span class="rd-src" dir="ltr">TEMU · AMAZON · 1688</span>' +
         '<span class="rd-tally"><span>بررسی <b id="rd-seen">0</b></span><span class="g">شکار <b id="rd-hit">0</b></span>' +
         '<span class="r">رد <b id="rd-miss">0</b></span></span></div>' +
-      '<div class="rd-stage" id="rd-stage" aria-hidden="true"><canvas></canvas><div class="rd-labels" id="rd-labels"></div></div>' +
+      '<div class="rd-stage" id="rd-stage" aria-hidden="true"><canvas></canvas><div class="rd-labels" id="rd-labels"></div>' +
+        '<div class="rd-hud tr"><span class="live"><i></i>اسکن زنده</span><bdi id="rd-az">AZ 000°</bdi></div>' +
+        '<div class="rd-hud tl"><small>آخرین تصمیم‌ها</small><ol id="rd-log"></ol></div>' +
+        '<div class="rd-hud bl"><small>نرخ شکار</small><b id="rd-rate">—</b><i class="meter"><s id="rd-rate-bar"></s></i></div>' +
+        '<div class="rd-hud br"><span><i class="k w"></i>اسکن‌نشده</span><span><i class="k y"></i>در بررسی</span>' +
+          '<span><i class="k g"></i>شکار</span><span><i class="k r"></i>رد</span></div>' +
+      "</div>" +
       '<div class="rd-card" id="rd-card">' + radarCardHTML(radarEval(RADAR[0]), false) + "</div>" +
     "</div>";
   }
@@ -647,6 +654,17 @@
   var TILT = 57 * Math.PI / 180, SPIN_MS = 3600, LANES = [-0.66, -0.38, 0.3, 0.6];  // clear of the logo in the middle
   var BOX = 0.12, PYLON = 0.48, THICK = 0.07, TAU = Math.PI * 2;
   var YELLOW = [250, 197, 7], GREEN = [52, 211, 153], RED = [248, 113, 113], AMBER = [251, 146, 60], WHITE = [235, 235, 235];
+  var GLOWS = {};
+  function glowSprite(c) {  // a soft round light in colour c, drawn once and reused
+    var key = c.join();
+    if (GLOWS[key]) return GLOWS[key];
+    var g = document.createElement("canvas");
+    g.width = g.height = 64;
+    var x = g.getContext("2d"), grd = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, rgba(c, 1)); grd.addColorStop(0.3, rgba(c, 0.4)); grd.addColorStop(1, rgba(c, 0));
+    x.fillStyle = grd; x.fillRect(0, 0, 64, 64);
+    return (GLOWS[key] = g);
+  }
   function rgba(c, a) { return "rgba(" + Math.round(c[0]) + "," + Math.round(c[1]) + "," + Math.round(c[2]) + "," + a + ")"; }
   function shade(c, k) { return [Math.min(255, c[0] * k), Math.min(255, c[1] * k), Math.min(255, c[2] * k)]; }
   function mix(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]; }
@@ -661,7 +679,7 @@
     var labels = $("rd-labels"), card = $("rd-card"), evals = RADAR.map(radarEval);
     if (!ctx || !evals[0]) return;
     var sn = Math.sin(TILT), cs = Math.cos(TILT), moving = false;
-    var geo = {}, items = [], sparks = [], motes = [], wait = {}, glows = {};
+    var geo = {}, items = [], sparks = [], motes = [], wait = {};
     var next = 1, t = 0, last = 0, held = null, releasedAt = -1e9, flash = -1e9, tween = null;
     var tally = { seen: 0, hit: 0, miss: 0 };
     var logo = new Image();
@@ -687,36 +705,28 @@
       ctx.closePath();
     }
     function line(a, b) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
-    function glow(c) {  // a soft round light in colour c, drawn once and reused
-      var key = c.join();
-      if (glows[key]) return glows[key];
-      var g = document.createElement("canvas");
-      g.width = g.height = 64;
-      var x = g.getContext("2d"), grd = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-      grd.addColorStop(0, rgba(c, 1)); grd.addColorStop(0.3, rgba(c, 0.4)); grd.addColorStop(1, rgba(c, 0));
-      x.fillStyle = grd; x.fillRect(0, 0, 64, 64);
-      return (glows[key] = g);
-    }
     function light(p, r, c, a) {
       if (a <= 0.01) return;
       var was = ctx.globalAlpha;
       ctx.globalAlpha = was * Math.min(1, a);
-      ctx.drawImage(glow(c), p.x - r, p.y - r, r * 2, r * 2);
+      ctx.drawImage(glowSprite(c), p.x - r, p.y - r, r * 2, r * 2);
       ctx.globalAlpha = was;
     }
 
     // The largest disc that fits, with room above for the logo and the far labels, below for its rim.
+    // The disc almost as wide as the stage, and the stage as tall as the disc needs: no empty band
+    // above or below it. The corners left over hold the HUD panels.
     function measure() {
-      var w = stage.clientWidth, h = stage.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = stage.clientWidth, dpr = Math.min(2, window.devicePixelRatio || 1);
+      geo = { cx: w / 2, cy: 0, R: w * 0.475, dpr: dpr };
+      geo.P = geo.R * 4.4;
+      var top = Math.min(at(0, -1, 0).y, at(0, 0, PYLON + 0.2).y, at(0, LANES[0], BOX * 1.2).y - 46);
+      var h = Math.round(Math.max(220, at(0, 1, -THICK).y + 12 - top + 10));
+      geo.cy = 10 - top;
+      geo.w = w;
+      stage.style.height = h + "px";
       cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
-      geo = { cx: w / 2, cy: 0, R: w * 0.45, dpr: dpr };
-      for (var n = 0; n < 40; n++, geo.R *= 0.95) {
-        geo.P = geo.R * 4.4;
-        var top = Math.min(at(0, -1, 0).y, at(0, 0, PYLON + 0.2).y, at(0, LANES[0], BOX * 1.2).y - 46);
-        var bottom = at(0, 1, -THICK).y + 10;
-        if (bottom - top <= h - 12 || n === 39) { geo.cy = (h - (bottom - top)) / 2 - top; break; }
-      }
-      geo.k = Math.max(0.78, Math.min(1.1, geo.R / 210));
+      geo.k = Math.max(0.78, Math.min(1.15, geo.R / 210));
     }
 
     function spawn(lane, u, n) {
@@ -787,7 +797,16 @@
       if (moving) { burst(it, colour(e), 24, true); floatText(it, value, cls); }
       if (e.verdict === "green") tally.hit++;
       if (e.verdict === "red") tally.miss++;
+      tally.decided = (tally.decided || 0) + 1;
       setTally(e.verdict === "green" ? "rd-hit" : e.verdict === "red" ? "rd-miss" : null);
+      var log = $("rd-log"), row = document.createElement("li");
+      row.className = cls;
+      row.innerHTML = ic(RADAR_ICON[e.verdict]) + "<span>" + esc(shortName(e.name).slice(0, 18)) + "</span><bdi>" + esc(value) + "</bdi>";
+      log.insertBefore(row, log.firstChild);
+      while (log.children.length > 3) log.removeChild(log.lastChild);
+      var rate = tally.hit / tally.decided;
+      $("rd-rate").textContent = Math.round(rate * 100) + "%";
+      $("rd-rate-bar").style.width = Math.round(rate * 100) + "%";
     }
     function release() {
       var it = held.it, e = it.e;
@@ -1075,6 +1094,8 @@
       ctx.clearRect(0, 0, cv.width, cv.height);
       ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
       floor();
+      var az = Math.round((t / SPIN_MS) * 360 % 360);
+      if (az !== geo.az) { geo.az = az; $("rd-az").textContent = "AZ " + ("00" + az).slice(-3) + "°"; }
       var sorted = items.slice().sort(function (a, b) { return a.v - b.v; }), middle = false;
       sorted.forEach(function (it) {
         if (!middle && it.v >= 0) { pylon(); middle = true; }
@@ -1098,7 +1119,7 @@
     reveal(first);
     draw();
 
-    radar.onResize = function () { measure(); draw(); };
+    radar.onResize = function () { if (stage.clientWidth !== geo.w) { measure(); draw(); } };  // only a new width re-sizes it
     if (window.ResizeObserver) { radar.ro = new ResizeObserver(radar.onResize); radar.ro.observe(stage); }
     else window.addEventListener("resize", radar.onResize);
     if (!motionOK() || !window.requestAnimationFrame) return;
@@ -1123,6 +1144,381 @@
     if (radar.io) { radar.io.disconnect(); radar.io = null; }
     if (radar.ro) { radar.ro.disconnect(); radar.ro = null; }
     if (radar.onResize) { window.removeEventListener("resize", radar.onResize); radar.onResize = null; }
+  }
+
+  // --- the world strip: the route from China's factories, past the hunter, to the customer --------
+
+  // Land from the Red Sea to the Yellow Sea on a 0.6° grid, a bit per point: rows from 44°N down to
+  // 8°N, columns from 34°E. Sampled from NOAA's GLOBE elevation data (public domain) with the
+  // global-land-mask package; that data counts the Caspian Sea as land, so it was cut out by hand.
+  var LAND = { cols: 157, rows: 61, lon: 34, lat: 44, step: 0.6, bits: "AH/+D/////////////////////gB//A/////////////////////wAP/gP////////////////////4AD/4D/////////////////////wB/+A//////////////////////L//gf////////////////////////wP//////////////////j/////4D//////////////////H/v///8B/////////////////9AB3///+Af////////////////+AB////+AP/////////////////wA/////gH/////////////////54D////+P//////////////////4Dh///////////////////////wAx///////////////////////gAcf//////////////////////wAcP//////////////////////8AAP///////////////////////AAH///////////////////////gAH///////////////////////wAD///////////////////////2AD///////////////////////+AD////////////////////////AB////f///////////////////gA////D///////////////////4Af///g///////////////////8AL///4f//////////////////+AA///8D//////////////////8AAP///A//////////////////+ABH///wEP////////////////8AAh///5AX////////////////+AAYf///gYP/v/////////////+AAMP///QcAAD//////////////GCHD///4/AAB//////////////DADg/////8AAf/////////////DABwf////+AAD////////////+BgA+H/////wAA//////f/////wAAAfD/////wAA+////kP/////gAAAPx/////wAAPf///gH///+EAAAAH4f////wAAAP///wB///+CAAAAD8H////wAAAH///wAf//+BgAAAB+B////4AAAD///gAH//+DgAAAA/Af///4AAAB///gAB///BwAAAAf4P///4AAAA///gAA///wQAAOAP+D///wAAAAP//gAAf//4AAAOAH/A///gAAAAH//AAAPf/+AAADgD/gf/+AAAAAD//AAAHP//gAADwB/8P//AAAAAA/+AAABD//8AABgA/+H/+AAAAAAf+AAAAB//+AAAwAf/j/4AAAAAAH/AAAAA///gAAcAP/4/wAAAAAAD/gAAAAf//wAAGwH/+eAAAAAAAB/4AAAAHf/4AACID//+AAAAAAAAf8AAAgDP/8AABCB//4AAAAAAAAP8AAAQBx/+AAAiw//4ACAAAAAAD+AAAAAwf/AAAGIf//B/AAAAAAB/AAAAAYD+AAADYP////gAAAAAAfgAAAAIA+AAAgAH////wAAAAAAPoAAAAEAMAAAgcD////wAAAAAAHmAAAgCAEAAAgAR////4AAAAAABjAAAABgEAAAgCY////4AAAAAAABwAAAAYAAAAAD+AA==" };
+  // Where 1688's suppliers are; the store's warehouse; and customers round it (points, not places).
+  var HUBS = [["ییوو", 29.31, 120.08], ["گوانگجو", 23.13, 113.26], ["ووهان", 30.59, 114.3], ["چوانجو", 24.87, 118.68], ["چنگدو", 30.66, 104.07]];
+  var DUBAI = [25.2, 55.27];
+  var HOMES = [[23.8, 52.6], [22.3, 55.2], [23.0, 57.8], [21.2, 53.4], [24.6, 50.8], [20.8, 56.9]];
+  var WSTEPS = [["factory", "کارخونه‌های چین", "کارخونه"], ["hunt", "شکار: فقط سودآورها", "شکار"],
+    ["plane", "حمل تا انبار راینومال در دبی", "انبار دبی"], ["home", "دست مشتری", "مشتری"]];
+  var world = { raf: 0, io: null, ro: null, onResize: null };
+
+  function worldHTML() {
+    return '<section class="lp-world" id="world" aria-label="مسیر جنس: از کارخونه‌های چین، از زیر ذره‌بین شکارچی، تا انبار راینومال در دبی و دست مشتری">' +
+      '<canvas aria-hidden="true"></canvas><div class="w-labels" id="w-labels" aria-hidden="true"></div>' +
+      '<div class="w-head"><span class="lp-eyebrow fa">مسیر جنس</span><b><span class="long">از کارخونه‌های چین، از زیر ذره‌بین ما، تا دست مشتری</span>' +
+        '<span class="short">از کارخونه‌های چین تا دست مشتری</span></b></div>' +
+      '<div class="w-count" aria-hidden="true"><span>بررسی‌شده <b id="w-seen">0</b></span><span class="g">شکار <b id="w-hit">0</b></span>' +
+        '<span class="y">رسیده به مشتری <b id="w-done">0</b></span></div>' +
+      '<ol class="w-steps">' + WSTEPS.map(function (s, n) {
+        return '<li data-w="' + n + '">' + ic(s[0]) + '<span class="long">' + s[1] + '</span><span class="short">' + s[2] + "</span></li>";
+      }).join("") + "</ol>" +
+    "</section>";
+  }
+
+  // The map is a plane bent like the Earth's surface and seen at a slant; everything on it is placed
+  // by at(). The hunter flies from city to city, scans what their factories make, takes the
+  // profitable ones and drops the rest; what it takes flies to Dubai and then on to customers.
+  function bindWorld() {
+    stopWorld();
+    var box = $("world");
+    if (!box) return;
+    var cv = box.querySelector("canvas"), ctx = cv.getContext && cv.getContext("2d");
+    if (!ctx || !window.atob) return;
+    var labels = $("w-labels"), steps = box.querySelectorAll(".w-steps li");
+    var TW = 60 * Math.PI / 180, sn = Math.sin(TW), cs = Math.cos(TW), ALT = 0.13;
+    var geo = {}, map = null, t = 0, last = 0, moving = false;
+    var goods = [], cargo = [], parcels = [], sparks = [], count = { seen: 0, hit: 0, done: 0 }, flashes = {};
+    var raw = atob(LAND.bits), land = [];
+    for (var i = 0; i < raw.length; i++) land.push(raw.charCodeAt(i));
+    function isLand(n) { return (land[n >> 3] >> (7 - (n & 7))) & 1; }
+    var logo = new Image();
+    logo.onload = function () { if (!moving) draw(); };
+    logo.src = "/static/brand/logo-192.png";
+    function place(lat, lon) { return { u: (lon - 81) / 47, v: (26 - lat) / 47 }; }
+    var cities = HUBS.map(function (c) { var p = place(c[1], c[2]); p.name = c[0]; return p; });
+    var dubai = place(DUBAI[0], DUBAI[1]), homes = HOMES.map(function (h) { return place(h[0], h[1]); });
+    var tour = { city: 0, phase: "fly", at: -1600, from: { u: 0.35, v: -0.2 }, load: 0 };
+
+    function at(u, v, h) {
+      var d = u * u * 0.8 + (v - 0.12) * (v - 0.12) * 1.8;
+      h = (h || 0) - 0.12 * d;  // the Earth curving away from the middle
+      var R = geo.R, z = (v * sn + h * cs) * R, s = geo.P / (geo.P - z);
+      return { x: geo.cx + u * R * s, y: geo.cy + (v * cs - h * sn) * R * s, s: s };
+    }
+    function arcAt(a, b, f, lift) { return at(a.u + (b.u - a.u) * f, a.v + (b.v - a.v) * f, Math.sin(Math.PI * f) * lift); }
+    function ring(p, r, h, n) {
+      ctx.beginPath();
+      for (var k = 0; k <= n; k++) {
+        var a = k / n * TAU, q = at(p.u + Math.sin(a) * r, p.v - Math.cos(a) * r * 0.9, h || 0);
+        k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y);
+      }
+    }
+    function light(p, r, c, a) {
+      if (a <= 0.01) return;
+      var was = ctx.globalAlpha;
+      ctx.globalAlpha = was * Math.min(1, a);
+      ctx.drawImage(glowSprite(c), p.x - r, p.y - r, r * 2, r * 2);
+      ctx.globalAlpha = was;
+    }
+    // A crate in screen space, standing on p: three faces, packing tape, or only its edges while unjudged.
+    function crate(p, z, c, a, wire) {
+      var x = p.x, y = p.y, w = z, h = z * 0.78, q = w / 4;
+      var A = [x, y], L = [x - w / 2, y - q], Rr = [x + w / 2, y - q];
+      var A2 = [x, y - h], L2 = [x - w / 2, y - q - h], R2 = [x + w / 2, y - q - h], B2 = [x, y - 2 * q - h];
+      function face(pts, fill) {
+        ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+        for (var k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+        ctx.closePath();
+        if (wire) { ctx.fillStyle = "rgba(235,235,235,.07)"; ctx.fill(); ctx.strokeStyle = rgba(WHITE, 0.85); ctx.lineWidth = 1; ctx.stroke(); }
+        else { ctx.fillStyle = rgba(fill, 1); ctx.fill(); ctx.strokeStyle = "rgba(60,42,0,.5)"; ctx.lineWidth = 0.8; ctx.stroke(); }
+      }
+      ctx.globalAlpha = a;
+      face([A, L, L2, A2], shade(c, 0.78));
+      face([A, Rr, R2, A2], shade(c, 0.56));
+      face([A2, L2, B2, R2], shade(c, 1.08));
+      if (!wire) {
+        ctx.beginPath(); ctx.moveTo((A2[0] + L2[0]) / 2, (A2[1] + L2[1]) / 2); ctx.lineTo((B2[0] + R2[0]) / 2, (B2[1] + R2[1]) / 2);
+        ctx.strokeStyle = "rgba(70,48,0,.6)"; ctx.lineWidth = Math.max(1, w * 0.12); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // The map from the Red Sea's east to the Yellow Sea, as wide as the page allows; the strip is as
+    // tall as the map, the hunter's flight over it, and the title and steps round it need.
+    function measure() {
+      var w = box.clientWidth, dpr = Math.min(2, window.devicePixelRatio || 1), span = Math.min(w, 1320);
+      var head = w < 620 ? 56 : 52, foot = w < 620 ? 48 : 56, most = w < 620 ? 250 : 330, h;
+      geo = { R: span / 1.66, dpr: dpr, w: w, cy: 0 };
+      for (var n = 0; n < 30; n++, geo.R *= 0.96) {  // as wide as the page, unless that makes the strip too tall
+        geo.P = geo.R * 3.2;
+        geo.cx = w / 2 - 0.12 * geo.R;
+        geo.k = Math.max(0.62, Math.min(1.1, geo.R / 700));
+        geo.cy = 0;
+        var top = Math.min(at(0, -0.4, 0).y, Math.min.apply(null, cities.map(function (c) { return at(c.u, c.v, ALT + 0.05).y; })) - 30 * geo.k);
+        h = Math.round(head + at(0, 0.3, 0).y - top + foot);
+        geo.cy = head - top;
+        if (h <= most) break;
+      }
+      box.style.height = h + "px";
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      paintMap(w, h);
+      var marks = cities.map(function (c, n) { return ['<span class="w-city" data-c="' + n + '">' + c.name + "</span>", at(c.u, c.v, 0), 7]; })
+        .concat([['<span class="w-hub">انبار راینومال · دبی</span>', at(dubai.u, dubai.v, 0), -44],
+          ['<span class="w-homes">مشتری‌ها</span>', at(homes[3].u, homes[3].v, 0), 8]]);
+      labels.innerHTML = marks.map(function (m) { return m[0]; }).join("");
+      Array.prototype.forEach.call(labels.children, function (el, n) {  // centred under its place, but inside the strip
+        var m = marks[n], half = el.offsetWidth / 2, x = Math.max(half + 8, Math.min(w - half - 8, m[1].x));
+        el.style.transform = "translate(" + (x - half).toFixed(1) + "px," + (m[1].y + m[2] * geo.k).toFixed(1) + "px)";
+      });
+      markCity();
+    }
+    function markCity() {
+      Array.prototype.forEach.call(labels.querySelectorAll(".w-city"), function (el) { el.classList.toggle("on", Number(el.dataset.c) === tour.city); });
+    }
+    function paintMap(w, h) {  // the still part, drawn once per size
+      map = document.createElement("canvas");
+      map.width = cv.width; map.height = cv.height;
+      var m = map.getContext("2d"), lat, lon, k, p;
+      m.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
+      // the air over the horizon
+      var sky = m.createLinearGradient(0, at(0, -0.44, 0).y - 40, 0, at(0, -0.4, 0).y + 10);
+      sky.addColorStop(0, "rgba(250,197,7,0)"); sky.addColorStop(1, "rgba(250,197,7,.07)");
+      m.fillStyle = sky; m.fillRect(0, 0, w, h);
+      for (k = 0; k < 90; k++) {  // stars over the horizon
+        var sx = Math.random() * w, sy = Math.random() * (at(0, -0.4, 0).y - 4);
+        m.fillStyle = "rgba(255,255,255," + (0.08 + Math.random() * 0.3).toFixed(2) + ")";
+        m.fillRect(sx, sy, Math.random() < 0.15 ? 2 : 1, Math.random() < 0.15 ? 2 : 1);
+      }
+      m.globalCompositeOperation = "lighter";
+      [[10, 0.05], [4, 0.1], [1.5, 0.45]].forEach(function (g) {
+        m.beginPath();
+        for (k = 0; k <= 60; k++) { p = at(-1.3 + k / 60 * 2.6, -0.4, 0); k ? m.lineTo(p.x, p.y) : m.moveTo(p.x, p.y); }
+        m.strokeStyle = rgba(YELLOW, g[1]); m.lineWidth = g[0]; m.stroke();
+      });
+      m.globalCompositeOperation = "source-over";
+      // lines of latitude and longitude
+      m.strokeStyle = rgba(YELLOW, 0.08); m.lineWidth = 1;
+      for (lat = 10; lat <= 40; lat += 10) {
+        m.beginPath();
+        for (lon = 30; lon <= 132; lon += 2) { var q = place(lat, lon); p = at(q.u, q.v, 0); lon > 30 ? m.lineTo(p.x, p.y) : m.moveTo(p.x, p.y); }
+        m.stroke();
+      }
+      for (lon = 40; lon <= 130; lon += 10) {
+        m.beginPath();
+        for (lat = 10; lat <= 44; lat += 2) { var q2 = place(lat, lon); p = at(q2.u, q2.v, 0); lat > 10 ? m.lineTo(p.x, p.y) : m.moveTo(p.x, p.y); }
+        m.stroke();
+      }
+      // the land, brighter round the places on the route
+      var hot = cities.concat([dubai]);
+      for (var r = 0; r < LAND.rows; r++) {
+        for (var c = 0; c < LAND.cols; c++) {
+          var n = r * LAND.cols + c;
+          if (!isLand(n)) continue;
+          var pl = place(LAND.lat - r * LAND.step, LAND.lon + c * LAND.step);
+          p = at(pl.u, pl.v, 0);
+          var near = 0, coast = c > 0 && c < LAND.cols - 1 && r > 0 && r < LAND.rows - 1 &&
+            (!isLand(n - 1) || !isLand(n + 1) || !isLand(n - LAND.cols) || !isLand(n + LAND.cols));
+          hot.forEach(function (o) { near = Math.max(near, Math.exp(-(Math.pow(o.u - pl.u, 2) + Math.pow(o.v - pl.v, 2)) / 0.004)); });
+          var fade = clamp01((pl.v + 0.4) / 0.12), size = Math.max(1, (coast ? 2.6 : 2) * p.s * geo.k);
+          m.fillStyle = rgba(mix(coast ? [255, 226, 140] : WHITE, YELLOW, near), ((coast ? 0.55 : 0.2) + 0.4 * near) * fade);
+          m.fillRect(p.x - size / 2, p.y - size / 2, size, size);
+        }
+      }
+    }
+
+    function spawnGoods(city) {
+      var n = 4, picks = {}, k;
+      picks[Math.floor(Math.random() * n)] = true;
+      if (Math.random() < 0.45) picks[Math.floor(Math.random() * n)] = true;
+      for (k = 0; k < n; k++) {
+        var a = (k / n) * TAU + 0.4;
+        goods.push({ city: city, u: city.u + Math.sin(a) * 0.035, v: city.v - Math.cos(a) * 0.03, born: t + k * 140,
+          judge: t + 800 + k * 650, pick: !!picks[k], state: "raw" });
+      }
+    }
+    function burst(p, h, c, n) {
+      for (var k = 0; k < n; k++) {
+        sparks.push({ u: p.u, v: p.v, h: h, du: (Math.random() - 0.5) * 0.00012, dv: (Math.random() - 0.5) * 0.0001,
+          dh: 0.00005 + Math.random() * 0.00015, life: 500 + Math.random() * 600, max: 1100, c: c });
+      }
+    }
+    function scannerAt() {
+      var city = cities[tour.city];
+      if (tour.phase === "fly") {
+        var f = clamp01((t - tour.at) / 1600), e = f * f * (3 - 2 * f);
+        return { u: tour.from.u + (city.u - tour.from.u) * e, v: tour.from.v + (city.v - tour.from.v) * e, h: ALT + Math.sin(Math.PI * f) * 0.05 };
+      }
+      return { u: city.u, v: city.v, h: ALT + Math.sin(t / 420) * 0.008 };
+    }
+    function step(dt) {
+      t += dt;
+      var city = cities[tour.city];
+      if (tour.phase === "fly" && t - tour.at >= 1600) { tour.phase = "scan"; tour.at = t; tour.load = 0; spawnGoods(city); }
+      if (tour.phase === "scan" && t - tour.at >= 3700) {
+        if (tour.load) cargo.push({ from: city, at: t, n: tour.load });
+        tour.from = { u: city.u, v: city.v };
+        tour.city = (tour.city + 1) % cities.length;
+        tour.phase = "fly"; tour.at = t;
+        markCity();
+      }
+      goods.forEach(function (g) {
+        if (g.state === "raw" && t >= g.judge) {
+          count.seen++;
+          if (g.pick) { g.state = "pick"; g.at = t; burst(g, 0.02, YELLOW, 10); }
+          else { g.state = "drop"; g.at = t; burst(g, 0.02, RED, 14); }
+          setCount();
+        }
+        if (g.state === "pick" && t - g.at > 700) { g.state = "gone"; count.hit++; tour.load++; setCount(); }
+        if (g.state === "drop" && t - g.at > 500) g.state = "gone";
+      });
+      goods = goods.filter(function (g) { return g.state !== "gone"; });
+      cargo = cargo.filter(function (c) {
+        if (t - c.at < 2600) return true;
+        flashes.dubai = t;
+        burst(dubai, 0.03, YELLOW, 16);
+        for (var k = 0; k < c.n; k++) parcels.push({ home: Math.floor(Math.random() * homes.length), at: t + k * 260 });
+        return false;
+      });
+      parcels = parcels.filter(function (p) {
+        if (t - p.at < 900) return true;
+        count.done++; flashes[p.home] = t; burst(homes[p.home], 0.01, GREEN, 8); setCount();
+        return false;
+      });
+      sparks = sparks.filter(function (s) {
+        s.life -= dt; s.u += s.du * dt; s.v += s.dv * dt; s.h = Math.max(0, s.h + s.dh * dt); s.dh -= 0.0000003 * dt;
+        return s.life > 0;
+      });
+      var on = [goods.some(function (g) { return g.state === "raw" && t >= g.born; }), tour.phase === "scan" && goods.length > 0, cargo.length > 0, parcels.length > 0];
+      Array.prototype.forEach.call(steps, function (li, n) { if (li.classList.contains("on") !== on[n]) li.classList.toggle("on", on[n]); });
+    }
+    function setCount() { $("w-seen").textContent = count.seen; $("w-hit").textContent = count.hit; $("w-done").textContent = count.done; }
+
+    function draw() {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(map, 0, 0);
+      ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
+      var k, p, q;
+      // the routes to Dubai, flowing
+      ctx.setLineDash([4, 6]); ctx.lineDashOffset = -t * 0.02;
+      cities.forEach(function (c) {
+        ctx.beginPath();
+        for (k = 0; k <= 40; k++) { p = arcAt(c, dubai, k / 40, 0.08); k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); }
+        ctx.strokeStyle = rgba(YELLOW, 0.22); ctx.lineWidth = 1.2; ctx.stroke();
+      });
+      ctx.setLineDash([]);
+      // Dubai: the warehouse
+      var fd = clamp01(1 - (t - (flashes.dubai || -1e9)) / 700), dp = at(dubai.u, dubai.v, 0);
+      ctx.globalCompositeOperation = "lighter";
+      light(dp, (34 + 20 * fd) * geo.k, YELLOW, 0.55 + 0.4 * fd);
+      ctx.globalCompositeOperation = "source-over";
+      ring(dubai, 0.026, 0, 36); ctx.strokeStyle = rgba(YELLOW, 0.9); ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.setLineDash([3, 4]); ctx.lineDashOffset = t * 0.02;
+      ring(dubai, 0.042 + 0.01 * fd, 0, 48); ctx.strokeStyle = rgba(YELLOW, 0.55); ctx.stroke();
+      ctx.setLineDash([]);
+      crate(dp, 16 * geo.k * dp.s, YELLOW, 1, false);
+      // customers: small houses, green when a parcel arrives
+      homes.forEach(function (hm, n) {
+        var f = clamp01(1 - (t - (flashes[n] || -1e9)) / 900);
+        p = at(hm.u, hm.v, 0);
+        var z = 6 * geo.k * p.s, col = mix([200, 200, 200], GREEN, f);
+        ctx.fillStyle = rgba(col, 0.9);
+        ctx.beginPath(); ctx.moveTo(p.x - z, p.y - z); ctx.lineTo(p.x, p.y - z * 1.9); ctx.lineTo(p.x + z, p.y - z); ctx.closePath(); ctx.fill();
+        ctx.fillRect(p.x - z * 0.7, p.y - z, z * 1.4, z);
+        if (f > 0) { ctx.globalCompositeOperation = "lighter"; light(p, 18 * geo.k * f + 6, GREEN, f); ctx.globalCompositeOperation = "source-over"; }
+      });
+      // the cities
+      cities.forEach(function (c, n) {
+        p = at(c.u, c.v, 0);
+        var ph = (t / 1800 + n * 0.23) % 1;
+        ring(c, 0.012 + 0.03 * ph, 0, 28); ctx.strokeStyle = rgba(YELLOW, 0.6 * (1 - ph)); ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = rgba(YELLOW, 1); ctx.beginPath(); ctx.arc(p.x, p.y, 3 * geo.k + 0.5, 0, TAU); ctx.fill();
+      });
+      // the hunter over its city: a cone of light and the ring it scans
+      var sc = scannerAt(), top = at(sc.u, sc.v, sc.h), base = at(sc.u, sc.v, 0);
+      if (tour.phase === "scan") {
+        var cone = ctx.createLinearGradient(0, top.y, 0, base.y);
+        cone.addColorStop(0, rgba(YELLOW, 0.45)); cone.addColorStop(1, rgba(YELLOW, 0.06));
+        var spread = 0.05;
+        ctx.globalCompositeOperation = "lighter";
+        ctx.beginPath(); ctx.moveTo(top.x, top.y + 10 * geo.k);
+        for (k = 0; k <= 24; k++) { var a = Math.PI / 2 + k / 24 * Math.PI; q = at(sc.u + Math.sin(a) * spread, sc.v - Math.cos(a) * spread * 0.9, 0); ctx.lineTo(q.x, q.y); }
+        ctx.closePath(); ctx.fillStyle = cone; ctx.fill();
+        ring(sc, spread, 0, 40); ctx.strokeStyle = rgba(YELLOW, 0.8); ctx.lineWidth = 1.2; ctx.stroke();
+        var sw = (t / 900) % 1;
+        ring(sc, spread * sw, 0, 32); ctx.strokeStyle = rgba(YELLOW, 0.7 * (1 - sw)); ctx.stroke();
+        ctx.globalCompositeOperation = "source-over";
+      } else {  // its shadow while it flies
+        ring(sc, 0.02, 0, 20); ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.fill();
+      }
+      // the goods under it: unjudged ones are wireframes; the taken rise into it, the rest turn red and go
+      goods.forEach(function (g) {
+        if (t < g.born) return;
+        var pop = clamp01((t - g.born) / 250), z = 10 * geo.k;
+        if (g.state === "raw") { p = at(g.u, g.v, 0); crate(p, z * pop * p.s, WHITE, 0.95, true); }
+        else if (g.state === "pick") {
+          var f = clamp01((t - g.at) / 700);
+          p = at(g.u + (sc.u - g.u) * f, g.v + (sc.v - g.v) * f, sc.h * f);
+          crate(p, z * p.s * (1 - 0.5 * f), YELLOW, 1, false);
+        } else {
+          var fr = clamp01((t - g.at) / 500);
+          p = at(g.u, g.v, 0);
+          crate(p, z * p.s, RED, 1 - fr, false);
+        }
+      });
+      // cargo on its way to Dubai, with a trail
+      cargo.forEach(function (c) {
+        var f = clamp01((t - c.at) / 2600), e = f * f * (3 - 2 * f);
+        ctx.globalCompositeOperation = "lighter";
+        ctx.beginPath();
+        for (k = 0; k <= 16; k++) { q = arcAt(c.from, dubai, Math.max(0, e - 0.18 + 0.18 * k / 16), 0.08); k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); }
+        ctx.strokeStyle = rgba(YELLOW, 0.85); ctx.lineWidth = 2.2; ctx.stroke();
+        p = arcAt(c.from, dubai, e, 0.08);
+        light(p, 16 * geo.k, YELLOW, 0.9);
+        ctx.globalCompositeOperation = "source-over";
+        crate({ x: p.x, y: p.y + 5 * geo.k }, 11 * geo.k * p.s, YELLOW, 1, false);
+      });
+      // parcels out to customers
+      parcels.forEach(function (pc) {
+        if (t < pc.at) return;
+        var f = clamp01((t - pc.at) / 900);
+        p = arcAt(dubai, homes[pc.home], f, 0.03);
+        crate(p, 7 * geo.k * p.s, YELLOW, 1, false);
+      });
+      // the hunter itself
+      var size = 46 * geo.k * top.s;
+      ctx.globalCompositeOperation = "lighter";
+      light(top, size * 0.9, YELLOW, 0.5);
+      sparks.forEach(function (s) { light(at(s.u, s.v, s.h), 4 * geo.k + 1, s.c, s.life / s.max * 1.3); });
+      ctx.globalCompositeOperation = "source-over";
+      if (logo.complete && logo.naturalWidth) ctx.drawImage(logo, top.x - size / 2, top.y - size / 2, size, size);
+    }
+
+    measure();
+    for (var warm = 0; warm < 260; warm++) step(25);  // start with the route already busy
+    draw();
+    world.onResize = function () { if (box.clientWidth !== geo.w) { measure(); draw(); } };
+    if (window.ResizeObserver) { world.ro = new ResizeObserver(world.onResize); world.ro.observe(box); }
+    else window.addEventListener("resize", world.onResize);
+    if (!motionOK() || !window.requestAnimationFrame) return;
+    function frame(now) {
+      var dt = last ? Math.min(50, now - last) : 16;
+      last = now;
+      step(dt); draw();
+      world.raf = requestAnimationFrame(frame);
+    }
+    function run(on) {
+      cancelAnimationFrame(world.raf); world.raf = 0; last = 0; moving = on;
+      if (on) world.raf = requestAnimationFrame(frame);
+    }
+    if (window.IntersectionObserver) {
+      world.io = new IntersectionObserver(function (entries) { run(entries[entries.length - 1].isIntersecting); }, { threshold: 0.05 });
+      world.io.observe(box);
+    } else run(true);
+  }
+  function stopWorld() {
+    cancelAnimationFrame(world.raf); world.raf = 0;
+    if (world.io) { world.io.disconnect(); world.io = null; }
+    if (world.ro) { world.ro.disconnect(); world.ro = null; }
+    if (world.onResize) { window.removeEventListener("resize", world.onResize); world.onResize = null; }
   }
 
   function stepHTML(n) {
@@ -1283,6 +1679,7 @@
 
   function bindLanding() {
     bindAuth();
+    bindWorld();
     bindRadar();
     bindDemo();
     bindTrial();
