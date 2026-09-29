@@ -1,0 +1,55 @@
+# A free, public demo of the hunter on GitHub Pages, with the sample hunt baked in
+# and no server, keys or tokens: the same page `python -m hunter preview` writes, served
+# at https://<owner>.github.io/dari/. The real site on hunter.gryffin.uk (deploy-hunter.yml)
+# still needs its Cloudflare secrets; this is only the shop window.
+name: Demo on GitHub Pages
+
+on:
+  push:
+    branches: [claude/trusting-cori-54e2u9]
+    paths:
+      - "hunter/**"
+      - ".github/workflows/pages-demo.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r hunter/requirements.txt
+      - name: Build the demo page
+        run: |
+          mkdir -p site
+          python -m hunter preview site/index.html
+          touch site/.nojekyll
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
