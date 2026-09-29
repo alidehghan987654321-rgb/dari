@@ -2,6 +2,10 @@
 # and no server, keys or tokens: the same page `python -m hunter preview` writes, served
 # at https://<owner>.github.io/dari/. The real site on hunter.gryffin.uk (deploy-hunter.yml)
 # still needs its Cloudflare secrets; this is only the shop window.
+#
+# One-time switch: repo Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
+# Until that's on, this workflow still passes — it builds the page and leaves a note — and
+# it starts publishing the moment Pages is turned on.
 name: Demo on GitHub Pages
 
 on:
@@ -24,6 +28,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.pages.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,15 +43,25 @@ jobs:
           mkdir -p site
           python -m hunter preview site/index.html
           touch site/.nojekyll
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
+      # Reads the repo's Pages config. It fails only when Pages isn't switched on yet;
+      # continue-on-error keeps the run green and the next step explains the one switch.
+      - name: Find the Pages site
+        id: pages
+        continue-on-error: true
+        uses: actions/configure-pages@v5
+      - name: Upload the page
+        if: steps.pages.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: site
+      - name: How to turn the demo on
+        if: steps.pages.outcome != 'success'
+        run: |
+          echo "::warning::The demo page built fine, but GitHub Pages isn't on yet. Turn it on once — repo Settings -> Pages -> Build and deployment -> Source: GitHub Actions — then re-run this workflow. It'll be served at https://alidehghan987654321-rgb.github.io/dari/"
 
   deploy:
     needs: build
+    if: needs.build.outputs.ready == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
