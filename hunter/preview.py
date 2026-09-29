@@ -17,6 +17,7 @@ from .app import Settings, example_links, pricing_settings, public_user
 from .categories import CATEGORIES
 from .engine import Hunter
 from .offers import offer_view
+from .economics import Economics
 from .payments import make_plans
 from .pricing import PricingConfig
 from .sources.sample import SampleData
@@ -101,6 +102,7 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
             "brand": "شکارچی",
             "online_payment": True,
             "plans": [p.__dict__ for p in make_plans(234_500)],
+            "pricing_report": Economics().report(make_plans(234_500), 234_500),
             "categories": [
                 {"key": c.key, "fa": c.fa, "restricted": c.restricted, "note_fa": c.note_fa}
                 for c in CATEGORIES.values()

@@ -45,7 +45,9 @@
   }
   function ic(name) { return '<svg class="i" aria-hidden="true"><use href="#i-' + name + '"/></svg>'; }
   function safeUrl(u) { return /^https?:\/\//i.test(u || "") ? u : ""; }
-  function usd(n) { return n == null || isNaN(n) ? "—" : (n < 0 ? "−$" : "$") + Math.abs(Number(n)).toFixed(2); }
+  function usd(n) {
+    return n == null || isNaN(n) ? "—" : (n < 0 ? "−$" : "$") + Math.abs(Number(n)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
   function cny(n) { return n == null ? "—" : "¥" + Number(n).toFixed(2); }
   function pct(n) { return n == null || isNaN(n) ? "—" : Math.round(n * 100) + "%"; }
   function signed(ratio) { var d = Math.round((ratio - 1) * 100); return (d > 0 ? "+" : "") + d + "%"; }
@@ -2251,7 +2253,56 @@
         '<div class="error" id="profile-error"></div><button class="btn" type="submit">ذخیره' + ic("save") + "</button></form>" +
       supportHTML() +
       (me.is_admin ? adminHTML() : "") +
+      (me.is_admin || DEMO ? '<section class="panel" id="pricing-panel">' +
+        (DEMO && cfg.pricing_report ? pricingHTML(cfg.pricing_report) : '<p class="section-sub">در حال محاسبه‌ی قیمت‌گذاری…</p>') + "</section>" : "") +
     "</div>";
+  }
+
+  // For the site's admin: what each plan costs us and brings in, by kind of cost, against the
+  // target margin (hunter/economics.py). Each plan is costed at its full quota, no cache.
+  var ECON_PARTS = [["analyses_usd", "تحلیل‌ها"], ["fixed_usd", "سهم هزینه‌ی ثابت"], ["sales_usd", "درگاه، مالیات، بازاریابی"], ["profit_usd", "سود خالص"]];
+  function pricingHTML(r) {
+    var unit = {
+      usd_month: function (v) { return ltr(usd(v)) + " در ماه"; },
+      usd_each: function (v) { return ltr(usd(v)) + " هر بار"; },
+      share: function (v) { return ltr(pct(v)) + " از قیمت"; },
+    };
+    var tm = function (v) { return toman(Math.round(v * r.toman_per_usd / 10000) * 10000); };
+    var kinds = r.kinds.map(function (k, n) {
+      return '<div class="cost-kind"><div class="head"><span class="n">0' + (n + 1) + "</span><h3>" + esc(k.fa) + "</h3></div><ul>" +
+        k.items.map(function (c) {
+          return "<li><span>" + esc(c.fa) + (c.note_fa ? "<small>" + esc(c.note_fa) + "</small>" : "") + "</span><b>" + unit[k.unit](c.value) + "</b></li>";
+        }).join("") + '</ul><div class="total"><span>جمع</span><b>' + unit[k.unit](k.total) + "</b></div></div>";
+    }).join("");
+    var legend = ECON_PARTS.map(function (x, n) { return '<span><i class="e' + n + '"></i>' + x[1] + "</span>"; }).join("");
+    var rows = r.plans.map(function (p) {
+      var bar = ECON_PARTS.map(function (x, n) { return '<i class="e' + n + '" style="width:' + (Math.max(0, p[x[0]]) / p.price_usd * 100).toFixed(2) + '%" title="' + x[1] + ": " + usd(p[x[0]]) + '"></i>'; }).join("");
+      return "<tr><th>" + esc(p.name_fa) + "<small>" + p.links + " تحلیل در ماه</small></th>" +
+        '<td class="num">' + toman(p.price_toman) + "<small>" + usd(p.price_usd) + "</small></td>" +
+        '<td class="num">' + usd(p.analyses_usd) + '</td><td class="num">' + usd(p.fixed_usd) + '</td><td class="num">' + usd(p.sales_usd) + "</td>" +
+        '<td class="num good">' + usd(p.profit_usd) + "<small>" + tm(p.profit_usd) + " تومان</small></td>" +
+        '<td><span class="pill ' + (p.ok ? "green" : "red") + '">' + ic(p.ok ? "check" : "warn") + ltr(pct(p.margin)) + "</span></td>" +
+        '<td class="bar-cell"><div class="econ-bar">' + bar + "</div></td></tr>";
+    }).join("");
+    var months = r.months.map(function (m) {
+      return "<tr" + (m.subscribers === r.subscribers ? ' class="base"' : "") + '><th class="num">' + toman(m.subscribers) + '</th><td class="num">' + usd(m.revenue_usd) +
+        '</td><td class="num">' + usd(m.cost_usd) + '</td><td class="num ' + (m.profit_usd >= 0 ? "good" : "bad") + '">' + usd(m.profit_usd) +
+        '</td><td class="num">' + toman(m.profit_toman) + "</td></tr>";
+    }).join("");
+    return '<div class="econ-head"><div><h2 class="section-title">قیمت‌گذاری پلن‌ها و هزینه‌ها</h2>' +
+        '<p class="section-sub">قیمت هر پلن از هزینه‌هاش و حد سود ساخته میشه: هزینه‌ی تحلیل‌ها + سهمش از هزینه‌ی ثابت، تقسیم بر (1 − سهم درگاه و مالیات و بازاریابی − حد سود)، بعد گرد به بالا تا ...90,000 تومان. هر پلن با سهمیه‌ی کاملش و بدون کش حساب شده، یعنی بدترین حالت.' +
+        (DEMO ? " (در سایت واقعی فقط مدیر این بخش رو می‌بینه.)" : "") + "</p></div>" +
+        '<div class="econ-kpis"><div><span>حد سود (حاشیه‌ی خالص هدف)</span><b>' + ltr(pct(r.margin)) + '</b><small>کف: ' + ltr(pct(r.min_margin)) + "</small></div>" +
+          "<div><span>نقطه‌ی سربه‌سر</span><b>" + (r.break_even == null ? "—" : toman(r.break_even)) + "</b><small>مشترک در ماه</small></div>" +
+          "<div><span>پایه‌ی محاسبه</span><b>" + toman(r.subscribers) + "</b><small>مشترک پولی</small></div>" +
+          "<div><span>نرخ دلار</span><b>" + toman(r.toman_per_usd) + "</b><small>تومان</small></div></div></div>" +
+      '<h3 class="econ-h3">دسته‌بندی هزینه‌ها</h3><div class="cost-kinds">' + kinds + "</div>" +
+      '<h3 class="econ-h3">هر پلن برای هر مشترک در ماه</h3><div class="econ-legend">' + legend + "</div>" +
+      '<div class="table-wrap"><table class="econ-table"><thead><tr><th>پلن</th><th>قیمت (تومان)</th><th>تحلیل‌ها</th><th>سهم ثابت</th><th>درگاه، مالیات، بازاریابی</th><th>سود خالص</th><th>حاشیه</th><th>قیمت کجا می‌ره</th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
+      '<h3 class="econ-h3">ماه با چند مشترک</h3><p class="hint">با این ترکیب مشترک‌ها: ' +
+        r.plans.map(function (p) { return esc(p.name_fa) + " " + ltr(pct(r.mix[p.id] || 0)); }).join("، ") + ".</p>" +
+      '<div class="table-wrap"><table class="econ-table months"><thead><tr><th>مشترک</th><th>فروش ماهانه</th><th>هزینه‌ی ماهانه</th><th>سود ماهانه</th><th>سود ماهانه (تومان)</th></tr></thead><tbody>' + months + "</tbody></table></div>" +
+      '<p class="hint">همه‌ی این عددها از تنظیمات عوض میشن: HUNTER_MARGIN (حد سود)، HUNTER_MIN_MARGIN (کف)، HUNTER_SUBSCRIBERS و HUNTER_COSTS (هر هزینه با کلیدش). راهنما در hunter/README.md.</p>';
   }
 
   // For the site's admin: activate a seller who paid by bank transfer.
@@ -2275,6 +2326,10 @@
           window.location.href = r.redirect_url;
         }, function (e) { b.disabled = false; $("pay-error").textContent = errText(e); });
       };
+    });
+    var pricing = $("pricing-panel");
+    if (pricing && !DEMO) api("/api/admin/pricing").then(function (r) { pricing.innerHTML = pricingHTML(r); }, function (e) {
+      pricing.innerHTML = '<p class="error">' + esc(errText(e)) + "</p>";
     });
     var grant = $("grant-form");
     if (grant) grant.onsubmit = function (ev) {

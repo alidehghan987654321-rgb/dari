@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from hunter.app import Settings, create_app
 from hunter.db import Database
 from hunter.engine import Hunter
+from hunter.economics import Economics, charm_toman
 from hunter.payments import DemoGateway, PaymentError, Zarinpal, make_plans
 from hunter.preview import build_preview
 from hunter.sources.sample import SampleData
@@ -552,15 +553,78 @@ def test_each_plan_has_its_own_quota(link_settings):
         assert c.get("/api/analyses").json()["quota"] == 4
 
 
-def test_plans_are_priced_from_dollars():
+def test_plans_are_priced_from_their_costs_and_the_margin():
     basic, pro, business = make_plans(234_500)
     assert (basic.price_toman, pro.price_toman, business.price_toman) == (
-        1_410_000,
-        3_520_000,
-        9_380_000,
+        1_390_000,
+        3_490_000,
+        9_490_000,
     )
     assert (basic.links, pro.links, business.links) == (30, 100, 300)
-    assert make_plans(300_000)[0].price_toman == 1_800_000
+    assert basic.price_usd == round(1_390_000 / 234_500, 2)
+    assert make_plans(300_000)[0].price_toman == 1_790_000  # the dollar's rate moves the price
+    # a tier priced by hand keeps its price
+    assert (
+        make_plans(234_500, [{"id": "x", "name_fa": "x", "price_usd": 6, "links": 30}])[
+            0
+        ].price_toman
+        == 1_410_000
+    )
+
+
+def test_every_plan_keeps_the_target_margin_at_its_worst():
+    econ = Economics()
+    report = econ.report(make_plans(234_500), 234_500)
+    for row in report["plans"]:
+        assert row["ok"] and econ.margin <= row["margin"] < econ.margin + 0.02
+        # the parts add up to the price
+        parts = row["analyses_usd"] + row["fixed_usd"] + row["sales_usd"] + row["profit_usd"]
+        assert parts == pytest.approx(row["price_usd"], abs=0.02)
+    assert [k["key"] for k in report["kinds"]] == ["fixed", "analysis", "sales"]
+    assert report["kinds"][0]["total"] == econ.fixed_usd == 153
+    fixed, per_sub = econ.fixed_usd, report["break_even"]
+    assert per_sub == 24 and report["months"][0]["subscribers"] == 50
+    assert all(m["profit_usd"] > 0 for m in report["months"]) and fixed > 0
+
+
+def test_a_plan_under_the_margin_floor_is_flagged():
+    cheap = make_plans(234_500, [{"id": "basic", "name_fa": "x", "price_usd": 3, "links": 30}])
+    row = Economics().report(cheap, 234_500)["plans"][0]
+    assert not row["ok"] and row["margin"] < 0.30
+
+
+def test_costs_and_margin_from_env(monkeypatch):
+    monkeypatch.setenv("HUNTER_COSTS", '{"tax": 0, "keepa": 40, "lookup": 0.03}')
+    monkeypatch.setenv("HUNTER_MARGIN", "0.5")
+    monkeypatch.setenv("HUNTER_SUBSCRIBERS", "400")
+    s = Settings.from_env()
+    assert s.economics.margin == 0.5 and s.economics.subscribers == 400
+    assert s.economics.fixed_usd == 140 and s.economics.analysis_usd == pytest.approx(0.04)
+    assert s.economics.sales_share == pytest.approx(0.11)
+    report = s.economics.report(s.plans, s.toman_per_usd)
+    assert all(r["ok"] and r["margin"] >= 0.5 for r in report["plans"])
+    assert s.plans[0].price_toman == charm_toman(s.economics.price_usd(30) * s.toman_per_usd)
+
+
+def test_charm_prices():
+    assert charm_toman(1_361_968) == 1_390_000
+    assert charm_toman(1_395_000) == 1_490_000
+    assert charm_toman(1_390_000) == 1_390_000
+    assert charm_toman(5_000) == 90_000
+
+
+def test_pricing_report_is_for_admins(settings):
+    settings.admins = ("boss@example.com",)
+    with TestClient(create_app(settings)) as c:
+        signup(c)
+        assert c.get("/api/admin/pricing").status_code == 403
+    with TestClient(create_app(settings)) as c:
+        signup(c, "boss@example.com")
+        r = c.get("/api/admin/pricing")
+    assert r.status_code == 200
+    body = r.json()
+    assert [p["id"] for p in body["plans"]] == [p.id for p in settings.plans]
+    assert body["margin"] == settings.economics.margin
 
 
 def test_grant_with_a_plan_and_old_databases_get_the_column(tmp_path):
@@ -721,7 +785,7 @@ def test_calculator_settings_in_config(client, settings):
 def test_toman_rate_from_env(monkeypatch):
     monkeypatch.setenv("HUNTER_TOMAN_PER_USD", "250000")
     s = Settings.from_env()
-    assert s.toman_per_usd == 250_000 and s.plans[0].price_toman == 1_500_000  # $6
+    assert s.toman_per_usd == 250_000 and s.plans[0].price_toman == 1_490_000
 
 
 def test_health_check(tmp_path, sample_hunt):

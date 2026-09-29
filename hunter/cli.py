@@ -141,6 +141,40 @@ def cmd_schedule(args) -> int:
                 log.exception("scheduled job failed")
 
 
+def cmd_pricing(args) -> int:
+    """The plans' prices, what they cost us by kind, their margin, and the month at a few sizes."""
+    from .app import Settings
+
+    s = Settings.from_env()
+    r = s.economics.report(s.plans, s.toman_per_usd)
+    out = [
+        f"Target net margin {r['margin']:.0%} (floor {r['min_margin']:.0%}), fixed costs spread over "
+        f"{r['subscribers']} subscribers, {r['toman_per_usd']:,.0f} toman to the dollar.",
+    ]
+    for kind in r["kinds"]:
+        unit = {"usd_month": "$/month", "usd_each": "$ each", "share": "of the price"}[kind["unit"]]
+        out.append(f"\n{kind['key']}: {kind['total']:g} {unit}")
+        out += [f"  {c['key']:<10} {c['value']:g}" for c in kind["items"]]
+    out.append(
+        "\nplan       links  price (toman)   price $  analyses  fixed  sales  profit  margin"
+    )
+    for p in r["plans"]:
+        flag = "" if p["ok"] else "  UNDER THE FLOOR"
+        out.append(
+            f"{p['id']:<10} {p['links']:>5}  {p['price_toman']:>13,}  {p['price_usd']:>8.2f}"
+            f"  {p['analyses_usd']:>8.2f}  {p['fixed_usd']:>5.2f}  {p['sales_usd']:>5.2f}"
+            f"  {p['profit_usd']:>6.2f}  {p['margin']:>6.0%}{flag}"
+        )
+    out.append(f"\nbreak-even: {r['break_even']} subscribers a month")
+    for m in r["months"]:
+        out.append(
+            f"  {m['subscribers']:>5} subscribers: revenue ${m['revenue_usd']:,.0f}, "
+            f"profit ${m['profit_usd']:,.0f} ({m['profit_toman']:,} toman)"
+        )
+    print("\n".join(out))
+    return 0 if all(p["ok"] for p in r["plans"]) else 1
+
+
 def cmd_preview(args) -> int:
     from .preview import build_preview
 
@@ -217,6 +251,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("backup")
     p.add_argument("--db", default=db_default)
     p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("pricing", help="show the plans' prices, costs and margins")
+    p.set_defaults(func=cmd_pricing)
 
     p = sub.add_parser("preview", help="write a self-contained demo page of the sample hunt")
     p.add_argument("out")

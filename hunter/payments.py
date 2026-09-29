@@ -21,6 +21,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+from .economics import Economics
+
 log = logging.getLogger(__name__)
 
 
@@ -38,13 +40,13 @@ class Plan:
         return self.price_toman * 10
 
 
-# Tiers priced in dollars (the costs are in dollars) and turned into toman with the day's
-# rate, so a change in the rate is one setting. Each costs about 3x what its analyses
-# cost us at most (no cache hits), see hunter/README.md.
+# The tiers and their monthly analyses. Their prices come from what they cost us and the
+# target margin (economics.py), in dollars since the costs are, turned into toman with the day's
+# rate; a tier given a price_usd (HUNTER_PLANS) is sold at that instead.
 PLAN_TIERS = [
-    {"id": "basic", "name_fa": "پایه", "days": 30, "price_usd": 6, "links": 30},
-    {"id": "pro", "name_fa": "حرفه‌ای", "days": 30, "price_usd": 15, "links": 100},
-    {"id": "business", "name_fa": "حرفه‌ای+", "days": 30, "price_usd": 40, "links": 300},
+    {"id": "basic", "name_fa": "پایه", "days": 30, "links": 30},
+    {"id": "pro", "name_fa": "حرفه‌ای", "days": 30, "links": 100},
+    {"id": "business", "name_fa": "حرفه‌ای+", "days": 30, "links": 300},
 ]
 
 
@@ -53,18 +55,29 @@ def to_toman(usd: float, toman_per_usd: float) -> int:
     return max(10_000, round(usd * toman_per_usd / 10_000) * 10_000)
 
 
-def make_plans(toman_per_usd: float, tiers: list[dict] | None = None) -> list[Plan]:
-    return [
-        Plan(
-            id=t["id"],
-            name_fa=t["name_fa"],
-            days=int(t.get("days", 30)),
-            price_toman=to_toman(t["price_usd"], toman_per_usd),
-            links=int(t["links"]),
-            price_usd=float(t["price_usd"]),
+def make_plans(
+    toman_per_usd: float, tiers: list[dict] | None = None, economics: Economics | None = None
+) -> list[Plan]:
+    econ = economics or Economics()
+    plans = []
+    for t in tiers or PLAN_TIERS:
+        if t.get("price_usd") is not None:  # priced by hand
+            usd = float(t["price_usd"])
+            toman = to_toman(usd, toman_per_usd)
+        else:
+            toman = econ.price_toman(int(t["links"]), toman_per_usd)
+            usd = round(toman / toman_per_usd, 2)
+        plans.append(
+            Plan(
+                id=t["id"],
+                name_fa=t["name_fa"],
+                days=int(t.get("days", 30)),
+                price_toman=toman,
+                links=int(t["links"]),
+                price_usd=usd,
+            )
         )
-        for t in (tiers or PLAN_TIERS)
-    ]
+    return plans
 
 
 class PaymentError(RuntimeError):

@@ -45,6 +45,7 @@ from .media import (
     zip_images,
 )
 from .models import MarketListing, SupplierOffer
+from .economics import Economics
 from .payments import DemoGateway, Gateway, PaymentError, Plan, Zarinpal, make_plans
 from .pricing import RETURN_RESERVE, PricingConfig, Unprofitable, price_product
 from .scoring import assess
@@ -82,6 +83,7 @@ class Settings:
     gateway: Gateway | None = None  # None: no online payment, an admin activates sellers
     toman_per_usd: float = 234_500  # the free-market rate; plan prices and the calculator
     plans: list[Plan] = field(default_factory=lambda: make_plans(234_500))
+    economics: Economics = field(default_factory=Economics)  # what the plans cost us; their margin
     pricing: PricingConfig = field(default_factory=PricingConfig)
     per_product: int = 3  # sellers per product
     picks_per_seller: int = 8
@@ -114,6 +116,7 @@ class Settings:
         elif env("ZARINPAL_MERCHANT_ID"):
             gateway = Zarinpal(env("ZARINPAL_MERCHANT_ID"), sandbox=env("ZARINPAL_SANDBOX") == "1")
         toman_per_usd = float(env("HUNTER_TOMAN_PER_USD", "234500"))
+        economics = Economics.from_env()
         return cls(
             db_path=env("HUNTER_DB", cls.db_path),
             public_url=env("HUNTER_PUBLIC_URL", cls.public_url).rstrip("/"),
@@ -121,8 +124,11 @@ class Settings:
             gateway=gateway,
             toman_per_usd=toman_per_usd,
             plans=make_plans(
-                toman_per_usd, json.loads(env("HUNTER_PLANS")) if env("HUNTER_PLANS") else None
+                toman_per_usd,
+                json.loads(env("HUNTER_PLANS")) if env("HUNTER_PLANS") else None,
+                economics,
             ),
+            economics=economics,
             pricing=PricingConfig.from_env(),
             per_product=int(env("HUNTER_SELLERS_PER_PRODUCT", "3")),
             link_hunter=link_hunter(),
@@ -277,6 +283,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/", include_in_schema=False)
     def index():
         return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/admin/pricing")
+    def admin_pricing(user=Depends(require_user)):
+        """For the site's admin: the costs by kind, and each plan's price, costs and margin."""
+        if not user["is_admin"]:
+            raise HTTPException(403, "admins_only")
+        return settings.economics.report(settings.plans, settings.toman_per_usd)
 
     @app.post("/api/admin/grant")
     def admin_grant(body: Grant, user=Depends(require_user)):
