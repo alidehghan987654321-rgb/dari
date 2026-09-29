@@ -62,7 +62,7 @@ def test_pages_and_config(client):
     assert client.get("/static/app.js").status_code == 200
     cfg = client.get("/api/config").json()  # would fail on float('inf') in the settings
     assert cfg["online_payment"] is True
-    assert {p["id"]: p["links"] for p in cfg["plans"]} == {"basic": 30, "pro": 100, "business": 300}
+    assert {p["id"]: p["links"] for p in cfg["plans"]} == {"basic": 30, "pro": 100, "business": 200}
     assert all(p["price_toman"] % 10_000 == 0 for p in cfg["plans"])
     assert cfg["pricing"]["last_mile_usd"][-1][0] is None
     assert any(c["restricted"] for c in cfg["categories"])
@@ -555,14 +555,14 @@ def test_each_plan_has_its_own_quota(link_settings):
 
 def test_plans_are_priced_in_dollars_from_their_costs_and_the_margin():
     basic, pro, business = make_plans(234_500)
-    assert (basic.price_usd, pro.price_usd, business.price_usd) == (4.99, 12.99, 34.99)
+    assert (basic.price_usd, pro.price_usd, business.price_usd) == (6.99, 12.99, 23.99)
     assert (basic.price_toman, pro.price_toman, business.price_toman) == (
-        1_170_000,
+        1_640_000,
         3_050_000,
-        8_210_000,
+        5_630_000,
     )
-    assert (basic.links, pro.links, business.links) == (30, 100, 300)
-    assert make_plans(300_000)[0].price_toman == 1_500_000  # the rate moves the toman price only
+    assert (basic.links, pro.links, business.links) == (30, 100, 200)
+    assert make_plans(300_000)[0].price_toman == 2_100_000  # the rate moves the toman price only
     # a tier priced by hand keeps its price
     hand = make_plans(234_500, [{"id": "x", "name_fa": "x", "price_usd": 6, "links": 30}])[0]
     assert (hand.price_usd, hand.price_toman) == (6, 1_410_000)
@@ -572,7 +572,9 @@ def test_every_plan_keeps_the_target_margin_at_its_worst():
     econ = Economics()
     report = econ.report(make_plans(234_500), 234_500)
     for row in report["plans"]:
-        assert row["ok"] and econ.margin <= row["margin"] < econ.margin + 0.03
+        assert row["ok"] and econ.margin <= row["margin"]
+        # just over the target, unless the entry price lifts it
+        assert row["margin"] < econ.margin + 0.03 or row["price_usd"] == econ.min_price
         # the parts add up to the price
         parts = row["analyses_usd"] + row["fixed_usd"] + row["sales_usd"] + row["profit_usd"]
         assert parts == pytest.approx(row["price_usd"], abs=0.02)
@@ -617,7 +619,16 @@ def test_costs_and_margin_from_env(monkeypatch):
     assert econ.sales_share == pytest.approx(0.11)
     report = econ.report(s.plans, s.toman_per_usd)
     assert all(r["ok"] and r["margin"] >= 0.5 for r in report["plans"])
-    assert s.plans[0].price_usd == charm_usd(econ.price_usd(30))
+    assert s.plans[0].price_usd == max(charm_usd(econ.price_usd(30)), econ.min_price)
+
+
+def test_no_plan_sells_under_the_entry_price(monkeypatch):
+    econ = Economics()
+    assert econ.min_price == 6.99 and econ.price(1) == 6.99  # a tiny plan still costs that
+    assert econ.price(100) == charm_usd(econ.price_usd(100)) > econ.min_price
+    monkeypatch.setenv("HUNTER_MIN_PRICE", "7")
+    s = Settings.from_env()
+    assert s.economics.min_price == 7 and s.plans[0].price_usd == 7
 
 
 def test_charm_prices():
@@ -833,7 +844,7 @@ def test_calculator_settings_in_config(client, settings):
 def test_toman_rate_from_env(monkeypatch):
     monkeypatch.setenv("HUNTER_TOMAN_PER_USD", "250000")
     s = Settings.from_env()
-    assert s.toman_per_usd == 250_000 and s.plans[0].price_toman == 1_250_000  # $4.99
+    assert s.toman_per_usd == 250_000 and s.plans[0].price_toman == 1_750_000  # $6.99
 
 
 def test_health_check(tmp_path, sample_hunt):

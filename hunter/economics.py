@@ -14,8 +14,9 @@ plan for) and the sales costs, and leaves the target net margin:
 
     price = (analyses + share of fixed) / (1 - sales share - margin)
 
-rounded up to a dollar price ending in .99, so the margin ends a little above the target; the
-toman price follows from the day's rate. A plan that falls under the floor (a plan priced by
+rounded up to a dollar price ending in .99, so the margin ends a little above the target, and
+never under the entry price (the cheapest plan starts there); the toman price follows from the
+day's rate. A plan that falls under the floor (a plan priced by
 hand, a new cost) is flagged. Every figure can be changed from the environment (see from_env).
 """
 
@@ -124,6 +125,7 @@ class Economics:
     per_analysis: tuple[Cost, ...] = PER_ANALYSIS
     sales: tuple[Cost, ...] = SALES
     model: str = DEFAULT_MODEL  # Claude's model, for the record
+    min_price: float = 6.99  # no plan sells for less, whatever its costs
     margin: float = 0.40  # the net margin a plan's price is set for
     min_margin: float = 0.30  # under this, a plan is flagged
     subscribers: int = 200  # paying subscribers the fixed costs are spread over
@@ -153,8 +155,8 @@ class Economics:
         return (links * self.analysis_usd + self.fixed_share_usd) / keep
 
     def price(self, links: int) -> float:
-        """A plan's price in dollars, as sold: rounded up to .99."""
-        return charm_usd(self.price_usd(links))
+        """A plan's price in dollars, as sold: rounded up to .99, and at least min_price."""
+        return max(charm_usd(self.price_usd(links)), self.min_price)
 
     def plan(self, links: int, price_usd: float) -> dict[str, float]:
         """What one subscriber of a plan brings in and costs us a month, at worst."""
@@ -222,6 +224,7 @@ class Economics:
             "model": self.model,
             "margin": self.margin,
             "min_margin": self.min_margin,
+            "min_price": self.min_price,
             "subscribers": self.subscribers,
             "mix": weights,
             "kinds": [
@@ -236,9 +239,9 @@ class Economics:
 
     @classmethod
     def from_env(cls) -> Economics:
-        """HUNTER_MARGIN, HUNTER_MIN_MARGIN, HUNTER_SUBSCRIBERS, HUNTER_CLAUDE_MODEL (its AI
-        costs), and HUNTER_COSTS: a JSON object from a cost's key to its value, e.g.
-        {"keepa": 53, "lookup": 0.03, "tax": 0}."""
+        """HUNTER_MARGIN, HUNTER_MIN_MARGIN, HUNTER_MIN_PRICE (the entry price in dollars),
+        HUNTER_SUBSCRIBERS, HUNTER_CLAUDE_MODEL (its AI costs), and HUNTER_COSTS: a JSON object
+        from a cost's key to its value, e.g. {"keepa": 53, "lookup": 0.03, "tax": 0}."""
         env = os.environ.get
         costs = json.loads(env("HUNTER_COSTS") or "{}")
         model = env("HUNTER_CLAUDE_MODEL") or DEFAULT_MODEL
@@ -255,5 +258,6 @@ class Economics:
             model=model,
             margin=float(env("HUNTER_MARGIN", "0.40")),
             min_margin=float(env("HUNTER_MIN_MARGIN", "0.30")),
+            min_price=float(env("HUNTER_MIN_PRICE", "6.99")),
             subscribers=int(env("HUNTER_SUBSCRIBERS", "200")),
         )
