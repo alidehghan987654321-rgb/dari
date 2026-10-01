@@ -11,6 +11,7 @@
 //           GET  /api/messages?status=open|all                POST /api/messages/:id/done {done}
 //           GET  /api/settings   PUT /api/settings (owner)
 //           GET  /api/account    POST /api/users (owner)      DELETE /api/users/:id (owner)
+//           POST /api/billing/checkout {plan_id} (owner)      POST /api/billing/portal (owner)   (M6)
 
 import { londonNow, fmtHHMM, isValidDate, addDays, normalizePhone, bookingSms, cancelSms } from './lib.js';
 import { loadBusiness, findService, freeSlots, createBooking, moveBooking, cancelBooking, getBooking } from './bookings.js';
@@ -22,6 +23,7 @@ import { validateSettings, settingsOf, applySettings } from './profile.js';
 import { sendEmail } from './email.js';
 import { usageForPanel, sendTrackedSms } from './usage.js';
 import { trySync, provisioningConfigured } from './provisioning.js';
+import { billingConfigured, createCheckout, createPortal, BillingError } from './billing.js';
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
@@ -268,7 +270,18 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
     const users = canManage(user)
       ? ((await env.DB.prepare('SELECT * FROM users WHERE business_id = ? ORDER BY id').bind(business.id).all()).results || []).map(publicUser)
       : [];
-    return json({ ok: true, usage: await usageForPanel(env, business), users, billing_portal: null });
+    const sub = await env.DB.prepare('SELECT status, stripe_customer_id, stripe_subscription_id, cancel_at_period_end FROM subscriptions WHERE business_id = ?').bind(business.id).first();
+    const plans = ((await env.DB.prepare('SELECT id, name, currency, monthly_price, included_minutes, overage_per_min FROM plans WHERE active = 1 ORDER BY monthly_price').all()).results) || [];
+    const enabled = billingConfigured(env) && canManage(user);
+    return json({
+      ok: true, usage: await usageForPanel(env, business), users,
+      billing: {
+        enabled, plans,
+        can_checkout: enabled && !(sub?.stripe_subscription_id && sub.status !== 'cancelled'),
+        has_portal: enabled && !!sub?.stripe_customer_id,
+        cancel_at_period_end: !!sub?.cancel_at_period_end,
+      },
+    });
   }
 
   if (path === '/api/users' && method === 'POST') {
@@ -286,6 +299,20 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
       return json({ ok: true, user: publicUser(r) }, 201);
     } catch (e) {
       if (/UNIQUE/i.test(String(e?.message))) return err('exists', 409);
+      throw e;
+    }
+  }
+
+  if ((path === '/api/billing/checkout' || path === '/api/billing/portal') && method === 'POST') {
+    if (!canManage(user)) return err('forbidden', 403);
+    try {
+      const b = await body(request);
+      const r = path.endsWith('checkout')
+        ? await createCheckout(env, business, user, b.plan_id, url.origin)
+        : await createPortal(env, business, url.origin);
+      return json({ ok: true, url: r.url });
+    } catch (e) {
+      if (e instanceof BillingError) return err(e.code, e.status);
       throw e;
     }
   }

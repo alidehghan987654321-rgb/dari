@@ -35,3 +35,27 @@ export function fakePlatform(mock) {
   });
   return st;
 }
+
+/** Minimal Stripe: prices/products, Checkout, Portal, Subscriptions (state set by the test), invoice items. */
+export function fakeStripe(mock) {
+  const st = { prices: [], subs: new Map(), checkouts: [], invoiceItems: [], n: 0 };
+  mock.routes.push(({ method: m, url: u, body }) => {
+    if (u.startsWith('/v1/prices') && m === 'GET') {
+      const key = new URLSearchParams(u.split('?')[1]).get('lookup_keys[0]');
+      return { body: { data: st.prices.filter(p => p.lookup_key === key) } };
+    }
+    if (u === '/v1/products' && m === 'POST') return { body: { id: `prod_${++st.n}` } };
+    if (u === '/v1/prices' && m === 'POST') {
+      const p = { id: `price_${body['metadata[plan_id]'] || ++st.n}`, lookup_key: body.lookup_key, unit_amount: Number(body.unit_amount), currency: body.currency };
+      st.prices.push(p);
+      return { body: p };
+    }
+    if (u === '/v1/checkout/sessions' && m === 'POST') { st.checkouts.push(body); return { body: { id: `cs_${++st.n}`, url: `https://checkout.stripe.test/cs_${st.n}` } }; }
+    if (u === '/v1/billing_portal/sessions' && m === 'POST') return { body: { url: `https://billing.stripe.test/${body.customer}` } };
+    const sub = /^\/v1\/subscriptions\/(\w+)$/.exec(u);
+    if (sub && m === 'GET') return st.subs.has(sub[1]) ? { body: st.subs.get(sub[1]) } : { status: 404, body: { error: { message: 'No such subscription' } } };
+    if (u === '/v1/invoiceitems' && m === 'POST') { st.invoiceItems.push(body); return { body: { id: `ii_${++st.n}` } }; }
+    return undefined;
+  });
+  return st;
+}

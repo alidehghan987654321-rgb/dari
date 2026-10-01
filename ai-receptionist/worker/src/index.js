@@ -2,6 +2,7 @@
 //
 // Tool routes (Bearer TOOL_SECRET):   POST /b/:businessId/{availability|book|find-bookings|reschedule|cancel|message}
 // ElevenLabs post-call webhook:       POST /webhooks/post-call   (HMAC, ELEVENLABS_WEBHOOK_SECRET)
+// Stripe webhook:                     POST /webhooks/stripe      (Stripe-Signature, STRIPE_WEBHOOK_SECRET) (M6)
 // Admin (Bearer ADMIN_SECRET):        PUT  /admin/businesses      body: { agent_id?, profile, active? }
 //                                     GET  /admin/b/:businessId/bookings?date=YYYY-MM-DD
 //                                     GET  /admin/b/:businessId/calls?limit=20
@@ -10,6 +11,7 @@
 //                                     PUT  /admin/subscriptions   body: { business_id, plan_id, status, period_start, period_end } (M4)
 //                                     GET  /admin/usage?period=YYYY-MM   margin report (M4)
 //                                     POST /admin/provisioning/setup     one-off ElevenLabs workspace secret (M5)
+//                                     POST /admin/stripe/setup           Stripe products + prices for every plan (M6)
 //                                     POST /admin/b/:businessId/provision { action: create|sync|attach-number|pause|resume|delete } (M5)
 // Owner panel API (session cookie):   /api/*  (see panel.js); the panel itself is static, served from ../web (M3)
 // Crons (wrangler.toml):              */5 * * * *  alert rules -> team Telegram chat (M2)
@@ -29,6 +31,7 @@ import { logToolEvent, recordEvent, trackedNotify, runAlerts, runSynthetic, heal
 import { handleApi } from './panel.js';
 import { parseIdentifier } from './auth.js';
 import { setup as provisioningSetup, provisionAction, ProvisionError, driftCheck, deleteExpiredAgents } from './provisioning.js';
+import { stripeWebhook, setupStripe, BillingError } from './billing.js';
 import { recordCallUsage, applyUsageRules, runUsageRules, usageReport, upsertSubscription, sendTrackedSms } from './usage.js';
 
 const json = (data, status = 200) =>
@@ -44,6 +47,10 @@ export default {
       if (path === '/' && request.method === 'GET') return json({ ok: true, service: 'ai-receptionist' });
 
       if (path === '/webhooks/post-call' && request.method === 'POST') return postCall(request, env, ctx);
+      if (path === '/webhooks/stripe' && request.method === 'POST') {
+        const r = await stripeWebhook(env, request);
+        return json(r.body, r.status);
+      }
 
       if (path.startsWith('/api/')) return await handleApi(request, env, ctx, path, url);
 
@@ -310,6 +317,14 @@ async function admin(request, env, path, url) {
     const period = url.searchParams.get('period') || new Date().toISOString().slice(0, 7);
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return json({ ok: false, error: 'period must be YYYY-MM' }, 400);
     return json({ ok: true, ...(await usageReport(env, period)) });
+  }
+  if (path === '/admin/stripe/setup' && request.method === 'POST') {
+    try {
+      return json({ ok: true, ...(await setupStripe(env)) });
+    } catch (e) {
+      if (e instanceof BillingError) return json({ ok: false, error: e.code, message: e.message }, e.status);
+      throw e;
+    }
   }
   if (path === '/admin/provisioning/setup' && request.method === 'POST') {
     return provisioningResponse(() => provisioningSetup(env));

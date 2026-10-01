@@ -171,7 +171,10 @@ async function boot() {
 const SCREENS = { today: screenToday, bookings: screenBookings, calls: screenCalls, call: screenCall, messages: screenMessages, settings: screenSettings, account: screenAccount };
 
 async function render() {
-  const [name, arg] = location.hash.replace(/^#\/?/, '').split('/');
+  const [route, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
+  const [name, arg] = route.split('/');
+  const params = new URLSearchParams(query);
+  if (params.get('checkout') === 'success') setTimeout(() => toast(t('checkout_success')), 300);
   if (name === 'login' || !S.user) return renderLogin();
   const screen = SCREENS[name] || screenToday;
   const main = shell(name === 'call' ? 'calls' : (SCREENS[name] ? name : 'today'));
@@ -647,6 +650,27 @@ async function screenSettings(main) {
 
 // ---------------- account ----------------
 
+/** Owner-only billing actions (M6): start a subscription through Stripe Checkout, or open the Customer Portal. */
+function billingBlock(b) {
+  if (!b?.enabled) return h('div', { class: 'row' }, h('span', {}, t('invoices')), h('span', { class: 'spacer' }), h('span', { class: 'muted small' }, t('invoices_soon')));
+  const error = h('p', { class: 'error', role: 'alert' });
+  const go = async (path, body) => {
+    error.textContent = '';
+    try { location.href = (await api('POST', path, body)).url; } catch (err) { error.textContent = errText(err); }
+  };
+  return h('div', { class: 'stack' },
+    b.can_checkout ? h('div', { class: 'stack' },
+      h('h3', {}, t('choose_plan')),
+      b.plans.map(p => h('div', { class: 'card stack' },
+        h('div', { class: 'row wrap' }, h('b', {}, p.name), h('span', { class: 'spacer' }),
+          h('b', {}, fmtMoney(p.monthly_price / 100, p.currency)), h('span', { class: 'muted small' }, t('per_month'))),
+        h('div', { class: 'small muted' }, t('plan_minutes', { n: p.included_minutes }), ' · ', t('plan_overage', { p: fmtMoney(p.overage_per_min / 100, p.currency) })),
+        h('button', { class: 'btn primary block', onclick: () => go('/billing/checkout', { plan_id: p.id }) }, t('subscribe'), ' — ', p.name)))) : null,
+    b.cancel_at_period_end ? h('p', { class: 'banner', role: 'note' }, t('cancels_at_period_end')) : null,
+    b.has_portal ? h('button', { class: 'btn block', onclick: () => go('/billing/portal', {}) }, t('invoices')) : null,
+    error);
+}
+
 async function screenAccount(main) {
   const d = await api('GET', '/account');
   const u = d.usage;
@@ -691,8 +715,7 @@ async function screenAccount(main) {
         u?.plan?.monthly_price != null ? h('span', { class: 'muted' }, fmtMoney(u.plan.monthly_price / 100, u.plan.currency)) : null,
         u?.status ? h('span', { class: `pill ${u.status === 'active' ? 'accent' : u.status === 'trial' ? '' : 'danger'}` }, t(`status_${u.status}`)) : null),
       usageBlock(u, true),
-      h('div', { class: 'row' }, h('span', {}, t('invoices')), h('span', { class: 'spacer' }),
-        d.billing_portal ? h('a', { class: 'btn', href: d.billing_portal }, t('invoices')) : h('span', { class: 'muted small' }, t('invoices_soon')))),
+      billingBlock(d.billing)),
 
     d.users.length ? h('section', {},
       h('h2', {}, t('users')),

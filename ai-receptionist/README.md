@@ -182,6 +182,25 @@ jq '{agent_id:"AGENT_ID", profile:.}' ../prompts/business_profile.example.json \
 - **بررسی روزانه**: هر روز تنظیمات زنده هر ایجنت با چیزی که باید باشد مقایسه می‌شود و اختلاف (مثلاً ویرایش دستی در داشبورد) به گروه تیم گزارش می‌شود. ایجنت کسب‌وکارهایی که بیش از دوره نگهداری لغو شده‌اند حذف می‌شود.
 - **تغییر قالب**: `config/agent_template.json` را عوض کنید و `template_version` را یکی بالا ببرید؛ همگام‌سازی بعدی همه ایجنت‌ها و ابزارها را به‌روز می‌کند.
 
+## پرداخت با Stripe (M6)
+
+صاحب کار بعد از ۱۴ روز آزمایش با کارت ماهانه پرداخت می‌کند؛ ما هیچ‌وقت اطلاعات کارت را نمی‌بینیم.
+
+- **راه‌اندازی** (اول در حالت test):
+  ```bash
+  npx wrangler secret put STRIPE_SECRET_KEY        # sk_test_... بعداً sk_live_...
+  # در داشبورد Stripe یک webhook به https://WORKER_URL/webhooks/stripe بسازید با رویدادهای:
+  #   checkout.session.completed, customer.subscription.created/updated/deleted, invoice.paid, invoice.payment_failed, invoice.created
+  npx wrangler secret put STRIPE_WEBHOOK_SECRET    # whsec_... همان webhook
+  npm run db:init:remote && npm run deploy
+  curl -X POST https://WORKER_URL/admin/stripe/setup -H "Authorization: Bearer ADMIN_SECRET"   # محصول و قیمت هر پلن
+  ```
+  Customer Portal را یک بار در داشبورد Stripe (Settings → Billing → Customer portal) فعال کنید.
+- **پنل**: صفحه «حساب» دکمه «شروع اشتراک» برای هر پلن دارد (Stripe Checkout). روزهای باقی‌مانده آزمایش به Stripe منتقل می‌شود؛ آزمایش تمام‌شده تکرار نمی‌شود. «فاکتورها و پرداخت» Customer Portal را باز می‌کند (کارت، فاکتورها، لغو). فقط صاحب کار.
+- **وب‌هوک**: امضا با Web Crypto چک می‌شود و هر رویداد فقط یک بار پردازش می‌شود. وضعیت اشتراک (آزمایشی، فعال، پرداخت معوق، متوقف، لغو) و دوره در جدول `subscriptions` به‌روز می‌شود؛ پرداخت ناموفق به صاحب کار پیامک و تلگرام می‌دهد و بعد از ۳ روز مهلت منشی فقط پیام می‌گیرد (M4). آزمایشی که بدون پرداخت تمام شود هم بعد از ۳ روز همین‌طور.
+- **دقیقه اضافه**: موقع تمدید، Stripe یک فاکتور پیش‌نویس می‌سازد؛ دقیقه‌های اضافه دوره تمام‌شده (از جدول `usage` خودمان) یک بار به همان فاکتور اضافه می‌شود.
+- **مالیات (VAT)**: `PRICES_INCLUDE_VAT` در `wrangler.toml` تعیین می‌کند قیمت‌ها با مالیات‌اند یا بدون. Checkout آدرس و شماره VAT کسب‌وکار را می‌گیرد. محاسبه خودکار مالیات روشن نیست تا وضعیت ثبت VAT ما مشخص شود (تصمیم تجاری).
+
 ## نکته‌های مهم
 
 - **هیچ secret را داخل کد یا گیت نگذارید**؛ فقط با `wrangler secret put`.

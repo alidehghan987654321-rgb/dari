@@ -47,6 +47,8 @@ export function usageRules({ plan, sub, usedMinutes, hardCap = false, sent = [],
     const days = (now - new Date(sub.status_changed_at)) / 864e5;
     if ((sub.status === 'past_due' || sub.status === 'paused') && days >= GRACE_DAYS) [messageOnly, reason] = [true, sub.status];
     if (sub.status === 'cancelled') [messageOnly, reason] = [true, 'cancelled'];
+    // A trial that ended without a paid subscription: same 3-day grace as a failed payment (M6/M8).
+    if (sub.status === 'trial' && sub.trial_end && (now - new Date(`${sub.trial_end}T23:59:59Z`)) / 864e5 >= GRACE_DAYS) [messageOnly, reason] = [true, 'trial_ended'];
   }
   return { notify, messageOnly, reason };
 }

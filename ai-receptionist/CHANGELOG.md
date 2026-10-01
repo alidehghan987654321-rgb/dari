@@ -2,6 +2,30 @@
 
 Newest first. Every entry: what changed, how to deploy, manual steps.
 
+## M6 — Billing with Stripe
+
+- **Added** `worker/src/billing.js` over plain fetch and Web Crypto (no Node SDK), pinned to Stripe API version
+  `2026-08-26.dahlia` (`STRIPE_API_VERSION` overrides). `POST /admin/stripe/setup` creates a Product and monthly
+  Price per plan, found again by `lookup_key` (idempotent).
+- **Added** panel billing (owners only): Checkout in subscription mode with the remaining trial carried over,
+  billing address and VAT number collected; Customer Portal for card, invoices and cancellation.
+- **Added** `POST /webhooks/stripe`: signature verified, events stored and processed once, a failed run is
+  forgotten so Stripe's retry is processed. Handles checkout.session.completed, customer.subscription.*,
+  invoice.paid, invoice.payment_failed (owner told by SMS + Telegram) and invoice.created.
+- **Overage**: on a renewal's draft invoice (`invoice.created`, `billing_reason = subscription_cycle`) one invoice
+  item for the minutes over the plan in the period that just ended, from our `usage` table, recorded in
+  `billing_overage` so it is never charged twice. Chosen over Billing Meters: no meter objects, no metered prices,
+  no per-call reporting, and our usage table stays the source of truth.
+- **Added** usage rule: a trial that ends without a paid subscription goes message-only after the same 3-day grace.
+- **Fixed** panel routes with a query string (`#/account?checkout=success`) now open the right screen.
+- **Assumptions**: field names follow the official stripe-node SDK for the pinned version (a Subscription's period
+  is on its items; an Invoice reaches its subscription through `parent.subscription_details`). VAT: prices are
+  ex-VAT unless `PRICES_INCLUDE_VAT = "true"`; automatic tax stays off until our VAT registration is decided
+  (TODO, business decision).
+- **Deploy**: `wrangler secret put STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` (webhook endpoint with the 7 events
+  listed in the README), `npm run db:init:remote` (migration 0006), `npm run deploy`, `POST /admin/stripe/setup`,
+  enable the Customer Portal in the Stripe dashboard.
+
 ## M5 — Automatic agent provisioning
 
 - **Added** `config/agent_template.json` (versioned) and `worker/src/provisioning.js`: idempotent `create` (an
