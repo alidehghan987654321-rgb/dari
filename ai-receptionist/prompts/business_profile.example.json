@@ -1,0 +1,115 @@
+{
+  "business_id": "demo-barber-london",
+  "business_name": "Pars Barbers",
+  "business_type": "barber shop",
+  "city": "London",
+  "country": "GB",
+  "currency": "GBP",
+  "languages": [
+    "fa",
+    "en"
+  ],
+  "assistant_name": "Sara",
+  "address": "12 Example Road, London W3 0AA",
+  "nearest_station": "Acton Town (Piccadilly and District lines)",
+  "parking": "Free street parking after 6:30pm on weekdays and all day Sunday.",
+  "phone_for_transfer": "+447700900000",
+  "transfer_hours": "Monday to Saturday, 10:00 to 18:00 UK time",
+  "timezone": "Europe/London",
+  "opening_hours": {
+    "mon": [
+      [
+        "10:00",
+        "19:00"
+      ]
+    ],
+    "tue": [
+      [
+        "10:00",
+        "19:00"
+      ]
+    ],
+    "wed": [
+      [
+        "10:00",
+        "19:00"
+      ]
+    ],
+    "thu": [
+      [
+        "10:00",
+        "20:00"
+      ]
+    ],
+    "fri": [
+      [
+        "10:00",
+        "20:00"
+      ]
+    ],
+    "sat": [
+      [
+        "09:00",
+        "18:00"
+      ]
+    ],
+    "sun": []
+  },
+  "closed_dates": [
+    "2026-12-25",
+    "2026-12-26",
+    "2027-01-01"
+  ],
+  "capacity": 2,
+  "slot_step_minutes": 15,
+  "min_notice_minutes": 60,
+  "max_days_ahead": 30,
+  "services": [
+    {
+      "id": "mens-cut",
+      "name_en": "Men's haircut",
+      "name_fa": "اصلاح موی آقایان",
+      "duration_min": 30,
+      "price_gbp": 20
+    },
+    {
+      "id": "cut-beard",
+      "name_en": "Haircut and beard",
+      "name_fa": "اصلاح مو و ریش",
+      "duration_min": 45,
+      "price_gbp": 28
+    },
+    {
+      "id": "kids-cut",
+      "name_en": "Kids haircut (under 12)",
+      "name_fa": "اصلاح موی بچه (زیر ۱۲ سال)",
+      "duration_min": 20,
+      "price_gbp": 14
+    },
+    {
+      "id": "beard-trim",
+      "name_en": "Beard trim",
+      "name_fa": "مرتب کردن ریش",
+      "duration_min": 15,
+      "price_gbp": 10
+    }
+  ],
+  "policies": [
+    "Walk-ins are welcome but booked customers go first.",
+    "Please cancel at least 2 hours before the appointment.",
+    "Card and cash accepted. No payment is taken on the phone."
+  ],
+  "faq": [
+    {
+      "q": "Do you do hot towel shaves?",
+      "a": "Yes, as part of the haircut and beard service."
+    },
+    {
+      "q": "Do you speak Persian?",
+      "a": "Yes, all our barbers speak Persian and English."
+    }
+  ],
+  "booking_provider": "d1",
+  "telegram_chat_id": "123456789",
+  "sms_enabled": true
+}

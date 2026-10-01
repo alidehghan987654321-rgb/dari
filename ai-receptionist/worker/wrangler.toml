@@ -1,0 +1,23 @@
+name = "ai-receptionist"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "receptionist"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+
+[vars]
+RETENTION_DAYS = "90"
+# EXTERNAL_BOOKING_API = "https://booking.example.com/api"   # our own booking product, when connected
+
+[triggers]
+crons = ["17 3 * * *"]   # daily 03:17 UTC — data retention
+
+# Secrets (set with `npx wrangler secret put NAME`, never commit them):
+#   TOOL_SECRET                 shared with ElevenLabs tool headers
+#   ADMIN_SECRET                for /admin routes
+#   ELEVENLABS_WEBHOOK_SECRET   post-call webhook HMAC
+#   TELEGRAM_BOT_TOKEN          owner notifications
+#   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM   confirmation SMS
+#   EXTERNAL_BOOKING_KEY        optional
