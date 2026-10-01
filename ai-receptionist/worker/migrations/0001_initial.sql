@@ -1,5 +1,5 @@
 -- D1 schema for the AI receptionist backend.
--- Apply: npx wrangler d1 execute receptionist --remote --file=schema.sql
+-- Applied with: npx wrangler d1 migrations apply receptionist --local / --remote
 
 CREATE TABLE IF NOT EXISTS businesses (
   id            TEXT PRIMARY KEY,          -- slug, e.g. 'pars-barbers-acton'

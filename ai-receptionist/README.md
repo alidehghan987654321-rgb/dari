@@ -21,9 +21,9 @@ ai-receptionist/
 │   ├── src/index.js                  ← مسیرها: نوبت، لغو، جابه‌جایی، پیام، وب‌هوک، ادمین
 │   ├── src/lib.js                    ← منطق وقت خالی، ساعت UK، شماره تلفن، امضا
 │   ├── src/notify.js                 ← تلگرام صاحب کار + پیامک Twilio
-│   ├── schema.sql                    ← جدول‌های دیتابیس
+│   ├── migrations/                   ← جدول‌های دیتابیس (migration‌های شماره‌دار D1)
 │   ├── wrangler.toml
-│   └── test/lib.test.js              ← ۱۴ تست واحد
+│   └── test/                         ← تست‌های واحد + test/integration (روی wrangler dev با D1 محلی)
 ├── build-prompts/                    ← ۹ پرامپت ساخت ماژول‌های باقی‌مانده + master context (README داخلش)
 └── docs/
     ├── onboarding_checklist.md       ← چک‌لیست راه‌اندازی هر مشتری جدید
@@ -47,7 +47,7 @@ cd worker
 npm install
 npx wrangler login
 npx wrangler d1 create receptionist            # id را در wrangler.toml بگذارید
-npm run db:init:remote
+npm run db:init:remote                          # همه migration‌ها را اعمال می‌کند؛ بعد از هر به‌روزرسانی دوباره اجرا کنید
 npx wrangler secret put TOOL_SECRET            # یک رشته تصادفی بلند
 npx wrangler secret put ADMIN_SECRET
 npx wrangler secret put ELEVENLABS_WEBHOOK_SECRET   # بعد از ساخت webhook در ElevenLabs
@@ -55,7 +55,8 @@ npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TWILIO_ACCOUNT_SID
 npx wrangler secret put TWILIO_AUTH_TOKEN
 npx wrangler secret put TWILIO_FROM            # شماره Twilio با فرمت +44...
-npm test
+npm test                                        # تست واحد
+npm run test:integration                        # تست یکپارچه روی wrangler dev محلی (بدون حساب Cloudflare)
 npm run deploy                                  # آدرس Worker را یادداشت کنید
 ```
 

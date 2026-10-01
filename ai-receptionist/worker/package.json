@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:init:local": "wrangler d1 execute receptionist --local --file=schema.sql",
-    "db:init:remote": "wrangler d1 execute receptionist --remote --file=schema.sql",
-    "test": "node --test test/*.test.js"
+    "db:init:local": "wrangler d1 migrations apply receptionist --local",
+    "db:init:remote": "wrangler d1 migrations apply receptionist --remote",
+    "test": "node --test test/*.test.js",
+    "test:integration": "node --test --test-concurrency=1 test/integration/*.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
