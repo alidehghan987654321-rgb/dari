@@ -2,6 +2,21 @@
 
 Newest first. Every entry: what changed, how to deploy, manual steps.
 
+## M1 — Automated conversation QA
+
+- **Added** `qa/`: `npm run qa` plays 23 scenarios from `prompts/test_scenarios.md` (`qa/scenarios.yaml`) against the
+  rendered system prompt with the same LLM as the live agent, real tool calls to a local Worker + D1, and a deterministic
+  judge. Writes `qa/report.md` / `report.json` with pass/fail per case, booking accuracy, invented-fact count and average
+  turns per booking. `--mutate no-invent-guard` proves a broken prompt is caught; `--llm-judge` adds a separate style
+  check; `--platform` (experimental) runs against the real ElevenLabs agent via its simulate-conversation API.
+- **Added** GitHub Action `Receptionist QA` (manual trigger). CI runs the harness's own tests with a scripted agent.
+- **Changed** `scripts/build_prompt.mjs` now uses the shared `scripts/prompt.mjs`. The opening-hours line says the
+  profile's timezone instead of "UK time"; prices use the profile's `currency` (`price` or the older `price_gbp`).
+  A `message_only` profile flag adds a "bookings paused" block (used by M4).
+- **Dependencies** (QA only, never deployed): `@anthropic-ai/sdk` (official client for the model under test),
+  `yaml` (scenario file format required by the M1 spec).
+- **Manual step**: add the repository secret `ANTHROPIC_API_KEY` to run QA from GitHub Actions.
+
 ## Database migrations and integration tests
 
 - **Changed**: `worker/schema.sql` is now `worker/migrations/0001_initial.sql`. New tables come as numbered migration files.
