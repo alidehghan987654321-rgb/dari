@@ -17,7 +17,13 @@ export const REASON_TEXT = {
 export async function loadBusiness(env, id) {
   const row = await env.DB.prepare('SELECT * FROM businesses WHERE id = ?').bind(id).first();
   if (!row) return null;
-  return { id: row.id, agent_id: row.agent_id, active: !!row.active, needs_sync: !!row.needs_sync, profile: JSON.parse(row.profile_json) };
+  const profile = JSON.parse(row.profile_json);
+  // Message-only mode is set by the usage rules (M4), not by the owner; the prompt renderer reads it from the profile.
+  if (row.message_only) profile.message_only = true;
+  return {
+    id: row.id, agent_id: row.agent_id, active: !!row.active, needs_sync: !!row.needs_sync,
+    message_only: !!row.message_only, message_only_reason: row.message_only_reason ?? null, profile,
+  };
 }
 
 export function findService(profile, id) {

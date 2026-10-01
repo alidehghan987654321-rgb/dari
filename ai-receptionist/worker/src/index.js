@@ -7,9 +7,12 @@
 //                                     GET  /admin/b/:businessId/calls?limit=20
 //                                     GET  /admin/health          last 24 h per business (M2)
 //                                     PUT  /admin/users           body: { business_id?, name, phone?, email?, role } (M3)
+//                                     PUT  /admin/subscriptions   body: { business_id, plan_id, status, period_start, period_end } (M4)
+//                                     GET  /admin/usage?period=YYYY-MM   margin report (M4)
 // Owner panel API (session cookie):   /api/*  (see panel.js); the panel itself is static, served from ../web (M3)
 // Crons (wrangler.toml):              */5 * * * *  alert rules -> team Telegram chat (M2)
 //                                     17 3 * * *   retention + daily synthetic check (M2)
+//                                     7 * * * *    usage thresholds and message-only mode (M4)
 //
 // Tool responses are always HTTP 200 with { ok: true, ... } or
 // { ok: false, error, message_for_agent } so the voice agent can explain the problem to the caller.
@@ -19,10 +22,11 @@ import {
   bookingSms, cancelSms, formatDate,
 } from './lib.js';
 import { fail, loadBusiness, findService, freeSlots, createBooking, moveBooking, cancelBooking } from './bookings.js';
-import { sendTelegram, sendSms } from './notify.js';
+import { sendTelegram } from './notify.js';
 import { logToolEvent, recordEvent, trackedNotify, runAlerts, runSynthetic, healthSummary } from './monitor.js';
 import { handleApi } from './panel.js';
 import { parseIdentifier } from './auth.js';
+import { recordCallUsage, applyUsageRules, runUsageRules, usageReport, upsertSubscription, sendTrackedSms } from './usage.js';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
@@ -61,6 +65,10 @@ export default {
   async scheduled(event, env, ctx) {
     if (event.cron === '*/5 * * * *') {
       await runAlerts(env);
+      return;
+    }
+    if (event.cron === '7 * * * *') {
+      await runUsageRules(env, loadBusiness);
       return;
     }
     // Daily (17 3 * * *): GDPR retention — drop transcripts and old messages after RETENTION_DAYS,
@@ -111,8 +119,12 @@ function confirmedForCaller(env, businessId, bookingId, phone) {
 
 async function tool(name, business, body, env, ctx) {
   const p = business.profile;
-  const sms = (to, text) => ctx.waitUntil(trackedNotify(env, business.id, 'sms', () => sendSms(env, p, to, text)));
+  const sms = (to, text, purpose) => ctx.waitUntil(sendTrackedSms(env, business.id, p, to, text, purpose));
   const telegram = text => ctx.waitUntil(trackedNotify(env, business.id, 'telegram', () => sendTelegram(env, p, text)));
+  // Message-only mode (M4: plan used up with a hard cap, or unpaid after the grace period).
+  if (p.message_only && name !== 'message') {
+    return fail('message_only', 'Bookings by phone are paused for this business right now. Do not book, change or cancel. Offer to take a message with take_message.');
+  }
   if (p.booking_provider === 'external' && name !== 'message') return externalProvider(name, business, body, env);
 
   switch (name) {
@@ -134,7 +146,7 @@ async function tool(name, business, body, env, ctx) {
       if (b.dry_run) return { ok: true, dry_run: true, date: b.date, time: fmtHHMM(b.start), service: b.service.name_en };
       const serviceName = b.lang === 'fa' ? b.service.name_fa : b.service.name_en;
       if (p.sms_enabled) {
-        sms(b.phone, bookingSms({ lang: b.lang, businessName: p.business_name, serviceName, date: b.date, time: fmtHHMM(b.start), id: b.id, address: p.address }));
+        sms(b.phone, bookingSms({ lang: b.lang, businessName: p.business_name, serviceName, date: b.date, time: fmtHHMM(b.start), id: b.id, address: p.address }), 'booking');
       }
       telegram(`✅ New booking ${b.id}\n${b.service.name_en} — ${formatDate(b.date, 'en')} ${fmtHHMM(b.start)}\n${b.name} · ${b.phone}${body.notes ? `\nNote: ${body.notes}` : ''}`);
       return { ok: true, booking_id: b.id, date: b.date, time: fmtHHMM(b.start), service: b.service.name_en, sms_sent: !!p.sms_enabled };
@@ -164,7 +176,7 @@ async function tool(name, business, body, env, ctx) {
       if (!m.ok) return m;
       const lang = old.language === 'fa' ? 'fa' : 'en';
       const serviceName = lang === 'fa' ? m.service.name_fa : m.service.name_en;
-      if (p.sms_enabled) sms(phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: m.date, time: fmtHHMM(m.start), id: old.id, address: p.address }));
+      if (p.sms_enabled) sms(phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: m.date, time: fmtHHMM(m.start), id: old.id, address: p.address }), 'booking');
       telegram(`🔁 Moved ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)} → ${formatDate(m.date, 'en')} ${fmtHHMM(m.start)}\n${old.customer_name} · ${phone}`);
       return { ok: true, booking_id: old.id, date: m.date, time: fmtHHMM(m.start) };
     }
@@ -176,7 +188,7 @@ async function tool(name, business, body, env, ctx) {
       if (!old) return fail('not_found', 'Booking not found for that number. Use find_bookings first.');
       await cancelBooking(env, business, old.id);
       const lang = old.language === 'fa' ? 'fa' : 'en';
-      if (p.sms_enabled) sms(phone, cancelSms({ lang, businessName: p.business_name, date: old.date, time: fmtHHMM(old.start_min), id: old.id }));
+      if (p.sms_enabled) sms(phone, cancelSms({ lang, businessName: p.business_name, date: old.date, time: fmtHHMM(old.start_min), id: old.id }), 'cancel');
       telegram(`❌ Cancelled ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)}\n${old.customer_name} · ${phone}`);
       return { ok: true, booking_id: old.id, cancelled: true };
     }
@@ -219,9 +231,10 @@ async function postCall(request, env, ctx) {
   if (evt.type !== 'post_call_transcription') return json({ ok: true, ignored: evt.type });
 
   const d = evt.data || {};
-  const biz = await env.DB.prepare('SELECT id, profile_json FROM businesses WHERE agent_id = ?').bind(d.agent_id).first();
-  if (!biz) return json({ ok: true, ignored: 'unknown_agent' });
-  const p = JSON.parse(biz.profile_json);
+  const row = await env.DB.prepare('SELECT id FROM businesses WHERE agent_id = ?').bind(d.agent_id).first();
+  if (!row) return json({ ok: true, ignored: 'unknown_agent' });
+  const biz = await loadBusiness(env, row.id);
+  const p = biz.profile;
 
   const meta = d.metadata || {};
   const caller = meta.phone_call?.external_number || d.conversation_initiation_client_data?.dynamic_variables?.system__caller_id || 'hidden';
@@ -235,6 +248,12 @@ async function postCall(request, env, ctx) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
   ).bind(d.conversation_id, biz.id, d.agent_id, caller, duration, summary, success,
     JSON.stringify(collected), JSON.stringify(d.transcript || [])).run();
+
+  // Usage (M4): one row per conversation (replays ignored), then thresholds and message-only mode.
+  if (d.conversation_id) {
+    await recordCallUsage(env, biz.id, d.conversation_id, duration);
+    ctx.waitUntil(applyUsageRules(env, biz).catch(e => console.error(JSON.stringify({ evt: 'usage_rules_failed', business_id: biz.id, error: String(e?.message || e) }))));
+  }
 
   const facts = Object.entries(collected).map(([k, v]) => `${k}: ${v?.value ?? v}`).join('\n');
   ctx.waitUntil(trackedNotify(env, biz.id, 'telegram', () => sendTelegram(env, p, `📞 Call from ${caller} · ${Math.round(duration / 60 * 10) / 10} min · ${success}\n${summary}${facts ? `\n\n${facts}` : ''}`)));
@@ -267,6 +286,15 @@ async function admin(request, env, path, url) {
        ON CONFLICT DO NOTHING RETURNING id`
     ).bind(role === 'superadmin' ? null : b.business_id, String(b.name).slice(0, 80), phone, email, role).first();
     return r ? json({ ok: true, user_id: r.id }) : json({ ok: false, error: 'exists' }, 409);
+  }
+  if (path === '/admin/subscriptions' && request.method === 'PUT') {
+    const r = await upsertSubscription(env, await request.json());
+    return json(r, r.ok ? 200 : 400);
+  }
+  if (path === '/admin/usage' && request.method === 'GET') {
+    const period = url.searchParams.get('period') || new Date().toISOString().slice(0, 7);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return json({ ok: false, error: 'period must be YYYY-MM' }, 400);
+    return json({ ok: true, ...(await usageReport(env, period)) });
   }
   if (path === '/admin/health' && request.method === 'GET') {
     return json({ ok: true, since: new Date(Date.now() - 864e5).toISOString(), businesses: await healthSummary(env) });

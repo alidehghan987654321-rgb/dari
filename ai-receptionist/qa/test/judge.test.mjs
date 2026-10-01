@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { findPrices, languageOf, argMatches, judgeCase, summarise } from '../lib/judge.mjs';
 import { qaToday, resolveDate, zonedToUtc, weekdayOf } from '../lib/clock.mjs';
 import { mutate } from '../lib/mutations.mjs';
-import { loadTemplate } from '../../scripts/prompt.mjs';
+import { loadTemplate, render } from '../../scripts/prompt.mjs';
 import { loadScenarios } from '../run.mjs';
 import { loadTools } from '../lib/tools.mjs';
 
@@ -111,6 +111,12 @@ test('mutation removes the guardrails and fails loudly if the template drifts', 
   assert.ok(!m.includes('Never make up prices'));
   assert.ok(!m.includes('do not guess'));
   assert.throws(() => mutate('nothing here', 'no-invent-guard'), /no longer matches/);
+});
+
+test('message-only profiles render a "bookings paused" block (M4)', () => {
+  const p = { business_name: 'X', business_type: 'barber', city: 'London', address: 'a', services: [], currency: 'GBP' };
+  assert.ok(!render(loadTemplate(), p).includes('bookings by phone are paused'));
+  assert.ok(render(loadTemplate(), { ...p, message_only: true }).includes('bookings by phone are paused'));
 });
 
 test('scenarios cover the required cases and use known tools', () => {

@@ -4,7 +4,7 @@
 import { parseHHMM, isValidDate, normalizePhone } from './lib.js';
 
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-export const EDITABLE = ['opening_hours', 'closed_dates', 'services', 'capacity', 'policies', 'faq', 'phone_for_transfer', 'transfer_hours'];
+export const EDITABLE = ['opening_hours', 'closed_dates', 'services', 'capacity', 'policies', 'faq', 'phone_for_transfer', 'transfer_hours', 'hard_cap'];
 
 const str = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 
@@ -55,6 +55,7 @@ export function validateSettings(s) {
   if ('faq' in s && (!Array.isArray(s.faq) || s.faq.length > 50 || !s.faq.every(f => f && str(f.q, 300) && str(f.a, 300)))) err('faq', 'invalid');
   if ('phone_for_transfer' in s && s.phone_for_transfer && !normalizePhone(s.phone_for_transfer)) err('phone_for_transfer', 'invalid');
   if ('transfer_hours' in s && s.transfer_hours && !str(s.transfer_hours, 200)) err('transfer_hours', 'invalid');
+  if ('hard_cap' in s && s.hard_cap != null && typeof s.hard_cap !== 'boolean') err('hard_cap', 'invalid');
   return errors;
 }
 
@@ -62,6 +63,7 @@ export function validateSettings(s) {
 export function settingsOf(profile) {
   const out = {};
   for (const k of EDITABLE) out[k] = profile[k] ?? null;
+  out.hard_cap = !!profile.hard_cap;
   out.services = (profile.services || []).map(s => ({ ...s, price: s.price ?? s.price_gbp, price_gbp: undefined }));
   out.currency = profile.currency || 'GBP';
   return out;

@@ -134,6 +134,7 @@ function shell(active) {
   const main = h('main', { id: 'main', tabindex: '-1' }, h('p', { class: 'muted' }, t('loading')));
   fill(app, 
     header,
+    S.business?.message_only ? h('div', { class: 'banner danger', role: 'alert' }, t(`message_only_${S.business.message_only_reason || 'hard_cap'}`)) : null,
     S.business?.needs_sync ? h('div', { class: 'banner', role: 'note' }, t('sync_banner')) : null,
     main,
     nav,
@@ -261,12 +262,12 @@ function bookingItem(b, onClick) {
     b.customer_phone && b.status !== 'cancelled' ? telLink(b.customer_phone, t('call_customer', { name: b.customer_name })) : null);
 }
 
-function usageBlock(u) {
+function usageBlock(u, bare = false) {
   if (!u) return null;
   const used = u.minutes_used || 0;
   const included = u.included_minutes;
   const pct = included ? Math.min(100, Math.round((100 * used) / included)) : 0;
-  return h('div', { class: 'card stack' },
+  return h('div', { class: bare ? 'stack' : 'card stack' },
     h('div', { class: 'row' }, h('b', {}, num(used)), h('span', { class: 'muted' }, t('minutes_used')),
       h('span', { class: 'spacer' }), included ? h('span', { class: 'small muted' }, t('of_plan', { n: included })) : null),
     included ? h('div', { class: `meter${used > included ? ' over' : ''}`, role: 'meter', 'aria-valuenow': used, 'aria-valuemin': 0, 'aria-valuemax': included, 'aria-label': t('minutes_used') },
@@ -601,6 +602,10 @@ async function screenSettings(main) {
           h('button', { type: 'button', class: 'btn danger', style: 'margin-top:8px', onclick: () => { draft.faq.splice(i, 1); draw(); } }, t('remove')))),
         h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.faq.push({ q: '', a: '' }); draw(); } }, '+ ', t('add_faq'))),
 
+      h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('plan_limit')),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!draft.hard_cap, onchange: e => { draft.hard_cap = e.target.checked; } }), t('hard_cap')),
+        h('p', { class: 'small muted' }, t('hard_cap_help'))),
+
       h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('transfer')),
         input('transfer-number', t('transfer_number'), draft.phone_for_transfer, v => { draft.phone_for_transfer = v; }, { type: 'tel', dir: 'ltr' }),
         input('transfer-hours', t('transfer_hours'), draft.transfer_hours, v => { draft.transfer_hours = v; }, { dir: 'auto' })),
@@ -683,8 +688,9 @@ async function screenAccount(main) {
     h('h2', {}, t('plan')),
     h('div', { class: 'card stack' },
       h('div', { class: 'row' }, h('b', {}, u?.plan?.name || t('no_plan')),
-        u?.plan?.monthly_price != null ? h('span', { class: 'muted' }, fmtMoney(u.plan.monthly_price / 100, u.plan.currency)) : null),
-      usageBlock(u),
+        u?.plan?.monthly_price != null ? h('span', { class: 'muted' }, fmtMoney(u.plan.monthly_price / 100, u.plan.currency)) : null,
+        u?.status ? h('span', { class: `pill ${u.status === 'active' ? 'accent' : u.status === 'trial' ? '' : 'danger'}` }, t(`status_${u.status}`)) : null),
+      usageBlock(u, true),
       h('div', { class: 'row' }, h('span', {}, t('invoices')), h('span', { class: 'spacer' }),
         d.billing_portal ? h('a', { class: 'btn', href: d.billing_portal }, t('invoices')) : h('span', { class: 'muted small' }, t('invoices_soon')))),
 

@@ -19,10 +19,8 @@ import {
   sessionCookie, resolveBusiness, canManage,
 } from './auth.js';
 import { validateSettings, settingsOf, applySettings } from './profile.js';
-import { sendSms } from './notify.js';
 import { sendEmail } from './email.js';
-import { trackedNotify } from './monitor.js';
-import { usageForPanel } from './usage.js';
+import { usageForPanel, sendTrackedSms } from './usage.js';
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
@@ -93,9 +91,8 @@ async function requestCode(request, env, ctx) {
     const code = await issueCode(env, user);
     const fa = (prefsOf(user).lang || 'fa') === 'fa';
     const text = fa ? `کد ورود به پنل منشی: ${code}\nتا ۱۰ دقیقه معتبر است.` : `Your receptionist panel code: ${code}\nValid for 10 minutes.`;
-    const biz = user.business_id || 'team';
     ctx.waitUntil(id.kind === 'phone'
-      ? trackedNotify(env, biz, 'sms', () => sendSms(env, null, id.value, text))
+      ? sendTrackedSms(env, user.business_id || 'team', null, id.value, text, 'login')
       : sendEmail(env, id.value, fa ? 'کد ورود' : 'Your login code', text));
   }
   return json({ ok: true, channel: id.kind });
@@ -143,7 +140,7 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
   const tz = p.timezone || 'Europe/London';
 
   if (path === '/api/me' && method === 'GET') {
-    return json({ ok: true, user: publicUser(user), business: { id: business.id, name: p.business_name, currency: p.currency || 'GBP', timezone: tz, needs_sync: business.needs_sync, services: (p.services || []).map(s => ({ id: s.id, name_en: s.name_en, name_fa: s.name_fa, duration_min: s.duration_min })) } });
+    return json({ ok: true, user: publicUser(user), business: { id: business.id, name: p.business_name, currency: p.currency || 'GBP', timezone: tz, needs_sync: business.needs_sync, message_only: business.message_only, message_only_reason: business.message_only_reason, services: (p.services || []).map(s => ({ id: s.id, name_en: s.name_en, name_fa: s.name_fa, duration_min: s.duration_min })) } });
   }
 
   if (path === '/api/today' && method === 'GET') {
@@ -181,8 +178,8 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
     if (!res.ok) return err(res.error, res.error === 'slot_taken' ? 409 : 400);
     if (b.send_sms && res.phone && p.sms_enabled) {
       const serviceName = res.lang === 'fa' ? res.service.name_fa : res.service.name_en;
-      ctx.waitUntil(trackedNotify(env, business.id, 'sms', () => sendSms(env, p, res.phone,
-        bookingSms({ lang: res.lang, businessName: p.business_name, serviceName, date: res.date, time: fmtHHMM(res.start), id: res.id }))));
+      ctx.waitUntil(sendTrackedSms(env, business.id, p, res.phone,
+        bookingSms({ lang: res.lang, businessName: p.business_name, serviceName, date: res.date, time: fmtHHMM(res.start), id: res.id }), 'booking'));
     }
     return json({ ok: true, booking: bookingView(p, await getBooking(env, business.id, res.id)) }, 201);
   }
@@ -196,16 +193,16 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
     if (m[2] === 'cancel') {
       await cancelBooking(env, business, old.id);
       if (b.notify && old.customer_phone && p.sms_enabled) {
-        ctx.waitUntil(trackedNotify(env, business.id, 'sms', () => sendSms(env, p, old.customer_phone,
-          cancelSms({ lang, businessName: p.business_name, date: old.date, time: fmtHHMM(old.start_min), id: old.id }))));
+        ctx.waitUntil(sendTrackedSms(env, business.id, p, old.customer_phone,
+          cancelSms({ lang, businessName: p.business_name, date: old.date, time: fmtHHMM(old.start_min), id: old.id }), 'cancel'));
       }
     } else {
       const res = await moveBooking(env, business, old, b.date, b.time, { minNoticeMinutes: 0 });
       if (!res.ok) return err(res.error, res.error === 'slot_taken' ? 409 : 400);
       if (b.notify && old.customer_phone && p.sms_enabled) {
         const serviceName = lang === 'fa' ? res.service.name_fa : res.service.name_en;
-        ctx.waitUntil(trackedNotify(env, business.id, 'sms', () => sendSms(env, p, old.customer_phone,
-          bookingSms({ lang, businessName: p.business_name, serviceName, date: res.date, time: fmtHHMM(res.start), id: old.id }))));
+        ctx.waitUntil(sendTrackedSms(env, business.id, p, old.customer_phone,
+          bookingSms({ lang, businessName: p.business_name, serviceName, date: res.date, time: fmtHHMM(res.start), id: old.id }), 'booking'));
       }
     }
     return json({ ok: true, booking: bookingView(p, await getBooking(env, business.id, old.id)) });
@@ -254,7 +251,8 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
     const edits = await body(request);
     const errors = validateSettings(edits);
     if (errors.length) return err('invalid', 400, { errors });
-    const next = applySettings(p, edits);
+    // message_only comes from the businesses row (set by the usage rules), never stored in the profile.
+    const { message_only: _system, ...next } = applySettings(p, edits);
     await env.DB.prepare("UPDATE businesses SET profile_json = ?, needs_sync = 1, updated_at = datetime('now') WHERE id = ?")
       .bind(JSON.stringify(next), business.id).run();
     return json({ ok: true, settings: settingsOf(next), needs_sync: true });

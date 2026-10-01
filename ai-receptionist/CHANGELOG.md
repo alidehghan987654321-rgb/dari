@@ -2,6 +2,25 @@
 
 Newest first. Every entry: what changed, how to deploy, manual steps.
 
+## M4 — Usage metering and plan limits
+
+- **Added** tables `plans` (seeded Basic/Pro, placeholder prices in data, minor units + currency), `subscriptions`,
+  `usage` (one row per call, per-call round-up, estimated voice/LLM/telephony cost), `sms_usage` (segments),
+  `usage_notices`; `businesses.message_only` + reason.
+- **Added** rules on every post-call webhook and hourly: 80% and 100% notices to the owner (Telegram + SMS/email,
+  once per period); message-only mode on a hard cap (owner setting in the panel), or after a 3-day grace when the
+  subscription is past_due/paused (immediately when cancelled). In message-only mode the booking tools return
+  `message_only` and the rendered prompt carries a "bookings paused" block.
+- **Added** `GET /admin/usage?period=YYYY-MM` margin report and `PUT /admin/subscriptions` (until Stripe, M6).
+  The panel shows plan, status and a usage bar, and a banner in message-only mode.
+- **Changed** every SMS goes through `sendTrackedSms` (monitoring event + billed segments).
+- **Assumptions**: `max_concurrent_calls` and `sms_included` values (1/100 Basic, 2/250 Pro) are placeholders and
+  not enforced yet (concurrency is set on the ElevenLabs/Twilio side). The `multi` plan is not seeded until it is
+  priced. The margin report uses calendar months; a trial earns no revenue; overage is charged only for
+  active/past_due subscriptions. `COST_RATES` are placeholders to replace from real invoices.
+- **Deploy**: `npm run db:init:remote` (migration 0004), `npm run deploy` (adds the hourly `7 * * * *` cron),
+  then `PUT /admin/subscriptions` for each business.
+
 ## M3 — Business owner panel
 
 - **Added** `web/panel/`: Persian-first (RTL) mobile web panel with an English toggle, Vazirmatn, light/dark,
