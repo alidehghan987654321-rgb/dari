@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     phone TEXT NOT NULL DEFAULT '',
+    national_id TEXT NOT NULL DEFAULT '',  -- for the RhinoMall order sheet
     password_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
     categories TEXT NOT NULL DEFAULT '[]',
@@ -80,6 +81,14 @@ CREATE TABLE IF NOT EXISTS picks (
     created_at TEXT NOT NULL,
     PRIMARY KEY (hunt_id, candidate_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS requests (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    data TEXT NOT NULL,  -- the order line's inputs (hunter.orders.OrderItem), priced on read
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS requests_user ON requests (user_id, id);
 """
 
 
@@ -102,10 +111,12 @@ class Database:
             conn.close()
         with self.tx() as db:
             db.executescript(SCHEMA)
-            # Databases made before plans had tiers.
+            # Databases made before plans had tiers, or before the order sheet.
             columns = {r["name"] for r in db.execute("PRAGMA table_info(users)")}
             if "plan" not in columns:
                 db.execute("ALTER TABLE users ADD COLUMN plan TEXT")
+            if "national_id" not in columns:
+                db.execute("ALTER TABLE users ADD COLUMN national_id TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def tx(self):
@@ -144,12 +155,20 @@ class Database:
         return _user(row)
 
     def update_profile(
-        self, user_id: int, *, name: str, phone: str, categories: list[str], budget_usd: float
+        self,
+        user_id: int,
+        *,
+        name: str,
+        phone: str,
+        categories: list[str],
+        budget_usd: float,
+        national_id: str = "",
     ) -> None:
         with self.tx() as db:
             db.execute(
-                "UPDATE users SET name = ?, phone = ?, categories = ?, budget_usd = ? WHERE id = ?",
-                (name, phone, json.dumps(categories), budget_usd, user_id),
+                "UPDATE users SET name = ?, phone = ?, categories = ?, budget_usd = ?,"
+                " national_id = ? WHERE id = ?",
+                (name, phone, json.dumps(categories), budget_usd, national_id, user_id),
             )
 
     def extend_subscription(self, db: sqlite3.Connection, user_id: int, days: int) -> str:
@@ -325,6 +344,66 @@ class Database:
                 )
 
             yield taken, save
+
+    # --- order cart (ثبت درخواست): products a seller wants to order -------------
+
+    def add_request(self, user_id: int, data: dict) -> int:
+        at = iso(now())
+        with self.tx() as db:
+            cur = db.execute(
+                "INSERT INTO requests (user_id, data, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (user_id, json.dumps(data, ensure_ascii=False), at, at),
+            )
+            return cur.lastrowid
+
+    def requests(self, user_id: int) -> list[dict[str, Any]]:
+        with self.tx() as db:
+            rows = db.execute(
+                "SELECT * FROM requests WHERE user_id = ? ORDER BY id", (user_id,)
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+                "data": json.loads(r["data"]),
+            }
+            for r in rows
+        ]
+
+    def request(self, user_id: int, request_id: int) -> dict[str, Any] | None:
+        with self.tx() as db:
+            row = db.execute(
+                "SELECT * FROM requests WHERE id = ? AND user_id = ?", (request_id, user_id)
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "data": json.loads(row["data"]),
+        }
+
+    def update_request(self, user_id: int, request_id: int, data: dict) -> bool:
+        with self.tx() as db:
+            cur = db.execute(
+                "UPDATE requests SET data = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (json.dumps(data, ensure_ascii=False), iso(now()), request_id, user_id),
+            )
+            return cur.rowcount > 0
+
+    def delete_request(self, user_id: int, request_id: int) -> bool:
+        with self.tx() as db:
+            cur = db.execute(
+                "DELETE FROM requests WHERE id = ? AND user_id = ?", (request_id, user_id)
+            )
+            return cur.rowcount > 0
+
+    def clear_requests(self, user_id: int) -> int:
+        with self.tx() as db:
+            cur = db.execute("DELETE FROM requests WHERE user_id = ?", (user_id,))
+            return cur.rowcount
 
     # --- product links sellers bring -------------------------------------------
 

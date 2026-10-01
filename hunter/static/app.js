@@ -33,7 +33,7 @@
     "pay-failed": "پرداخت تأیید نشد. اگه پولی کم شده، ظرف 72 ساعت برمی‌گرده.",
   };
   var VERDICT = { green: "شکار خوب", yellow: "با احتیاط", red: "نیار" };
-  var TITLES = { dash: "میز کار", media: "عکس و ویدیو", hunt: "شکارهای امروز", picks: "شکارهای اختصاصی من", analyze: "تحلیل لینک", calc: "ماشین‌حساب واردات", account: "حساب من" };
+  var TITLES = { dash: "میز کار", media: "عکس و ویدیو", hunt: "شکارهای امروز", picks: "شکارهای اختصاصی من", analyze: "تحلیل لینک", order: "سبد سفارش", calc: "ماشین‌حساب واردات", account: "حساب من" };
   var PUBLIC = { home: true, calc: true };  // what visitors can open; "home" is the landing
 
   // --- helpers ----------------------------------------------------------------
@@ -177,6 +177,7 @@
     else if (state.tab === "media") renderMedia();
     else if (state.tab === "picks") renderPicks();
     else if (state.tab === "analyze") { main.innerHTML = analyzeHTML(); bindAnalyze(); }
+    else if (state.tab === "order") renderOrder();
     else if (state.tab === "account") { main.innerHTML = accountHTML(); bindAccount(); }
     else { main.innerHTML = huntHTML(); bindHunt(); }
     bindCards(main);
@@ -265,7 +266,9 @@
       " · سربه‌سر: " + usd(p.breakeven_usd) + "</p></details>";
     return '<article class="card v-' + c.verdict + '">' + head + ladder + compareHTML(c) + stats + reasons + flags +
       supplierHTML(c) + costs +
-      '<div class="card-foot"><button type="button" class="btn ghost small" data-calc="' + esc(c.id) + '">حساب‌وکتاب در ماشین‌حساب' + ic("calc") + "</button>" +
+      '<div class="card-foot">' +
+        (c.verdict !== "red" ? '<button type="button" class="btn small" data-cart="' + esc(c.id) + '">افزودن به سبد سفارش' + ic("cart") + "</button>" : "") +
+        '<button type="button" class="btn ghost small" data-calc="' + esc(c.id) + '">حساب‌وکتاب در ماشین‌حساب' + ic("calc") + "</button>" +
         (c.offer && c.offer.url ? '<button type="button" class="btn ghost small" data-media="' + esc(c.id) + '">عکس و ویدیو' + ic("media") + "</button>" : "") + "</div>" +
       "</article>";
   }
@@ -452,6 +455,9 @@
     });
     each(root, "[data-media]", function (b) {
       b.onclick = function () { openMedia(b.dataset.media); };
+    });
+    each(root, "[data-cart]", function (b) {
+      b.onclick = function () { addToCart(findCard(b.dataset.cart), b); };
     });
     bindCopy(root);
   }
@@ -2071,6 +2077,230 @@
       '<button type="button" class="btn" data-go="account" style="margin-top:14px">خرید اشتراک' + ic("coin") + "</button></div>";
   }
 
+  // --- order cart (سبد سفارش): ثبت درخواست و خروجی اکسل برای راینومال -----------
+
+  function round2(x) { return Math.round((Number(x) || 0) * 100) / 100; }
+
+  // Build the request body a card turns into when added to the cart.
+  function cartItemFromCard(c) {
+    var o = c.offer || {}, p = c.pricing || {};
+    var amazon = (c.matches || []).filter(function (m) { return m && m.source === "amazon"; })[0];
+    var ref = amazon && amazon.url ? amazon.url : (c.listing && c.listing.url) || "";
+    return {
+      title_fa: c.title_fa || (c.listing && c.listing.title) || "محصول",
+      category: c.category || "",
+      product_url: o.url || "",
+      reference_url: ref,
+      keyword_en: "", keyword_zh: "",
+      price_cny: o.price_cny || 0,
+      units: c.pack_qty || 1,
+      moq: o.moq || 1,
+      weight_kg: c.weight_kg || 0.01,
+      amazon_usd: p.amazon_usd || null,
+      temu_usd: (p.benchmark_usd && !p.benchmark_estimated) ? p.benchmark_usd : null,
+      capital_usd: c.starter_capital_usd || 0,
+      qty: null, note: ""
+    };
+  }
+
+  function orderBody(it, over) {
+    var b = {
+      title_fa: it.title_fa, category: it.category, product_url: it.product_url,
+      reference_url: it.reference_url, keyword_en: it.keyword_en, keyword_zh: it.keyword_zh,
+      price_cny: it.price_cny, units: it.units, moq: it.moq, weight_kg: it.weight_kg,
+      amazon_usd: it.amazon_usd, temu_usd: it.temu_usd, capital_usd: it.capital_usd,
+      qty: it.qty, note: it.note
+    };
+    return Object.assign(b, over || {});
+  }
+
+  // In the demo there's no server, so price each line from the card's own numbers.
+  function demoQuote(body, p) {
+    var landed = p.landed_usd, sell = p.price_usd, profit = p.profit_usd;
+    var qty = body.qty != null ? Math.max(1, body.qty)
+      : (body.capital_usd > 0 && landed > 0 ? Math.max(body.moq, Math.floor(body.capital_usd / landed)) : body.moq);
+    return Object.assign({ id: "d" + Date.now() + Math.floor(Math.random() * 1000) }, body, {
+      ok: true, qty: qty, landed_usd: landed, sell_usd: sell, profit_usd: profit,
+      margin: p.margin, roi: p.roi, order_capital_usd: round2(qty * landed),
+      order_income_usd: round2(qty * sell), order_profit_usd: round2(qty * profit)
+    });
+  }
+
+  function demoRequote(it) {
+    var qty = it.qty != null ? Math.max(1, it.qty)
+      : (it.capital_usd > 0 && it.landed_usd > 0 ? Math.max(it.moq, Math.floor(it.capital_usd / it.landed_usd)) : it.moq);
+    return Object.assign({}, it, {
+      qty: qty, order_capital_usd: round2(qty * it.landed_usd),
+      order_income_usd: round2(qty * it.sell_usd), order_profit_usd: round2(qty * it.profit_usd)
+    });
+  }
+
+  function demoSummary(items) {
+    var cats = {};
+    items.forEach(function (it) { var k = it.category || "other"; cats[k] = (cats[k] || 0) + 1; });
+    var cap = 0, inc = 0, prof = 0, qty = 0;
+    items.forEach(function (it) { cap += it.order_capital_usd; inc += it.order_income_usd; prof += it.order_profit_usd; qty += it.qty; });
+    return {
+      count: items.length, total_qty: qty,
+      capital_usd: round2(cap), income_usd: round2(inc), profit_usd: round2(prof),
+      margin: inc ? round2(prof / inc) : 0,
+      categories: Object.keys(cats).sort(function (a, b) { return cats[b] - cats[a]; })
+        .map(function (k) { return { key: k, fa: catName(k), n: cats[k] }; })
+    };
+  }
+
+  function addToCart(c, btn) {
+    if (!c) return;
+    var body = cartItemFromCard(c);
+    if (!body.price_cny) { toast("قیمت 1688 این محصول نامشخصه."); return; }
+    if (btn) { btn.disabled = true; setTimeout(function () { btn.disabled = false; }, 800); }
+    if (DEMO) {
+      state.demoCart = state.demoCart || [];
+      state.demoCart.push(demoQuote(body, c.pricing || {}));
+      toast("به سبد سفارش اضافه شد (" + state.demoCart.length + " قلم).");
+      if (state.tab === "order") renderOrder();
+      return;
+    }
+    api("/api/requests", { method: "POST", body: body }).then(function () {
+      state.order = null;
+      toast("به سبد سفارش اضافه شد.");
+      if (state.tab === "order") renderOrder();
+    }, function (e) { toast(errText(e)); });
+  }
+
+  function renderOrder() {
+    var main = $("main");
+    if (!DEMO && !state.me.active) { main.innerHTML = lockedHTML(); return; }
+    if (DEMO) { drawOrder(main, { items: (state.demoCart || []), summary: demoSummary(state.demoCart || []) }); return; }
+    if (!state.order) {
+      main.innerHTML = '<p class="loading">در حال باز کردن سبد سفارش…</p>';
+      api("/api/requests").then(function (cart) { state.order = cart; renderOrder(); },
+        function (e) { main.innerHTML = '<div class="empty">' + esc(errText(e)) + "</div>"; });
+      return;
+    }
+    drawOrder(main, state.order);
+  }
+
+  function drawOrder(main, cart) {
+    var items = cart.items || [], s = cart.summary || {};
+    var head = '<div class="page-head"><div><span class="eyebrow">آماده‌ی سفارش به راینومال</span>' +
+      '<h1 class="section-title">سبد سفارش</h1>' +
+      '<p class="section-sub" style="margin:0">محصول‌هایی که از شکار، تحلیل لینک یا ماشین‌حساب «افزودن به سبد» کردی این‌جان. تعداد و سرمایه‌ی هر قلم رو می‌تونی عوض کنی و آخرش یک فایل اکسل برای ثبت سفارش در راینومال بگیری.</p></div></div>';
+    if (!items.length) {
+      main.innerHTML = head + '<div class="empty">سبدت خالیه. از «شکار امروز» یا «تحلیل لینک»، روی هر محصول دکمه‌ی «افزودن به سبد سفارش» رو بزن.</div>';
+      return;
+    }
+    var idNote = (!DEMO && state.me && !state.me.national_id)
+      ? '<p class="hint">کد ملی‌ات توی «حساب من» خالیه؛ پرش کن تا توی فایل سفارش بیاد. ' +
+        '<button type="button" class="linklike" data-go="account">رفتن به حساب من</button></p>' : "";
+    var summary = '<div class="summary">' +
+      '<span class="pill neutral">اقلام: <span class="num">' + count(s.count || 0) + "</span></span>" +
+      '<span class="pill neutral">تعداد کل: <span class="num">' + count(s.total_qty || 0) + "</span></span>" +
+      '<span class="pill neutral">سرمایه‌ی کل: <span class="num">' + usd(s.capital_usd || 0) + "</span> · " + toman(Math.round((s.capital_usd || 0) * rate() / 1e4) * 1e4) + " تومان</span>" +
+      '<span class="pill green">درآمد انتظاری: <span class="num">' + usd(s.income_usd || 0) + "</span></span>" +
+      '<span class="pill green">سود انتظاری: <span class="num">' + usd(s.profit_usd || 0) + "</span> (" + pct(s.margin || 0) + ")</span>" +
+      "</div>";
+    var rows = items.map(orderRow).join("");
+    var table = '<div class="table-wrap"><table class="order-table"><thead><tr>' +
+      "<th>محصول</th><th>دسته</th><th>1688 / مرجع</th><th>تمام‌شده</th><th>فروش</th><th>سود/عدد</th>" +
+      "<th>تعداد</th><th>سرمایه ($)</th><th>سود این قلم</th><th></th></tr></thead><tbody>" +
+      rows + "</tbody></table></div>";
+    var actions = '<div class="order-actions">' +
+      (DEMO
+        ? '<button type="button" class="btn" id="order-xlsx">دانلود اکسل سفارش راینومال' + ic("download") + "</button>"
+        : '<a class="btn" href="/order/export">دانلود اکسل سفارش راینومال' + ic("download") + "</a>") +
+      '<button type="button" class="btn ghost" id="order-copy">کپی خلاصه برای تلگرام' + ic("copy") + "</button>" +
+      '<button type="button" class="btn ghost" id="order-clear">خالی کردن سبد' + ic("trash") + "</button></div>";
+    main.innerHTML = head + idNote + summary + table + actions +
+      '<p class="hint" style="margin-top:10px">عددها برآوردی‌اند و با فرمول قرارداد راینومال حساب شدن. قبل از سفارش اصلی حتماً نمونه بگیر.</p>';
+    bindOrder(main, cart);
+  }
+
+  function orderRow(it) {
+    var cls = it.ok ? "" : ' class="order-bad"';
+    var link = function (u, label) { return safeUrl(u) ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + label + " ↗</a>" : "—"; };
+    return "<tr" + cls + ' data-row="' + esc(it.id) + '">' +
+      "<td><b>" + esc(it.title_fa || "محصول") + "</b>" + (it.note ? '<div class="card-sub">' + esc(it.note) + "</div>" : "") + "</td>" +
+      "<td>" + esc(catName(it.category)) + "</td>" +
+      '<td class="nowrap">' + link(it.product_url, "1688") + " · " + link(it.reference_url, "مرجع") + "</td>" +
+      "<td>" + usd(it.landed_usd) + "</td>" +
+      "<td>" + (it.ok ? usd(it.sell_usd) : "—") + "</td>" +
+      "<td>" + (it.ok ? usd(it.profit_usd) : "—") + "</td>" +
+      '<td><input class="input num order-qty" type="number" min="1" step="1" value="' + (it.qty || 1) + '" data-id="' + esc(it.id) + '"></td>' +
+      '<td><input class="input num order-cap" type="number" min="0" step="10" value="' + round2(it.order_capital_usd) + '" data-id="' + esc(it.id) + '"></td>' +
+      "<td>" + (it.ok ? usd(it.order_profit_usd) : "—") + "</td>" +
+      '<td><button type="button" class="icon-btn" title="حذف" data-del="' + esc(it.id) + '">' + ic("trash") + "</button></td>" +
+      "</tr>";
+  }
+
+  function bindOrder(root, cart) {
+    var items = cart.items || [];
+    var find = function (id) { return items.filter(function (x) { return String(x.id) === String(id); })[0]; };
+
+    function applyEdit(id, over) {
+      var it = find(id); if (!it) return;
+      if (DEMO) {
+        state.demoCart = (state.demoCart || []).map(function (x) {
+          return String(x.id) === String(id) ? demoRequote(Object.assign({}, x, over)) : x;
+        });
+        renderOrder(); return;
+      }
+      api("/api/requests/" + id, { method: "PUT", body: orderBody(it, over) }).then(function () {
+        state.order = null; renderOrder();
+      }, function (e) { toast(errText(e)); });
+    }
+
+    each(root, ".order-qty", function (inp) {
+      inp.onchange = function () { applyEdit(inp.dataset.id, { qty: Math.max(1, Number(inp.value || 1)) }); };
+    });
+    each(root, ".order-cap", function (inp) {
+      inp.onchange = function () { applyEdit(inp.dataset.id, { capital_usd: Math.max(0, Number(inp.value || 0)), qty: null }); };
+    });
+    each(root, "[data-del]", function (b) {
+      b.onclick = function () {
+        var id = b.dataset.del;
+        if (DEMO) { state.demoCart = (state.demoCart || []).filter(function (x) { return String(x.id) !== String(id); }); renderOrder(); return; }
+        api("/api/requests/" + id, { method: "DELETE" }).then(function () { state.order = null; renderOrder(); }, function (e) { toast(errText(e)); });
+      };
+    });
+    var clear = $("order-clear");
+    if (clear) clear.onclick = function () {
+      if (!window.confirm("همه‌ی اقلام سبد پاک بشن؟")) return;
+      if (DEMO) { state.demoCart = []; renderOrder(); return; }
+      Promise.all(items.map(function (it) { return api("/api/requests/" + it.id, { method: "DELETE" }).catch(function () {}); }))
+        .then(function () { state.order = null; renderOrder(); });
+    };
+    var copy = $("order-copy");
+    if (copy) copy.onclick = function () { copyText(orderSummaryText(cart), copy); };
+    var xlsx = $("order-xlsx");
+    if (xlsx) xlsx.onclick = function () { toast("در نسخه‌ی واقعی اینجا فایل اکسل سفارش دانلود میشه."); };
+  }
+
+  function orderSummaryText(cart) {
+    var s = cart.summary || {}, lines = ["سبد سفارش — " + ((state.config && state.config.brand) || "شکارچی")];
+    (cart.items || []).forEach(function (it, i) {
+      lines.push((i + 1) + ") " + (it.title_fa || "محصول") + " — " + it.qty + " عدد، سرمایه " + usd(it.order_capital_usd) + "، سود " + usd(it.order_profit_usd));
+    });
+    lines.push("—");
+    lines.push("اقلام: " + (s.count || 0) + " · سرمایه‌ی کل: " + usd(s.capital_usd || 0) + " · سود انتظاری: " + usd(s.profit_usd || 0) + " (" + pct(s.margin || 0) + ")");
+    return lines.join("\n");
+  }
+
+  function copyText(text, btn) {
+    var done = function () { toast("کپی شد."); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
+    } else { fallbackCopy(text); done(); }
+  }
+  function fallbackCopy(text) {
+    var t = document.createElement("textarea");
+    t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(t);
+  }
+  function rate() { return (state.config && state.config.toman_per_usd) || 255000; }
+
   // --- analyze tab ---------------------------------------------------------------
 
   var LINK_ERRORS = {
@@ -2248,6 +2478,7 @@
         '<div class="form-grid" style="margin-bottom:16px">' +
           '<div class="field"><label for="p-name">نام</label><input class="input" id="p-name" value="' + esc(me.name) + '"></div>' +
           '<div class="field"><label for="p-phone">موبایل</label><input class="input num" id="p-phone" value="' + esc(me.phone) + '"></div>' +
+          '<div class="field"><label for="p-nid">کد ملی</label><input class="input num" id="p-nid" value="' + esc(me.national_id || "") + '"><span class="hint">برای فایل سفارش راینومال؛ اختیاریه</span></div>' +
           '<div class="field"><label for="p-budget">بودجه‌ی شروع (دلار)</label><input class="input num" id="p-budget" type="number" min="0" step="50" value="' + esc(me.budget_usd) + '"><span class="hint">هزینه‌ی اولین محموله‌ی همه‌ی محصولات با هم</span></div>' +
         "</div>" +
         '<div class="label" style="margin-bottom:6px">دسته‌هایی که کار می‌کنی</div><div class="cats">' + cats + "</div>" +
@@ -2346,7 +2577,7 @@
     $("profile-form").onsubmit = function (ev) {
       ev.preventDefault();
       var cats = Array.prototype.map.call(document.querySelectorAll('input[name="cat"]:checked'), function (x) { return x.value; });
-      var body = { name: $("p-name").value, phone: $("p-phone").value, categories: cats, budget_usd: Number($("p-budget").value || 0) };
+      var body = { name: $("p-name").value, phone: $("p-phone").value, national_id: ($("p-nid") ? $("p-nid").value : ""), categories: cats, budget_usd: Number($("p-budget").value || 0) };
       if (DEMO) { Object.assign(state.me, body); toast("ذخیره شد (نسخه‌ی نمایشی)."); return; }
       api("/api/me", { method: "PUT", body: body }).then(function (me) {
         state.me = me; state.picks = null; toast("ذخیره شد.");
@@ -3077,7 +3308,7 @@
   function logout() {
     if (DEMO) { state.me = null; state.tab = "home"; render(); window.scrollTo(0, 0); return; }
     api("/api/logout", { method: "POST" }).then(function () {
-      state.me = null; state.picks = null; state.analysis = null; state.jobs = undefined; state.tab = "home"; return loadHunt();
+      state.me = null; state.picks = null; state.analysis = null; state.jobs = undefined; state.order = null; state.tab = "home"; return loadHunt();
     }).then(render);
   }
   function focusAuth(mode) {

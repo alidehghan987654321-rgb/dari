@@ -46,6 +46,8 @@ from .media import (
 )
 from .models import MarketListing, SupplierOffer
 from .economics import Economics
+from .export import build_order
+from .orders import quote, quoted_cart
 from .payments import DemoGateway, Gateway, PaymentError, Plan, Zarinpal, make_plans
 from .pricing import RETURN_RESERVE, PricingConfig, Unprofitable, price_product
 from .scoring import assess
@@ -168,8 +170,29 @@ class Login(BaseModel):
 class Profile(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     phone: str = Field(default="", max_length=20)
+    national_id: str = Field(default="", max_length=20)
     categories: list[str] = Field(default_factory=list, max_length=len(CATEGORIES))
     budget_usd: float = Field(ge=0, le=10_000_000)
+
+
+class OrderRequest(BaseModel):
+    """One product the seller wants to order (added to the cart / ثبت درخواست)."""
+
+    title_fa: str = Field(default="محصول", max_length=200)
+    category: str = Field(default="", max_length=60)
+    product_url: str = Field(default="", max_length=600)
+    reference_url: str = Field(default="", max_length=600)
+    keyword_en: str = Field(default="", max_length=200)
+    keyword_zh: str = Field(default="", max_length=200)
+    price_cny: float = Field(gt=0, le=1_000_000)
+    units: int = Field(default=1, ge=1, le=1000)
+    moq: int = Field(default=1, ge=1, le=1_000_000)
+    weight_kg: float = Field(gt=0, le=100)
+    amazon_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    temu_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    capital_usd: float = Field(default=0, ge=0, le=10_000_000)
+    qty: int | None = Field(default=None, ge=0, le=1_000_000)
+    note: str = Field(default="", max_length=500)
 
 
 class Pay(BaseModel):
@@ -208,6 +231,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "email": user["email"],
         "name": user["name"],
         "phone": user["phone"],
+        "national_id": user.get("national_id", ""),
         "categories": user["categories"],
         "budget_usd": user["budget_usd"],
         "paid_until": user["paid_until"],
@@ -403,6 +427,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             phone=body.phone.strip(),
             categories=cats,
             budget_usd=body.budget_usd,
+            national_id=body.national_id.strip(),
         )
         return public_user(db.user(user["id"]))
 
@@ -500,6 +525,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "per_product": settings.per_product,
             "candidates": chosen,
         }
+
+    # --- order cart (سبد سفارش): ثبت درخواست و خروجی اکسل برای راینومال ----------
+
+    @app.get("/api/requests")
+    def list_requests(user=Depends(require_active)):
+        return quoted_cart(db.requests(user["id"]), settings.pricing)
+
+    @app.post("/api/requests")
+    def add_request(body: OrderRequest, user=Depends(require_active)):
+        data = body.model_dump()
+        rid = db.add_request(user["id"], data)
+        return {"id": rid, **quote(data, settings.pricing)}
+
+    @app.put("/api/requests/{request_id}")
+    def edit_request(request_id: int, body: OrderRequest, user=Depends(require_active)):
+        data = body.model_dump()
+        if not db.update_request(user["id"], request_id, data):
+            raise HTTPException(404, "no_such_request")
+        return {"id": request_id, **quote(data, settings.pricing)}
+
+    @app.delete("/api/requests/{request_id}")
+    def remove_request(request_id: int, user=Depends(require_active)):
+        if not db.delete_request(user["id"], request_id):
+            raise HTTPException(404, "no_such_request")
+        return {"ok": True}
+
+    @app.get("/order/export", include_in_schema=False)
+    def export_order(user=Depends(require_active)):
+        cart = quoted_cart(db.requests(user["id"]), settings.pricing)
+        if not cart["items"]:
+            raise HTTPException(404, "empty_cart")
+        content, filename, media_type = build_order(user, cart, settings.toman_per_usd)
+        return Response(
+            content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.post("/api/analyze")
     def analyze(body: Analyze, user=Depends(require_active)):

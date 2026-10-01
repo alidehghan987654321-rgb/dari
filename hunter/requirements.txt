@@ -7,3 +7,5 @@ python-dotenv==1.2.3
 pillow>=11.0
 # Optional: Persian product names with Claude (used only when ANTHROPIC_API_KEY is set).
 anthropic>=1.8
+# The RhinoMall order sheet as a real .xlsx (hunter/export.py); without it a CSV is written.
+openpyxl>=3.1

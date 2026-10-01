@@ -932,6 +932,22 @@ select.input option { background: #1b1b1b; color: var(--ink); }
 .econ-bar { display: flex; gap: 2px; height: 10px; background: var(--layer-2); }
 @media (max-width: 800px) { .econ-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cost-kinds { grid-template-columns: 1fr; } }
 
+/* order cart (سبد سفارش) */
+.order-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.order-table th, .order-table td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+.order-table thead th { font-size: 12px; color: var(--ink-soft); font-weight: 700; position: sticky; top: 0; background: var(--layer); }
+.order-table td b { font-weight: 800; }
+.order-table .card-sub { font-size: 11.5px; color: var(--ink-faint); white-space: normal; max-width: 220px; }
+.order-table .input { min-height: 34px; width: 92px; padding: 4px 8px; }
+.order-table a { color: var(--accent-ink); }
+.order-table tr.order-bad { opacity: .6; }
+.order-table .nowrap { white-space: nowrap; }
+.icon-btn { border: 1px solid var(--line); background: var(--layer-2); color: var(--ink-soft); width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer; border-radius: 2px; }
+.icon-btn:hover { color: var(--bad-ink); border-color: var(--bad-ink); }
+.icon-btn .i { width: 16px; height: 16px; }
+.order-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.linklike { border: 0; background: none; color: var(--accent-ink); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+
 /* support */
 .support-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; }
 .support-card .av { width: 52px; height: 52px; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-weight: 900; font-size: 22px; }

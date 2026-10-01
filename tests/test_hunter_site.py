@@ -990,3 +990,107 @@ def test_sellers_download_their_products_pictures_and_videos(link_settings, samp
         names = zipfile.ZipFile(io.BytesIO(z.content)).namelist()
         assert len([n for n in names if n.startswith("original/")]) == 3
         assert len([n for n in names if n.startswith("store-ready-1200/")]) == 3
+
+
+# --- order cart (سبد سفارش) and the RhinoMall order sheet -----------------------
+
+ORDER_ITEM = {
+    "title_fa": "چراغ رومیزی",
+    "category": "home_kitchen",
+    "product_url": "https://detail.1688.com/offer/1.html",
+    "reference_url": "https://www.amazon.com/dp/XYZ",
+    "keyword_en": "desk lamp",
+    "keyword_zh": "台灯",
+    "price_cny": 18.5,
+    "units": 1,
+    "moq": 10,
+    "weight_kg": 0.6,
+    "amazon_usd": 14.0,
+    "temu_usd": 9.5,
+    "capital_usd": 200,
+}
+
+
+def _active(client, email="seller@example.com"):
+    signup(client, email=email)
+    assert subscribe(client).status_code == 303
+
+
+def test_order_quote_unit():
+    from hunter.orders import quote, summarize
+    from hunter.pricing import PricingConfig
+
+    cfg = PricingConfig()
+    q = quote({"price_cny": 20, "weight_kg": 0.5, "moq": 5, "capital_usd": 100}, cfg)
+    assert q["ok"] and q["qty"] >= 5
+    assert q["sell_usd"] > q["landed_usd"] > 0
+    assert q["order_capital_usd"] == round(q["qty"] * q["landed_usd"], 2)
+    assert q["order_profit_usd"] == round(q["qty"] * q["profit_usd"], 2)
+    # a line without a price isn't ok and adds nothing
+    z = quote({"price_cny": 0, "moq": 3}, cfg)
+    assert not z["ok"] and z["order_capital_usd"] == 0 and z["qty"] == 3
+    s = summarize([q, z])
+    assert s["count"] == 2 and s["capital_usd"] == q["order_capital_usd"]
+
+
+def test_order_cart_add_list_edit_delete(client):
+    _active(client)
+    q = client.post("/api/requests", json=ORDER_ITEM)
+    assert q.status_code == 200, q.text
+    q = q.json()
+    rid = q["id"]
+    assert q["ok"] and q["sell_usd"] > q["landed_usd"] > 0
+    # the capital sets the quantity (at least the MOQ)
+    assert q["qty"] == max(ORDER_ITEM["moq"], int(ORDER_ITEM["capital_usd"] // q["landed_usd"]))
+
+    cart = client.get("/api/requests").json()
+    assert cart["summary"]["count"] == 1
+    assert cart["summary"]["capital_usd"] == q["order_capital_usd"]
+    assert cart["items"][0]["title_fa"] == "چراغ رومیزی"
+    assert cart["summary"]["categories"][0]["key"] == "home_kitchen"
+
+    # an explicit quantity overrides the capital
+    r = client.put(f"/api/requests/{rid}", json={**ORDER_ITEM, "qty": 25})
+    assert r.status_code == 200 and r.json()["qty"] == 25
+
+    assert client.delete(f"/api/requests/{rid}").status_code == 200
+    assert client.get("/api/requests").json()["summary"]["count"] == 0
+    assert client.delete(f"/api/requests/{rid}").status_code == 404
+
+
+def test_order_cart_needs_a_subscription(client):
+    signup(client)
+    assert client.get("/api/requests").status_code == 402
+    assert client.post("/api/requests", json=ORDER_ITEM).status_code == 402
+
+
+def test_order_cart_is_per_user(client, settings):
+    _active(client)
+    client.post("/api/requests", json=ORDER_ITEM)
+    with TestClient(create_app(settings)) as other:
+        _active(other, email="two@example.com")
+        assert other.get("/api/requests").json()["summary"]["count"] == 0
+
+
+def test_national_id_saved_and_shown(client):
+    signup(client)
+    profile = {
+        "name": "فروشنده",
+        "phone": "0912",
+        "national_id": "0012345678",
+        "categories": [],
+        "budget_usd": 300,
+    }
+    assert client.put("/api/me", json=profile).json()["national_id"] == "0012345678"
+    assert client.get("/api/me").json()["national_id"] == "0012345678"
+
+
+def test_order_export_is_a_file(client):
+    _active(client)
+    assert client.get("/order/export").status_code == 404  # empty cart
+    client.post("/api/requests", json=ORDER_ITEM)
+    r = client.get("/order/export")
+    assert r.status_code == 200
+    assert "attachment" in r.headers["content-disposition"]
+    # openpyxl in CI -> a real .xlsx (a zip, starting "PK"); a CSV (UTF-8 BOM) otherwise
+    assert r.content[:2] == b"PK" or r.content[:3] == b"\xef\xbb\xbf"
