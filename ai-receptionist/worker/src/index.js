@@ -14,6 +14,9 @@
 //                                     POST /admin/stripe/setup           Stripe products + prices for every plan (M6)
 //                                     POST /admin/b/:businessId/provision { action: create|sync|attach-number|pause|resume|delete } (M5)
 // Owner panel API (session cookie):   /api/*  (see panel.js); the panel itself is static, served from ../web (M3)
+// Public API (landing page, M8):      /api/public/*  (see public.js); the landing page is web/index.html
+//                                     GET  /admin/funnel?days=30  sales funnel (M8)
+// Health:                             GET  /health
 // Crons (wrangler.toml):              */5 * * * *  alert rules -> team Telegram chat (M2)
 //                                     17 3 * * *   retention + daily synthetic check (M2) + agent drift check (M5)
 //                                     7 * * * *    usage thresholds and message-only mode (M4)
@@ -29,6 +32,7 @@ import { fail, loadBusiness, findService, freeSlots, createBooking, moveBooking,
 import { sendTelegram } from './notify.js';
 import { logToolEvent, recordEvent, trackedNotify, runAlerts, runSynthetic, healthSummary } from './monitor.js';
 import { handleApi } from './panel.js';
+import { handlePublic, funnelOnce, funnelReport, trialReminders } from './public.js';
 import { parseIdentifier } from './auth.js';
 import { setup as provisioningSetup, provisionAction, ProvisionError, driftCheck, deleteExpiredAgents } from './provisioning.js';
 import { stripeWebhook, setupStripe, BillingError } from './billing.js';
@@ -44,7 +48,8 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '') || '/';
     try {
-      if (path === '/' && request.method === 'GET') return json({ ok: true, service: 'ai-receptionist' });
+      // "/" is the landing page (static asset); this is the API health check.
+      if ((path === '/' || path === '/health') && request.method === 'GET') return json({ ok: true, service: 'ai-receptionist' });
 
       if (path === '/webhooks/post-call' && request.method === 'POST') return postCall(request, env, ctx);
       if (path === '/webhooks/stripe' && request.method === 'POST') {
@@ -52,6 +57,7 @@ export default {
         return json(r.body, r.status);
       }
 
+      if (path.startsWith('/api/public/')) return await handlePublic(request, env, ctx, path);
       if (path.startsWith('/api/')) return await handleApi(request, env, ctx, path, url);
 
       if (path.startsWith('/admin/')) {
@@ -92,6 +98,7 @@ export default {
     const quietCtx = { waitUntil: p => ctx.waitUntil(p) };
     await runSynthetic(env, (name, business, body) => tool(name, business, body, env, quietCtx));
     await driftCheck(env);
+    await trialReminders(env);
     await deleteExpiredAgents(env);
   },
 };
@@ -261,6 +268,10 @@ async function postCall(request, env, ctx) {
   ).bind(d.conversation_id, biz.id, d.agent_id, caller, duration, summary, success,
     JSON.stringify(collected), JSON.stringify(d.transcript || [])).run();
 
+  // Funnel (M8): the first call a self-serve business gets is its preview call.
+  ctx.waitUntil(env.DB.prepare('SELECT signup_source FROM businesses WHERE id = ?').bind(biz.id).first()
+    .then(r => (r?.signup_source === 'self_serve' ? funnelOnce(env, biz.id, 'preview_call') : null)));
+
   // Usage (M4): one row per conversation (replays ignored), then thresholds and message-only mode.
   if (d.conversation_id) {
     await recordCallUsage(env, biz.id, d.conversation_id, duration);
@@ -333,6 +344,9 @@ async function admin(request, env, path, url) {
   if (prov && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return provisioningResponse(() => provisionAction(env, prov[1], body));
+  }
+  if (path === '/admin/funnel' && request.method === 'GET') {
+    return json({ ok: true, ...(await funnelReport(env, Number(url.searchParams.get('days')) || 30)) });
   }
   if (path === '/admin/health' && request.method === 'GET') {
     return json({ ok: true, since: new Date(Date.now() - 864e5).toISOString(), businesses: await healthSummary(env) });

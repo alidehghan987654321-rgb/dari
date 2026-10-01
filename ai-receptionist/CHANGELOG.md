@@ -2,6 +2,31 @@
 
 Newest first. Every entry: what changed, how to deploy, manual steps.
 
+## M8 — Landing page and self-serve onboarding
+
+- **Added** landing page `web/index.html` (+ `site.js`): Persian first with an English toggle, demo number,
+  audio samples (shown once recorded), how it works, pricing from `plans`, FAQ (AI disclosure, transfer to a person,
+  privacy, cancellation, keeping your number), sign-up and contact forms. No cookies; anonymous visit counter.
+  CSS inline and the web font non-blocking: Lighthouse mobile Performance 100, LCP 0.9 s, Accessibility 100.
+- **Added** `public.js`: `/api/public/{config,plans,event,contact,signup}`. Sign-up creates an inactive business, the
+  owner account and a 14-day trial, and texts a login code; signing up again with the same number creates nothing.
+- **Added** onboarding wizard in the panel (`#/onboarding`, opened automatically for self-serve owners): basics →
+  hours → services → policies/FAQ → transfer → voice → review. Each step saves only its own fields and is validated;
+  finishing needs a complete profile (`validateProfile`, reused by M3 settings) and a prompt with no empty
+  placeholders. It then provisions the trial agent and buys a preview number (M5), or tells the team when it cannot.
+  Carrier guide for call forwarding (GSM codes for EE, Vodafone, O2, Three, Virgin Mobile; BT and Virgin Media).
+- **Added** day-10 trial reminder with usage stats (once), funnel counters (visit → demo call → sign-up → wizard done
+  → preview call → forwarding on → paid) and `GET /admin/funnel`. A trial that ends unpaid goes message-only after
+  the usual 3-day grace (M6).
+- **Changed** `/` is now the landing page; the API health check is `GET /health`. Settings editors in the panel are
+  shared with the wizard (`settingsEditors`); after a settings save the panel shows the sync banner only when the
+  server says the agent is not yet synced.
+- **Assumptions**: carrier codes are the standard GSM codes for mobiles and single-star codes for BT / Virgin Media
+  landlines, shown with a "check with your provider" note. The wizard could not be timed with a real owner here;
+  it is 7 short steps. Audio samples must be recorded by the team.
+- **Deploy**: `npm run db:init:remote` (migration 0007), set `DEMO_NUMBER` and `ELEVENLABS_VOICES.options`,
+  `npm run deploy`. Put the two recordings in `web/audio/`.
+
 ## M6 — Billing with Stripe
 
 - **Added** `worker/src/billing.js` over plain fetch and Web Crypto (no Node SDK), pinned to Stripe API version

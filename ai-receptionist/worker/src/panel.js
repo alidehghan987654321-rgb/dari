@@ -12,6 +12,8 @@
 //           GET  /api/settings   PUT /api/settings (owner)
 //           GET  /api/account    POST /api/users (owner)      DELETE /api/users/:id (owner)
 //           POST /api/billing/checkout {plan_id} (owner)      POST /api/billing/portal (owner)   (M6)
+//           GET  /api/onboarding   PUT /api/onboarding {profile}   POST /api/onboarding/finish
+//           POST /api/onboarding/forwarding   (owner, M8 self-serve wizard)
 
 import { londonNow, fmtHHMM, isValidDate, addDays, normalizePhone, bookingSms, cancelSms } from './lib.js';
 import { loadBusiness, findService, freeSlots, createBooking, moveBooking, cancelBooking, getBooking } from './bookings.js';
@@ -19,7 +21,8 @@ import {
   LIMITS, parseIdentifier, rateLimit, findUserByIdentifier, issueCode, checkCode, createSession, sessionUser, endSession,
   sessionCookie, resolveBusiness, canManage,
 } from './auth.js';
-import { validateSettings, settingsOf, applySettings } from './profile.js';
+import { validateSettings, validateProfile, settingsOf, applySettings, BASICS, BUSINESS_TYPES } from './profile.js';
+import { funnelOnce } from './public.js';
 import { sendEmail } from './email.js';
 import { usageForPanel, sendTrackedSms } from './usage.js';
 import { trySync, provisioningConfigured } from './provisioning.js';
@@ -143,7 +146,7 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
   const tz = p.timezone || 'Europe/London';
 
   if (path === '/api/me' && method === 'GET') {
-    return json({ ok: true, user: publicUser(user), business: { id: business.id, name: p.business_name, currency: p.currency || 'GBP', timezone: tz, needs_sync: business.needs_sync, message_only: business.message_only, message_only_reason: business.message_only_reason, services: (p.services || []).map(s => ({ id: s.id, name_en: s.name_en, name_fa: s.name_fa, duration_min: s.duration_min })) } });
+    return json({ ok: true, user: publicUser(user), business: { id: business.id, name: p.business_name, currency: p.currency || 'GBP', timezone: tz, needs_sync: business.needs_sync, onboarded: business.onboarded, phone_number: business.phone_number, message_only: business.message_only, message_only_reason: business.message_only_reason, services: (p.services || []).map(s => ({ id: s.id, name_en: s.name_en, name_fa: s.name_fa, duration_min: s.duration_min })) } });
   }
 
   if (path === '/api/today' && method === 'GET') {
@@ -317,6 +320,11 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
     }
   }
 
+  if (path.startsWith('/api/onboarding')) {
+    if (!canManage(user)) return err('forbidden', 403);
+    return onboarding(request, env, path, business);
+  }
+
   m = /^\/api\/users\/(\d+)$/.exec(path);
   if (m && method === 'DELETE') {
     if (!canManage(user)) return err('forbidden', 403);
@@ -325,6 +333,78 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
     return r.meta?.changes === 1 ? json({ ok: true }) : err('not_found', 404);
   }
 
+  return err('not_found', 404);
+}
+
+// ---------------- onboarding (M8) ----------------
+
+const PLACEHOLDER = /\{\{(?!system__)\w+\}\}|\bundefined\b|\bnull\b/;
+
+/** Merge wizard input into the stored profile: only business basics and the editable settings. */
+function mergeOnboarding(p, input) {
+  const next = applySettings(p, input);
+  for (const k of BASICS) if (k in input) next[k] = typeof input[k] === 'string' ? input[k].trim().slice(0, 200) : input[k];
+  return next;
+}
+
+function basicsErrors(input) {
+  const errors = [];
+  for (const k of BASICS) {
+    if (!(k in input) || input[k] == null || input[k] === '') continue;
+    if (typeof input[k] !== 'string' || input[k].length > 200) errors.push({ field: k, error: 'invalid' });
+  }
+  if ('business_type' in input && !BUSINESS_TYPES.includes(input.business_type)) errors.push({ field: 'business_type', error: 'invalid' });
+  return errors;
+}
+
+async function onboarding(request, env, path, business) {
+  const method = request.method;
+  const p = business.profile;
+  if (path === '/api/onboarding' && method === 'GET') {
+    let voices = [];
+    try { voices = JSON.parse(env.ELEVENLABS_VOICES || '{}').options || []; } catch { /* none */ }
+    return json({ ok: true, profile: { ...settingsOf(p), ...Object.fromEntries(BASICS.map(k => [k, p[k] ?? ''])) }, onboarded: business.onboarded, phone_number: business.phone_number, voices, business_types: BUSINESS_TYPES });
+  }
+  if (path === '/api/onboarding' && method === 'PUT') {
+    const input = await body(request);
+    const errors = [...basicsErrors(input), ...validateSettings(Object.fromEntries(Object.entries(input).filter(([k]) => !BASICS.includes(k))))];
+    if (errors.length) return err('invalid', 400, { errors });
+    const { message_only: _system, ...next } = mergeOnboarding(p, input);
+    await env.DB.prepare("UPDATE businesses SET profile_json = ?, needs_sync = 1, updated_at = datetime('now') WHERE id = ?").bind(JSON.stringify(next), business.id).run();
+    return json({ ok: true });
+  }
+  if (path === '/api/onboarding/finish' && method === 'POST') {
+    const errors = validateProfile(p);
+    if (errors.length) return err('invalid', 400, { errors });
+    const { renderPrompt, createAgent, attachNumber, provisioningConfigured } = await import('./provisioning.js');
+    if (PLACEHOLDER.test(renderPrompt(p))) return err('prompt_incomplete', 400);
+    await env.DB.prepare("UPDATE businesses SET onboarded_at = COALESCE(onboarded_at, datetime('now')), active = 1 WHERE id = ?").bind(business.id).run();
+    await funnelOnce(env, business.id, 'wizard_done');
+    // Preview: provision the trial agent (M5) and a number to call. Without provisioning or a UK number bundle
+    // the team finishes it by hand (they are told in the team chat).
+    const out = { ok: true, agent: false, phone_number: business.phone_number, number_pending: null };
+    if (!provisioningConfigured(env)) {
+      out.number_pending = 'team';
+    } else {
+      try {
+        await createAgent(env, business.id);
+        out.agent = true;
+        if (!business.phone_number) out.phone_number = (await attachNumber(env, business.id, { buy: true })).phone_number;
+      } catch (e) {
+        out.number_pending = e.code || 'error';
+        console.error(JSON.stringify({ evt: 'onboarding_provision_failed', business_id: business.id, error: String(e?.message || e) }));
+      }
+    }
+    if (out.number_pending) {
+      const { sendTeamAlert } = await import('./notify.js');
+      await sendTeamAlert(env, `🛠 ${p.business_name} (${business.id}) finished the wizard: ${out.agent ? 'agent ready' : 'agent not created'}, number pending (${out.number_pending}). Finish with provisioning/cli.mjs.`);
+    }
+    return json(out);
+  }
+  if (path === '/api/onboarding/forwarding' && method === 'POST') {
+    await funnelOnce(env, business.id, 'forwarding_on');
+    return json({ ok: true });
+  }
   return err('not_found', 404);
 }
 

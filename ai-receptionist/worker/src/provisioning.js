@@ -68,6 +68,11 @@ async function requireBusiness(env, id) {
 
 const voices = env => { try { return JSON.parse(env.ELEVENLABS_VOICES || '{}'); } catch { return {}; } };
 
+/** The system prompt as the agent will get it (M8 checks it for empty placeholders before a wizard finishes). */
+export function renderPrompt(profile) {
+  return render(TEMPLATE_MD, profile);
+}
+
 /** What we would push for this business right now. */
 export function desiredAgent(env, business, toolIds) {
   const prompt = render(TEMPLATE_MD, business.profile);

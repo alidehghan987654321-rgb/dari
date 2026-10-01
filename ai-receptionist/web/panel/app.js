@@ -168,7 +168,7 @@ async function boot() {
   }
 }
 
-const SCREENS = { today: screenToday, bookings: screenBookings, calls: screenCalls, call: screenCall, messages: screenMessages, settings: screenSettings, account: screenAccount };
+const SCREENS = { onboarding: screenOnboarding, today: screenToday, bookings: screenBookings, calls: screenCalls, call: screenCall, messages: screenMessages, settings: screenSettings, account: screenAccount };
 
 async function render() {
   const [route, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
@@ -179,6 +179,8 @@ async function render() {
   const screen = SCREENS[name] || screenToday;
   const main = shell(name === 'call' ? 'calls' : (SCREENS[name] ? name : 'today'));
   if (!S.business) { fill(main, h('p', { class: 'empty' }, t('choose_business'))); return; }
+  // Self-serve owners finish the setup wizard first (M8).
+  if (S.business.onboarded === false && S.user.role === 'owner' && name !== 'onboarding') { location.hash = '#/onboarding'; return; }
   try {
     await screen(main, arg ? decodeURIComponent(arg) : undefined);
   } catch (e) {
@@ -530,106 +532,112 @@ function slug(s) {
   return base.length >= 2 ? base : `service-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-async function screenSettings(main) {
-  const res = await api('GET', '/settings');
-  const draft = structuredClone(res.settings);
+/**
+ * Business settings editors, shared by the Settings screen and the onboarding wizard (M8). Each returns a
+ * section bound to `draft`; structural changes (add/remove) call `redraw`.
+ */
+function settingsEditors(draft, redraw, existingIds = new Set()) {
+  let n = 0;
+  const uid = p => `${p}-${n++}`;
+  const input = (id, label, value, onInput, attrs = {}) => h('div', { class: 'field' },
+    h('label', { for: id }, label),
+    h('input', { id, value: value ?? '', oninput: e => onInput(e.target.value), ...attrs }));
   draft.opening_hours ||= {};
   draft.closed_dates ||= [];
   draft.policies ||= [];
   draft.faq ||= [];
+  draft.services ||= [];
+  return {
+    hours: () => h('section', { class: 'card' }, h('h2', {}, t('opening_hours')),
+      DAY_KEYS.map(day => {
+        const ranges = draft.opening_hours[day] ||= [];
+        return h('div', { class: 'day-block' },
+          h('div', { class: 'row' }, h('b', {}, t('days')[day]), h('span', { class: 'spacer' }),
+            ranges.length ? null : h('span', { class: 'muted small' }, t('closed')),
+            h('button', { type: 'button', class: 'btn', onclick: () => { ranges.push(['10:00', '18:00']); redraw(); } }, '+ ', t('add_range'))),
+          ranges.map((r, i) => {
+            const a = uid('from'), b = uid('to');
+            return h('div', { class: 'editor-row' },
+              h('div', {}, h('label', { for: a }, t('open_from')), h('input', { id: a, type: 'time', value: r[0], oninput: e => { r[0] = e.target.value; } })),
+              h('div', {}, h('label', { for: b }, t('open_to')), h('input', { id: b, type: 'time', value: r[1], oninput: e => { r[1] = e.target.value; } })),
+              h('button', { type: 'button', class: 'btn danger', 'aria-label': `${t('remove')} ${t('days')[day]}`, onclick: () => { ranges.splice(i, 1); redraw(); } }, '✕'));
+          }));
+      })),
+    closed: () => h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('closed_dates')),
+      draft.closed_dates.map((d, i) => {
+        const id = uid('cd');
+        return h('div', { class: 'editor-row', style: 'grid-template-columns:1fr auto' },
+          h('div', {}, h('label', { for: id, class: 'sr-only' }, t('date')), h('input', { id, type: 'date', value: d, oninput: e => { draft.closed_dates[i] = e.target.value; } })),
+          h('button', { type: 'button', class: 'btn danger', 'aria-label': t('remove'), onclick: () => { draft.closed_dates.splice(i, 1); redraw(); } }, '✕'));
+      }),
+      h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.closed_dates.push(todayLocal()); redraw(); } }, '+ ', t('add_date'))),
+    services: () => h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('services')),
+      draft.services.map((s, i) => h('div', { class: 'day-block' },
+        h('div', { class: 'grid2' },
+          input(uid('sfa'), t('name_fa'), s.name_fa, v => { s.name_fa = v; }),
+          input(uid('sen'), t('name_en'), s.name_en, v => { s.name_en = v; if (!existingIds.has(s.id)) s.id = slug(v); }, { dir: 'ltr' }),
+          input(uid('sdur'), t('duration_min'), s.duration_min, v => { s.duration_min = Number(v); }, { type: 'number', min: '5', max: '480', step: '5', inputmode: 'numeric' }),
+          input(uid('sprice'), `${t('price')} (${draft.currency})`, s.price, v => { s.price = Number(v); }, { type: 'number', min: '0', step: '0.5', inputmode: 'decimal' })),
+        draft.services.length > 1
+          ? h('button', { type: 'button', class: 'btn danger', style: 'margin-top:8px', onclick: () => { draft.services.splice(i, 1); redraw(); } }, t('remove'))
+          : null)),
+      h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.services.push({ id: slug(''), name_fa: '', name_en: '', duration_min: 30, price: 0 }); redraw(); } }, '+ ', t('add_service'))),
+    capacity: () => h('section', { class: 'card', style: 'margin-top:12px' },
+      input('capacity', t('capacity'), draft.capacity, v => { draft.capacity = Number(v); }, { type: 'number', min: '1', max: '20', inputmode: 'numeric' })),
+    policies: () => h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('policies')),
+      draft.policies.map((p, i) => {
+        const id = uid('pol');
+        return h('div', { class: 'editor-row', style: 'grid-template-columns:1fr auto' },
+          h('div', {}, h('label', { for: id, class: 'sr-only' }, t('policies')), h('textarea', { id, dir: 'auto', oninput: e => { draft.policies[i] = e.target.value; } }, p)),
+          h('button', { type: 'button', class: 'btn danger', 'aria-label': t('remove'), onclick: () => { draft.policies.splice(i, 1); redraw(); } }, '✕'));
+      }),
+      h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.policies.push(''); redraw(); } }, '+ ', t('add_policy'))),
+    faq: () => h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('faq')),
+      draft.faq.map((f, i) => h('div', { class: 'day-block' },
+        input(uid('q'), t('question'), f.q, v => { f.q = v; }, { dir: 'auto' }),
+        input(uid('a'), t('answer'), f.a, v => { f.a = v; }, { dir: 'auto' }),
+        h('button', { type: 'button', class: 'btn danger', style: 'margin-top:8px', onclick: () => { draft.faq.splice(i, 1); redraw(); } }, t('remove')))),
+      h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.faq.push({ q: '', a: '' }); redraw(); } }, '+ ', t('add_faq'))),
+    limit: () => h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('plan_limit')),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!draft.hard_cap, onchange: e => { draft.hard_cap = e.target.checked; } }), t('hard_cap')),
+      h('p', { class: 'small muted' }, t('hard_cap_help'))),
+    transfer: () => h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('transfer')),
+      input('transfer-number', t('transfer_number'), draft.phone_for_transfer, v => { draft.phone_for_transfer = v; }, { type: 'tel', dir: 'ltr' }),
+      input('transfer-hours', t('transfer_hours'), draft.transfer_hours, v => { draft.transfer_hours = v; }, { dir: 'auto' })),
+  };
+}
+
+/** The settings body the API expects, from an editor draft. */
+function settingsBody(draft) {
+  return {
+    ...draft,
+    opening_hours: Object.fromEntries(DAY_KEYS.map(d => [d, draft.opening_hours?.[d] || []])),
+    closed_dates: (draft.closed_dates || []).filter(Boolean),
+    policies: (draft.policies || []).map(p => p.trim()).filter(Boolean),
+    faq: (draft.faq || []).filter(f => f.q.trim() || f.a.trim()),
+    currency: undefined,
+  };
+}
+
+async function screenSettings(main) {
+  const res = await api('GET', '/settings');
+  const draft = structuredClone(res.settings);
   const existingIds = new Set(draft.services.map(s => s.id));
   const error = h('p', { class: 'error', role: 'alert' });
   const sections = h('div');
 
-  const input = (id, label, value, onInput, attrs = {}) => h('div', { class: 'field' },
-    h('label', { for: id }, label),
-    h('input', { id, value: value ?? '', oninput: e => onInput(e.target.value), ...attrs }));
-
   function draw() {
-    let n = 0;
-    const uid = p => `${p}-${n++}`;
-    fill(sections, 
-      h('section', { class: 'card' }, h('h2', {}, t('opening_hours')),
-        DAY_KEYS.map(day => {
-          const ranges = draft.opening_hours[day] ||= [];
-          return h('div', { class: 'day-block' },
-            h('div', { class: 'row' }, h('b', {}, t('days')[day]), h('span', { class: 'spacer' }),
-              ranges.length ? null : h('span', { class: 'muted small' }, t('closed')),
-              h('button', { type: 'button', class: 'btn', onclick: () => { ranges.push(['10:00', '18:00']); draw(); } }, '+ ', t('add_range'))),
-            ranges.map((r, i) => {
-              const a = uid('from'), b = uid('to');
-              return h('div', { class: 'editor-row' },
-                h('div', {}, h('label', { for: a }, t('open_from')), h('input', { id: a, type: 'time', value: r[0], oninput: e => { r[0] = e.target.value; } })),
-                h('div', {}, h('label', { for: b }, t('open_to')), h('input', { id: b, type: 'time', value: r[1], oninput: e => { r[1] = e.target.value; } })),
-                h('button', { type: 'button', class: 'btn danger', 'aria-label': `${t('remove')} ${t('days')[day]}`, onclick: () => { ranges.splice(i, 1); draw(); } }, '✕'));
-            }));
-        })),
-
-      h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('closed_dates')),
-        draft.closed_dates.map((d, i) => {
-          const id = uid('cd');
-          return h('div', { class: 'editor-row', style: 'grid-template-columns:1fr auto' },
-            h('div', {}, h('label', { for: id, class: 'sr-only' }, t('date')), h('input', { id, type: 'date', value: d, oninput: e => { draft.closed_dates[i] = e.target.value; } })),
-            h('button', { type: 'button', class: 'btn danger', 'aria-label': t('remove'), onclick: () => { draft.closed_dates.splice(i, 1); draw(); } }, '✕'));
-        }),
-        h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.closed_dates.push(todayLocal()); draw(); } }, '+ ', t('add_date'))),
-
-      h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('services')),
-        draft.services.map((s, i) => h('div', { class: 'day-block' },
-          h('div', { class: 'grid2' },
-            input(uid('sfa'), t('name_fa'), s.name_fa, v => { s.name_fa = v; }),
-            input(uid('sen'), t('name_en'), s.name_en, v => { s.name_en = v; if (!existingIds.has(s.id)) s.id = slug(v); }, { dir: 'ltr' }),
-            input(uid('sdur'), t('duration_min'), s.duration_min, v => { s.duration_min = Number(v); }, { type: 'number', min: '5', max: '480', step: '5', inputmode: 'numeric' }),
-            input(uid('sprice'), `${t('price')} (${draft.currency})`, s.price, v => { s.price = Number(v); }, { type: 'number', min: '0', step: '0.5', inputmode: 'decimal' })),
-          draft.services.length > 1
-            ? h('button', { type: 'button', class: 'btn danger', style: 'margin-top:8px', onclick: () => { draft.services.splice(i, 1); draw(); } }, t('remove'))
-            : null)),
-        h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.services.push({ id: slug(''), name_fa: '', name_en: '', duration_min: 30, price: 0 }); draw(); } }, '+ ', t('add_service'))),
-
-      h('section', { class: 'card', style: 'margin-top:12px' },
-        input('capacity', t('capacity'), draft.capacity, v => { draft.capacity = Number(v); }, { type: 'number', min: '1', max: '20', inputmode: 'numeric' })),
-
-      h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('policies')),
-        draft.policies.map((p, i) => {
-          const id = uid('pol');
-          return h('div', { class: 'editor-row', style: 'grid-template-columns:1fr auto' },
-            h('div', {}, h('label', { for: id, class: 'sr-only' }, t('policies')), h('textarea', { id, dir: 'auto', oninput: e => { draft.policies[i] = e.target.value; } }, p)),
-            h('button', { type: 'button', class: 'btn danger', 'aria-label': t('remove'), onclick: () => { draft.policies.splice(i, 1); draw(); } }, '✕'));
-        }),
-        h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.policies.push(''); draw(); } }, '+ ', t('add_policy'))),
-
-      h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('faq')),
-        draft.faq.map((f, i) => h('div', { class: 'day-block' },
-          input(uid('q'), t('question'), f.q, v => { f.q = v; }, { dir: 'auto' }),
-          input(uid('a'), t('answer'), f.a, v => { f.a = v; }, { dir: 'auto' }),
-          h('button', { type: 'button', class: 'btn danger', style: 'margin-top:8px', onclick: () => { draft.faq.splice(i, 1); draw(); } }, t('remove')))),
-        h('button', { type: 'button', class: 'btn', style: 'margin-top:8px', onclick: () => { draft.faq.push({ q: '', a: '' }); draw(); } }, '+ ', t('add_faq'))),
-
-      h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('plan_limit')),
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!draft.hard_cap, onchange: e => { draft.hard_cap = e.target.checked; } }), t('hard_cap')),
-        h('p', { class: 'small muted' }, t('hard_cap_help'))),
-
-      h('section', { class: 'card', style: 'margin-top:12px' }, h('h2', {}, t('transfer')),
-        input('transfer-number', t('transfer_number'), draft.phone_for_transfer, v => { draft.phone_for_transfer = v; }, { type: 'tel', dir: 'ltr' }),
-        input('transfer-hours', t('transfer_hours'), draft.transfer_hours, v => { draft.transfer_hours = v; }, { dir: 'auto' })),
-    );
+    const E = settingsEditors(draft, draw, existingIds);
+    fill(sections, E.hours(), E.closed(), E.services(), E.capacity(), E.policies(), E.faq(), E.limit(), E.transfer());
   }
   draw();
 
   const save = async e => {
     e.preventDefault();
     error.textContent = '';
-    const body = {
-      ...draft,
-      opening_hours: Object.fromEntries(DAY_KEYS.map(d => [d, draft.opening_hours[d] || []])),
-      closed_dates: draft.closed_dates.filter(Boolean),
-      policies: draft.policies.map(p => p.trim()).filter(Boolean),
-      faq: draft.faq.filter(f => f.q.trim() || f.a.trim()),
-      currency: undefined,
-    };
     try {
-      await api('PUT', '/settings', body);
-      S.business.needs_sync = true;
+      const r = await api('PUT', '/settings', settingsBody(draft));
+      S.business.needs_sync = r.needs_sync; // false when M5 already pushed it to the live agent
       toast(t('saved'));
       render();
     } catch (err) {
@@ -646,6 +654,158 @@ async function screenSettings(main) {
     h('fieldset', { disabled: !res.can_edit, style: 'border:0;padding:0;margin:0' }, sections),
     error,
     res.can_edit ? h('button', { class: 'btn primary block', type: 'submit', style: 'margin-top:16px' }, t('save')) : null));
+}
+
+// ---------------- onboarding wizard (M8) ----------------
+
+const CARRIERS = [
+  ['ee', 'EE'], ['vodafone', 'Vodafone'], ['o2', 'O2'], ['three', 'Three'], ['virgin_mobile', 'Virgin Mobile'],
+  ['bt', 'BT'], ['virgin_media', 'Virgin Media'],
+];
+const WIZ = { step: 0, draft: null, done: null };
+const WIZ_STEPS = ['wiz_basics', 'opening_hours', 'services', 'wiz_policies', 'transfer', 'wiz_voice', 'wiz_review'];
+// Each step saves only its own fields, so an unfinished later step never blocks an earlier one.
+const WIZ_FIELDS = [
+  ['business_name', 'business_type', 'address', 'city', 'nearest_station', 'parking', 'assistant_name'],
+  ['opening_hours', 'closed_dates'],
+  ['services', 'capacity'],
+  ['policies', 'faq'],
+  ['phone_for_transfer', 'transfer_hours'],
+  ['voice_id', 'voice_id_fa'],
+  [],
+];
+
+/** Call forwarding guide. Mobile networks share the standard GSM codes; landlines use the providers' codes. */
+function forwardingGuide(number) {
+  const n = number || '…';
+  const box = h('div', { class: 'stack' });
+  const show = id => {
+    const mobile = !['bt', 'virgin_media'].includes(id);
+    const p = mobile ? '**' : '*'; // GSM codes on mobiles; landline providers use single-star codes
+    fill(box,
+      h('p', {}, t(mobile ? 'fwd_mobile_intro' : 'fwd_landline_intro')),
+      h('ol', { class: 'stack' },
+        h('li', {}, t('fwd_busy'), ' ', h('code', { dir: 'ltr' }, `${p}67*${n}#`)),
+        h('li', {}, t('fwd_noanswer'), ' ', h('code', { dir: 'ltr' }, `${p}61*${n}#`)),
+        mobile ? h('li', {}, t('fwd_unreachable'), ' ', h('code', { dir: 'ltr' }, `**62*${n}#`)) : null),
+      h('p', { class: 'small muted' }, t(mobile ? 'fwd_mobile_note' : 'fwd_landline_note')));
+  };
+  const sel = h('select', { id: 'carrier', onchange: e => show(e.target.value) }, CARRIERS.map(([id, name]) => h('option', { value: id }, name)));
+  show('ee');
+  return h('div', { class: 'stack' }, h('div', {}, h('label', { for: 'carrier' }, t('fwd_carrier')), sel), box);
+}
+
+async function screenOnboarding(main) {
+  if (!WIZ.draft) {
+    const d = await api('GET', '/onboarding');
+    WIZ.draft = d.profile;
+    WIZ.voices = d.voices;
+    WIZ.types = d.business_types;
+    WIZ.existingIds = new Set(d.profile.services.map(s => s.id));
+    if (d.onboarded) WIZ.done = { phone_number: d.phone_number };
+  }
+  const draft = WIZ.draft;
+  if (WIZ.done) return wizardDone(main);
+
+  const error = h('p', { class: 'error', role: 'alert' });
+  const body = h('div');
+  const step = WIZ.step;
+  const input = (id, label, key, attrs = {}) => h('div', { class: 'field' },
+    h('label', { for: id }, label),
+    h('input', { id, value: draft[key] ?? '', oninput: e => { draft[key] = e.target.value; }, ...attrs }));
+
+  function draw() {
+    const E = settingsEditors(draft, draw, WIZ.existingIds);
+    if (step === 2 && !draft.services.length) draft.services.push({ id: `service-${Math.random().toString(36).slice(2, 7)}`, name_fa: '', name_en: '', duration_min: 30, price: 0 });
+    const views = [
+      () => h('section', { class: 'card stack' },
+        input('w-name', t('wiz_business_name'), 'business_name', { required: true }),
+        h('div', { class: 'field' }, h('label', { for: 'w-type' }, t('wiz_business_type')),
+          h('select', { id: 'w-type', onchange: e => { draft.business_type = e.target.value; } },
+            WIZ.types.map(x => h('option', { value: x, selected: x === draft.business_type }, t(`type_${x.replace(/ /g, '_')}`))))),
+        input('w-address', t('wiz_address'), 'address', { required: true, dir: 'auto' }),
+        input('w-city', t('wiz_city'), 'city', { required: true, dir: 'auto' }),
+        input('w-station', t('wiz_station'), 'nearest_station', { dir: 'auto' }),
+        input('w-parking', t('wiz_parking'), 'parking', { dir: 'auto' }),
+        input('w-assistant', t('wiz_assistant'), 'assistant_name', { dir: 'auto' })),
+      () => E.hours(),
+      () => h('div', {}, E.services(), E.capacity()),
+      () => h('div', {}, E.policies(), E.faq()),
+      () => E.transfer(),
+      () => h('section', { class: 'card stack' },
+        h('p', {}, t('wiz_voice_help')),
+        WIZ.voices.length
+          ? WIZ.voices.map(v => h('label', { class: 'check' },
+            h('input', { type: 'radio', name: `voice-${v.lang}`, checked: (v.lang === 'fa' ? draft.voice_id_fa : draft.voice_id) === v.id,
+              onchange: () => { if (v.lang === 'fa') draft.voice_id_fa = v.id; else draft.voice_id = v.id; } }),
+            h('span', {}, lang() === 'fa' ? v.label_fa : v.label_en, ' ', h('span', { class: 'pill' }, t(v.lang === 'fa' ? 'lang_fa' : 'lang_en'))),
+            v.sample_url ? h('audio', { controls: true, preload: 'none', src: v.sample_url, style: 'max-width:180px' }) : null))
+          : h('p', { class: 'muted' }, t('wiz_voice_default'))),
+      () => h('section', { class: 'card stack' },
+        h('p', {}, t('wiz_review_help')),
+        h('dl', { class: 'stack' },
+          h('dt', {}, h('b', {}, t('wiz_business_name'))), h('dd', {}, draft.business_name),
+          h('dt', {}, h('b', {}, t('wiz_address'))), h('dd', {}, draft.address, ', ', draft.city),
+          h('dt', {}, h('b', {}, t('services'))), h('dd', {}, draft.services.map(s => `${lang() === 'fa' ? s.name_fa : s.name_en} (${num(s.duration_min)} ${t('minutes_short')})`).join('، ')),
+          h('dt', {}, h('b', {}, t('transfer_number'))), h('dd', { dir: 'ltr', style: 'text-align:start' }, draft.phone_for_transfer || '—'))),
+    ];
+    fill(body, views[step]());
+  }
+  draw();
+
+  async function save() {
+    const all = settingsBody(draft);
+    const b = Object.fromEntries(WIZ_FIELDS[step].filter(k => all[k] !== undefined && all[k] !== '' && all[k] !== null).map(k => [k, all[k]]));
+    if (Object.keys(b).length) await api('PUT', '/onboarding', b);
+  }
+  async function next() {
+    error.textContent = '';
+    try {
+      await save();
+      if (step === WIZ_STEPS.length - 1) {
+        const r = await api('POST', '/onboarding/finish', {});
+        WIZ.done = r;
+        S.business.onboarded = true;
+        S.business.phone_number = r.phone_number;
+      } else {
+        WIZ.step++;
+      }
+      render();
+    } catch (err) {
+      error.textContent = err.code === 'invalid'
+        ? `${t('err_invalid')} (${(err.data?.errors || []).map(x => t(`field_${x.field.split('.')[0]}`)).join('، ')})`
+        : errText(err);
+    }
+  }
+
+  fill(main,
+    h('p', { class: 'small muted' }, t('wiz_step', { n: step + 1, of: WIZ_STEPS.length })),
+    h('div', { class: 'meter', role: 'progressbar', 'aria-valuenow': step + 1, 'aria-valuemin': 1, 'aria-valuemax': WIZ_STEPS.length, 'aria-label': t('wiz_title') },
+      h('div', { style: `width:${Math.round((100 * (step + 1)) / WIZ_STEPS.length)}%` })),
+    h('h2', {}, t(WIZ_STEPS[step])),
+    body, error,
+    h('div', { class: 'row', style: 'margin-top:16px' },
+      step ? h('button', { class: 'btn', type: 'button', onclick: () => { WIZ.step--; render(); } }, t('back')) : null,
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'btn primary', type: 'button', onclick: next }, t(step === WIZ_STEPS.length - 1 ? 'wiz_finish' : 'next'))));
+}
+
+function wizardDone(main) {
+  const r = WIZ.done;
+  fill(main,
+    h('h2', {}, t('wiz_done_title')),
+    r.phone_number
+      ? h('div', { class: 'card stack' },
+        h('p', {}, t('wiz_call_now')),
+        h('a', { class: 'btn primary block', href: `tel:${r.phone_number}`, dir: 'ltr' }, icon('phone'), r.phone_number))
+      : h('p', { class: 'banner', role: 'note' }, t('wiz_number_pending')),
+    h('h2', {}, t('fwd_title')),
+    h('div', { class: 'card stack' }, forwardingGuide(r.phone_number),
+      h('button', {
+        class: 'btn block', type: 'button',
+        onclick: async e => { await api('POST', '/onboarding/forwarding', {}); e.target.disabled = true; toast(t('fwd_thanks')); },
+      }, t('fwd_done'))),
+    h('a', { class: 'btn block', href: '#/today', style: 'margin-top:12px' }, t('wiz_to_panel')));
 }
 
 // ---------------- account ----------------

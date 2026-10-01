@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>منشی تلفنی هوشمند — فارسی و انگلیسی</title>
+  <meta name="description" content="منشی تلفنی هوش مصنوعی برای کسب‌وکارهای ایرانی در بریتانیا: ۲۴ ساعته فارسی و انگلیسی جواب می‌دهد، نوبت می‌دهد و پیام می‌گیرد.">
+  <meta name="theme-color" content="#0f6e5b">
+  <meta name="color-scheme" content="light dark">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Font loads without blocking the first paint (text shows in the system font, then swaps). -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;900&display=swap" media="print" onload="this.media='all'">
+  <!-- The whole stylesheet (~4 KB) is inline: no render-blocking request. Shares the panel's design tokens. -->
+  <style>
+/* Landing page (M8). Same tokens as the panel; mobile first; RTL by default with logical properties. */
+:root {
+  --bg: #f6f5f2; --surface: #fff; --surface-2: #efede8; --text: #1c1b19; --muted: #5d5a54; --line: #dcd8d0;
+  --accent: #0f6e5b; --accent-text: #fff; --accent-soft: #dcefe9; --danger: #b3261e; --radius: 14px;
+  --font: 'Vazirmatn', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141412; --surface: #1e1d1b; --surface-2: #2a2926; --text: #f1efea; --muted: #b4b0a8; --line: #3a3834;
+    --accent: #5fc8ad; --accent-text: #0b1f1a; --accent-soft: #1d3a33; --danger: #ff8a80; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.7 var(--font); }
+a { color: var(--accent); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.top { display: flex; align-items: center; gap: 12px; padding: 12px 16px; max-width: 960px; margin: 0 auto; flex-wrap: wrap; }
+.brand { font-weight: 900; font-size: 1.15rem; text-decoration: none; color: var(--text); }
+.top-nav { display: flex; gap: 14px; align-items: center; margin-inline-start: auto; font-size: .95rem; }
+.top-nav a { text-decoration: none; color: var(--muted); }
+.lang { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 12px; cursor: pointer; font: inherit; color: inherit; }
+main { max-width: 960px; margin: 0 auto; padding: 0 16px 48px; }
+.hero { padding: 40px 0 16px; }
+.hero h1 { font-size: clamp(2rem, 7vw, 3.2rem); line-height: 1.25; margin: 0 0 12px; font-weight: 900; }
+.lead { font-size: 1.15rem; color: var(--muted); max-width: 40em; margin: 0 0 20px; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 0 20px;
+  border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  text-decoration: none; font: inherit; font-weight: 700; cursor: pointer;
+}
+.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.btn:disabled { opacity: .5; }
+.block { padding: 28px 0 8px; }
+h2 { font-size: 1.5rem; margin: 0 0 14px; }
+.small { font-size: .88rem; }
+.muted { color: var(--muted); }
+.error { color: var(--danger); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin: 0; }
+.stack > * + * { margin-top: 12px; }
+.grid2 { display: grid; gap: 12px; grid-template-columns: 1fr; }
+@media (min-width: 640px) { .grid2 { grid-template-columns: 1fr 1fr; } }
+.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; counter-reset: s; }
+@media (min-width: 640px) { .steps { grid-template-columns: repeat(3, 1fr); } }
+.steps li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; counter-increment: s; display: flex; flex-direction: column; gap: 4px; }
+.steps li::before { content: counter(s); font-weight: 900; color: var(--accent); font-size: 1.4rem; }
+.features { padding-inline-start: 1.2em; margin: 0; }
+.features li { margin: 6px 0; }
+.plan b.price { font-size: 1.8rem; display: block; }
+.plan ul { padding-inline-start: 1.2em; margin: 8px 0; }
+label { display: block; font-size: .92rem; color: var(--muted); margin-bottom: 4px; }
+input, select, textarea { width: 100%; min-width: 0; min-height: 48px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; }
+textarea { min-height: 96px; }
+input[type='tel'], input[type='email'] { text-align: start; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; }
+details + details { margin-top: 8px; }
+summary { cursor: pointer; font-weight: 700; }
+audio { width: 100%; margin-top: 8px; }
+.foot { max-width: 960px; margin: 0 auto; padding: 24px 16px 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
+  </style>
+  <script type="module" src="/site.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/" data-i18n="brand">منشی هوشمند</a>
+    <nav class="top-nav" aria-label="منو" data-i18n-aria="nav">
+      <a href="#pricing" data-i18n="nav_pricing">قیمت</a>
+      <a href="#faq" data-i18n="nav_faq">سؤال‌ها</a>
+      <a href="/panel/" data-i18n="nav_login">ورود</a>
+      <button type="button" id="lang" class="lang" lang="en">English</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1 data-i18n="hero_title">دیگه هیچ تماسی از دست نمی‌ره.</h1>
+      <p class="lead" data-i18n="hero_lead">منشی تلفنی هوش مصنوعی که ۲۴ ساعته فارسی و انگلیسی جواب می‌ده، نوبت می‌ده، جابه‌جا می‌کنه و پیام می‌گیره. مخصوص کسب‌وکارهای ایرانی در بریتانیا.</p>
+      <div class="cta">
+        <a class="btn primary" href="#signup" data-i18n="cta_trial">۱۴ روز رایگان امتحان کنید</a>
+        <a class="btn" id="demo" href="#" hidden><span data-i18n="cta_demo">همین الان به دمو زنگ بزنید</span> <bdi id="demo-number" dir="ltr"></bdi></a>
+      </div>
+      <p class="small muted" data-i18n="hero_note">شماره فعلی‌تان عوض نمی‌شه. بدون قرارداد بلندمدت.</p>
+    </section>
+
+    <section id="samples" class="block" hidden>
+      <h2 data-i18n="samples_title">بشنوید</h2>
+      <div class="grid2">
+        <figure class="card"><figcaption data-i18n="sample_fa">تماس فارسی</figcaption><audio controls preload="none" data-src="/audio/demo-fa.mp3"></audio></figure>
+        <figure class="card"><figcaption data-i18n="sample_en">تماس انگلیسی</figcaption><audio controls preload="none" data-src="/audio/demo-en.mp3"></audio></figure>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 data-i18n="how_title">چطور کار می‌کنه</h2>
+      <ol class="steps">
+        <li><b data-i18n="how1_t">ثبت‌نام در ۱۵ دقیقه</b><span data-i18n="how1_d">ساعت کاری، خدمات و قیمت‌ها رو وارد می‌کنید.</span></li>
+        <li><b data-i18n="how2_t">امتحانش کنید</b><span data-i18n="how2_d">یه شماره می‌گیرید و صدای منشی خودتون رو می‌شنوید.</span></li>
+        <li><b data-i18n="how3_t">خط‌تون رو وصل کنید</b><span data-i18n="how3_d">وقتی اشغالید یا جواب نمی‌دید، تماس میره پیش منشی.</span></li>
+      </ol>
+    </section>
+
+    <section class="block">
+      <h2 data-i18n="features_title">چه کارهایی می‌کنه</h2>
+      <ul class="features">
+        <li data-i18n="f1">فارسی محاوره‌ای و انگلیسی بریتانیایی؛ خودش تشخیص می‌ده مشتری به کدوم زبون حرف می‌زنه</li>
+        <li data-i18n="f2">نوبت می‌ده، جابه‌جا و لغو می‌کنه؛ هیچ‌وقت بیشتر از ظرفیت نوبت نمی‌ده</li>
+        <li data-i18n="f3">پیامک تأیید برای مشتری و خلاصه هر تماس در تلگرام برای شما</li>
+        <li data-i18n="f4">اگه لازم باشه تماس رو به خودتون وصل می‌کنه</li>
+        <li data-i18n="f5">پنل فارسی روی گوشی: نوبت‌ها، تماس‌ها، پیام‌ها</li>
+      </ul>
+    </section>
+
+    <section id="pricing" class="block">
+      <h2 data-i18n="pricing_title">قیمت</h2>
+      <div id="plans" class="grid2" aria-live="polite"></div>
+      <p class="small muted" data-i18n="pricing_note">قیمت‌ها ماهانه و بدون مالیات (VAT) است. ۱۴ روز اول رایگان. هر وقت خواستید لغو کنید.</p>
+    </section>
+
+    <section id="signup" class="block">
+      <h2 data-i18n="signup_title">شروع رایگان</h2>
+      <form id="signup-form" class="card stack" novalidate>
+        <div><label for="s-business" data-i18n="s_business">نام کسب‌وکار</label><input id="s-business" name="business_name" required autocomplete="organization"></div>
+        <div><label for="s-type" data-i18n="s_type">نوع کسب‌وکار</label>
+          <select id="s-type" name="business_type">
+            <option value="barber shop" data-i18n="t_barber">آرایشگاه مردانه</option>
+            <option value="hair salon" data-i18n="t_salon">آرایشگاه زنانه</option>
+            <option value="beauty salon" data-i18n="t_beauty">سالن زیبایی</option>
+            <option value="restaurant" data-i18n="t_restaurant">رستوران</option>
+            <option value="takeaway" data-i18n="t_takeaway">غذای بیرون‌بر</option>
+            <option value="clinic" data-i18n="t_clinic">کلینیک</option>
+            <option value="dental clinic" data-i18n="t_dental">دندانپزشکی</option>
+            <option value="other" data-i18n="t_other">سایر</option>
+          </select></div>
+        <div><label for="s-owner" data-i18n="s_owner">نام شما</label><input id="s-owner" name="owner_name" required autocomplete="name"></div>
+        <div><label for="s-phone" data-i18n="s_phone">موبایل (کد ورود با پیامک می‌آید)</label><input id="s-phone" name="phone" type="tel" required autocomplete="tel" dir="ltr" inputmode="tel"></div>
+        <div><label for="s-email" data-i18n="s_email">ایمیل (اختیاری)</label><input id="s-email" name="email" type="email" autocomplete="email" dir="ltr"></div>
+        <button class="btn primary" type="submit" data-i18n="s_submit">ثبت‌نام و دریافت کد</button>
+        <p class="small muted" data-i18n="s_privacy">با ثبت‌نام، شرایط استفاده و سیاست حریم خصوصی را می‌پذیرید (پایین همین صفحه).</p>
+      </form>
+      <form id="code-form" class="card stack" hidden>
+        <p data-i18n="code_sent">کد ۶ رقمی را برایتان پیامک کردیم.</p>
+        <div><label for="s-code" data-i18n="s_code">کد</label><input id="s-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required dir="ltr"></div>
+        <button class="btn primary" type="submit" data-i18n="s_verify">ورود و شروع راه‌اندازی</button>
+      </form>
+      <p id="signup-error" class="error" role="alert"></p>
+    </section>
+
+    <section id="faq" class="block">
+      <h2 data-i18n="faq_title">سؤال‌های پرتکرار</h2>
+      <details><summary data-i18n="q1">مشتری می‌فهمه با هوش مصنوعی حرف می‌زنه؟</summary><p data-i18n="a1">بله. منشی اول تماس می‌گه دستیار هوشمنده و تماس ضبط می‌شه؛ قانون بریتانیا شفافیت رو لازم می‌دونه و ما هم همین رو درست می‌دونیم.</p></details>
+      <details><summary data-i18n="q2">اگه مشتری بخواد با خودم حرف بزنه؟</summary><p data-i18n="a2">در ساعت‌هایی که شما تعیین می‌کنید تماس رو به شما وصل می‌کنه؛ بیرون از اون ساعت‌ها پیام می‌گیره و فوراً در تلگرام براتون می‌فرسته.</p></details>
+      <details><summary data-i18n="q3">با اطلاعات مشتری‌ها چی کار می‌کنید؟</summary><p data-i18n="a3">ما طبق UK GDPR «پردازشگر داده» شما هستیم: فقط چیزی که برای نوبت لازمه نگه می‌داریم، متن تماس‌ها بعد از ۹۰ روز پاک می‌شه و اطلاعات رو به هیچ کس نمی‌فروشیم.</p></details>
+      <details><summary data-i18n="q4">شماره‌ام عوض می‌شه؟</summary><p data-i18n="a4">نه. روی خط فعلی‌تون «انتقال وقتی اشغال یا بی‌جواب» رو روشن می‌کنید؛ راهنمای هر اپراتور توی پنل هست.</p></details>
+      <details><summary data-i18n="q5">چطور لغو کنم؟</summary><p data-i18n="a5">هر وقت خواستید از پنل (حساب ← فاکتورها و پرداخت). قرارداد بلندمدت نداریم.</p></details>
+      <details><summary data-i18n="q6">با لهجه‌ها کنار میاد؟</summary><p data-i18n="a6">برای لهجه‌های مختلف فارسی طراحی شده. اگه چیزی رو نفهمه، مؤدبانه دوباره می‌پرسه و هیچ‌وقت اسم، شماره یا ساعت رو حدس نمی‌زنه.</p></details>
+    </section>
+
+    <section id="contact" class="block">
+      <h2 data-i18n="contact_title">سؤال دیگه‌ای دارید؟</h2>
+      <form id="contact-form" class="card stack">
+        <div><label for="c-name" data-i18n="c_name">نام</label><input id="c-name" name="name" required autocomplete="name"></div>
+        <div><label for="c-contact" data-i18n="c_contact">موبایل یا ایمیل</label><input id="c-contact" name="contact" required dir="ltr"></div>
+        <div><label for="c-message" data-i18n="c_message">پیام</label><textarea id="c-message" name="message" required dir="auto"></textarea></div>
+        <button class="btn" type="submit" data-i18n="c_send">ارسال</button>
+        <p id="contact-status" class="small" role="status"></p>
+      </form>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p data-i18n="privacy">حریم خصوصی: این سایت کوکی ردیابی ندارد. ما فقط تعداد بازدیدها را بدون شناسایی شما می‌شماریم. اطلاعات تماس‌ها طبق قرارداد پردازش داده (DPA) و UK GDPR نگهداری و پس از ۹۰ روز حذف می‌شود.</p>
+    <p class="small muted">© <span data-i18n="brand">منشی هوشمند</span></p>
+  </footer>
+</body>
+</html>

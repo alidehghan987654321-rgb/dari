@@ -4,6 +4,9 @@
 import { parseHHMM, isValidDate, normalizePhone } from './lib.js';
 
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+export const BUSINESS_TYPES = ['barber shop', 'hair salon', 'beauty salon', 'restaurant', 'takeaway', 'clinic', 'dental clinic', 'other'];
+/** Business basics owners fill in during onboarding (M8). */
+export const BASICS = ['business_name', 'business_type', 'assistant_name', 'address', 'city', 'nearest_station', 'parking', 'voice_id', 'voice_id_fa'];
 export const EDITABLE = ['opening_hours', 'closed_dates', 'services', 'capacity', 'policies', 'faq', 'phone_for_transfer', 'transfer_hours', 'hard_cap'];
 
 const str = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
@@ -57,6 +60,44 @@ export function validateSettings(s) {
   if ('transfer_hours' in s && s.transfer_hours && !str(s.transfer_hours, 200)) err('transfer_hours', 'invalid');
   if ('hard_cap' in s && s.hard_cap != null && typeof s.hard_cap !== 'boolean') err('hard_cap', 'invalid');
   return errors;
+}
+
+/**
+ * A complete profile, as the agent needs it (M8: the wizard cannot finish, and no profile is saved through it,
+ * unless this passes). Returns [{ field, error }].
+ */
+export function validateProfile(p) {
+  const errors = [];
+  const err = (field, error) => errors.push({ field, error });
+  if (!p || typeof p !== 'object') return [{ field: 'profile', error: 'invalid' }];
+  if (!/^[a-z0-9-]{2,64}$/.test(p.business_id || '')) err('business_id', 'invalid');
+  for (const k of ['business_name', 'business_type', 'address', 'city', 'timezone', 'country', 'currency']) if (!str(p[k], 200)) err(k, 'required');
+  for (const k of ['assistant_name', 'nearest_station', 'parking']) if (p[k] != null && p[k] !== '' && !str(p[k], 200)) err(k, 'invalid');
+  if (p.timezone && !validTimezone(p.timezone)) err('timezone', 'invalid');
+  if (!Array.isArray(p.languages) || !p.languages.length) err('languages', 'required');
+  const settings = Object.fromEntries(EDITABLE.filter(k => k !== 'hard_cap').map(k => [k, p[k] ?? (k === 'closed_dates' || k === 'policies' || k === 'faq' ? [] : p[k])]));
+  if (settings.services == null) settings.services = [];
+  if (settings.capacity == null) settings.capacity = 1;
+  if (settings.opening_hours == null) settings.opening_hours = {};
+  errors.push(...validateSettings(settings));
+  if (!DAYS.some(d => (p.opening_hours?.[d] || []).length)) err('opening_hours', 'no_open_day');
+  return errors;
+}
+
+function validTimezone(tz) {
+  try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); return true; } catch { return false; }
+}
+
+/** Starting profile for a self-serve sign-up: country defaults (UK in v1), no services or hours yet. */
+export function draftProfile({ business_id, business_name, business_type }) {
+  return {
+    business_id, business_name, business_type: business_type || 'other', assistant_name: 'Sara',
+    city: '', address: '', country: 'GB', currency: 'GBP', timezone: 'Europe/London', languages: ['fa', 'en'],
+    opening_hours: { mon: [['10:00', '18:00']], tue: [['10:00', '18:00']], wed: [['10:00', '18:00']], thu: [['10:00', '18:00']], fri: [['10:00', '18:00']], sat: [['10:00', '17:00']], sun: [] },
+    closed_dates: [], capacity: 1, slot_step_minutes: 15, min_notice_minutes: 60, max_days_ahead: 30,
+    services: [], policies: [], faq: [], phone_for_transfer: '', transfer_hours: '',
+    booking_provider: 'd1', sms_enabled: true,
+  };
 }
 
 /** Editable subset of a profile, as the panel shows it. Prices always as `price`. */

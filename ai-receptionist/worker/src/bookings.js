@@ -22,6 +22,7 @@ export async function loadBusiness(env, id) {
   if (row.message_only) profile.message_only = true;
   return {
     id: row.id, agent_id: row.agent_id, active: !!row.active, needs_sync: !!row.needs_sync,
+    onboarded: !!row.onboarded_at || row.signup_source !== 'self_serve', signup_source: row.signup_source ?? null, phone_number: row.phone_number ?? null,
     message_only: !!row.message_only, message_only_reason: row.message_only_reason ?? null, profile,
   };
 }

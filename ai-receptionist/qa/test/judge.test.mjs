@@ -119,6 +119,19 @@ test('message-only profiles render a "bookings paused" block (M4)', () => {
   assert.ok(render(loadTemplate(), { ...p, message_only: true }).includes('bookings by phone are paused'));
 });
 
+test('a profile completed in the onboarding wizard renders with no empty placeholders (M8)', async () => {
+  const { draftProfile, validateProfile } = await import('../../worker/src/profile.js');
+  const p = {
+    ...draftProfile({ business_id: 'shiraz-salon-abc123', business_name: 'Shiraz Salon', business_type: 'hair salon' }),
+    address: '5 Example Street', city: 'London',
+    services: [{ id: 'cut', name_en: 'Cut', name_fa: 'کوتاهی', duration_min: 45, price: 35 }],
+  };
+  assert.deepEqual(validateProfile(p), []);
+  const prompt = render(loadTemplate(), p);
+  assert.doesNotMatch(prompt, /\{\{(?!system__)\w+\}\}|\bundefined\b|\bnull\b/);
+  assert.match(prompt, /Shiraz Salon \(hair salon\)/);
+});
+
 test('scenarios cover the required cases and use known tools', () => {
   const cases = loadScenarios();
   const ids = cases.filter(c => !c.human_only).map(c => c.id);

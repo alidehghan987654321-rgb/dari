@@ -191,6 +191,10 @@ async function syncFromStripe(env, businessId, subscriptionId) {
     .bind(row.stripe_customer_id, row.stripe_subscription_id, row.cancel_at_period_end, businessId).run();
   const business = await loadBusiness(env, businessId);
   if (business) await applyUsageRules(env, business); // message-only on/off (M4 grace period)
+  if (row.status === 'active') {
+    const { funnelOnce } = await import('./public.js');
+    await funnelOnce(env, businessId, 'paid');
+  }
   return { business, status: row.status, previous: prev?.status ?? null };
 }
 
