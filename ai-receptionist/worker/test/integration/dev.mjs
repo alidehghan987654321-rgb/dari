@@ -15,7 +15,10 @@ export const WORKER_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '.
 const WRANGLER = join(WORKER_DIR, 'node_modules', '.bin', 'wrangler');
 const QUIET_ENV = { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1', NO_COLOR: '1' };
 
-export const SECRETS = { TOOL_SECRET: 'test-tool-secret', ADMIN_SECRET: 'test-admin-secret', ELEVENLABS_WEBHOOK_SECRET: 'test-webhook-secret' };
+export const SECRETS = {
+  TOOL_SECRET: 'test-tool-secret', ADMIN_SECRET: 'test-admin-secret', ELEVENLABS_WEBHOOK_SECRET: 'test-webhook-secret',
+  SESSION_SECRET: 'test-session-secret',
+};
 
 function run(args, { cwd = WORKER_DIR } = {}) {
   return new Promise((resolve, reject) => {
@@ -90,6 +93,8 @@ export async function startDev({ vars = {}, migrate = true, noDatabase = false }
     TWILIO_AUTH_TOKEN: 'test-twilio-token',
     TWILIO_FROM: '+447700900999',
     TWILIO_API_BASE: mock.url,
+    RESEND_API_KEY: 'test-resend', EMAIL_FROM: 'Test <test@example.com>', EMAIL_API_BASE: mock.url,
+    ELEVENLABS_API_KEY: 'test-xi', ELEVENLABS_API_BASE: mock.url,
     ...vars,
   };
   const args = ['dev', '--config', config, '--ip', '127.0.0.1', '--port', String(port), '--persist-to', persist,

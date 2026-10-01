@@ -61,7 +61,7 @@ export function fmtHHMM(mins) {
  * Returns { ok, slots: ['HH:MM'], reason? }.
  * Capacity check is conservative: a slot is free if fewer than `capacity` bookings overlap it.
  */
-export function computeSlots({ profile, service, date, bookings = [], now = new Date(), excludeId = null }) {
+export function computeSlots({ profile, service, date, bookings = [], now = new Date(), excludeId = null, minNoticeMinutes = null }) {
   if (!isValidDate(date)) return { ok: false, reason: 'bad_date' };
   const today = londonNow(now, profile.timezone || TZ);
   const ahead = daysBetween(today.date, date);
@@ -73,7 +73,9 @@ export function computeSlots({ profile, service, date, bookings = [], now = new 
 
   const step = profile.slot_step_minutes || 15;
   const capacity = profile.capacity || 1;
-  const minStart = ahead === 0 ? today.minutes + (profile.min_notice_minutes ?? 60) : -1;
+  // minNoticeMinutes overrides the profile (the owner panel uses 0: staff can book a walk-in for the next slot).
+  const notice = minNoticeMinutes ?? profile.min_notice_minutes ?? 60;
+  const minStart = ahead === 0 ? today.minutes + notice : -1;
   const live = bookings.filter(b => b.id !== excludeId);
   const slots = [];
   for (const [open, close] of ranges) {

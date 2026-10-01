@@ -2,6 +2,29 @@
 
 Newest first. Every entry: what changed, how to deploy, manual steps.
 
+## M3 — Business owner panel
+
+- **Added** `web/panel/`: Persian-first (RTL) mobile web panel with an English toggle, Vazirmatn, light/dark,
+  vanilla JS without a build step. Screens: Today, Bookings (day/week, walk-in, move, cancel), Calls (summary,
+  transcript, recording), Messages, Business settings, Account (plan/usage, users, language, Persian digits).
+  Lighthouse mobile accessibility: 100 on every screen. No horizontal scroll at 360 px.
+- **Added** `/api/*` in the Worker (`panel.js`): passwordless login (6-digit code by SMS or email, 10-minute
+  expiry, 5 tries, rate-limited per number/email and per IP) -> 30-day HttpOnly/Secure/SameSite=Lax session.
+  Codes and session tokens are stored only as HMACs. Roles owner/staff/superadmin; every business-scoped
+  query is filtered by the session's business (tests prove cross-business access is denied on every route).
+  JSON-only writes (CSRF). Recordings are proxied so the ElevenLabs key never reaches the browser.
+- **Changed** booking logic moved to `bookings.js`, shared by the agent tools and the panel (no duplicate rules).
+  `computeSlots` takes an optional `minNoticeMinutes` (the panel uses 0 for walk-ins). Availability returns
+  `price` + `currency` instead of `price_gbp`. `PUT /admin/users` creates the first owner or a superadmin.
+- **Assumption**: the panel is served by the Worker itself (`[assets]` in `wrangler.toml`, Cloudflare's static
+  assets on Workers) instead of a separate Pages project, so `/panel` and `/api` share one origin and the session
+  cookie stays first-party (`*.workers.dev` and `*.pages.dev` are different sites).
+- **Assumption**: one login per phone number/email (a person who owns two businesses needs two identifiers until
+  multi-branch, M9e).
+- **Deploy**: `wrangler secret put SESSION_SECRET`; optional `RESEND_API_KEY` + `EMAIL_FROM` (email login) and
+  `ELEVENLABS_API_KEY` (recordings); `npm run db:init:remote` (migration 0003); `npm run deploy`; create the first
+  owner with `PUT /admin/users`.
+
 ## M2 — Monitoring and alerting
 
 - **Added** one JSON log line per tool call `{ts, business_id, tool, ok, error, ms}` (no names, numbers or message text)

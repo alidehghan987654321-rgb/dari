@@ -6,6 +6,8 @@
 //                                     GET  /admin/b/:businessId/bookings?date=YYYY-MM-DD
 //                                     GET  /admin/b/:businessId/calls?limit=20
 //                                     GET  /admin/health          last 24 h per business (M2)
+//                                     PUT  /admin/users           body: { business_id?, name, phone?, email?, role } (M3)
+// Owner panel API (session cookie):   /api/*  (see panel.js); the panel itself is static, served from ../web (M3)
 // Crons (wrangler.toml):              */5 * * * *  alert rules -> team Telegram chat (M2)
 //                                     17 3 * * *   retention + daily synthetic check (M2)
 //
@@ -13,24 +15,19 @@
 // { ok: false, error, message_for_agent } so the voice agent can explain the problem to the caller.
 
 import {
-  computeSlots, sortByPreferred, parseHHMM, fmtHHMM, isValidDate, normalizePhone, londonNow,
-  bookingId, safeEqual, verifyElevenLabsSignature, bookingSms, cancelSms, formatDate,
+  parseHHMM, fmtHHMM, isValidDate, normalizePhone, londonNow, safeEqual, verifyElevenLabsSignature,
+  bookingSms, cancelSms, formatDate,
 } from './lib.js';
+import { fail, loadBusiness, findService, freeSlots, createBooking, moveBooking, cancelBooking } from './bookings.js';
 import { sendTelegram, sendSms } from './notify.js';
 import { logToolEvent, recordEvent, trackedNotify, runAlerts, runSynthetic, healthSummary } from './monitor.js';
+import { handleApi } from './panel.js';
+import { parseIdentifier } from './auth.js';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
-// Tool results are plain objects; the router turns them into HTTP 200 responses and records them.
-const fail = (error, message_for_agent) => ({ ok: false, error, message_for_agent });
+// Tool results are plain objects ({ ok, ... } or fail()); the router turns them into HTTP 200 responses.
 const SERVER_ERROR = 'The booking system had a problem. Apologise, do not confirm anything, and take a message.';
-
-const REASON_TEXT = {
-  bad_date: 'The date is not valid. Ask the caller for the day again.',
-  past_date: 'That date is in the past. Ask for a future day.',
-  too_far: 'That date is too far ahead for bookings. Offer a closer date.',
-  closed: 'The business is closed on that day. Tell the caller and offer the nearest open day.',
-};
 
 export default {
   async fetch(request, env, ctx) {
@@ -40,6 +37,8 @@ export default {
       if (path === '/' && request.method === 'GET') return json({ ok: true, service: 'ai-receptionist' });
 
       if (path === '/webhooks/post-call' && request.method === 'POST') return postCall(request, env, ctx);
+
+      if (path.startsWith('/api/')) return await handleApi(request, env, ctx, path, url);
 
       if (path.startsWith('/admin/')) {
         if (!authorized(request, env.ADMIN_SECRET)) return json({ ok: false, error: 'unauthorized' }, 401);
@@ -99,24 +98,16 @@ function authorized(request, secret) {
   return !!secret && safeEqual(h, `Bearer ${secret}`);
 }
 
-async function loadBusiness(env, id) {
-  const row = await env.DB.prepare('SELECT id, agent_id, profile_json FROM businesses WHERE id = ?').bind(id).first();
-  if (!row) return null;
-  return { id: row.id, agent_id: row.agent_id, profile: JSON.parse(row.profile_json) };
-}
-
-function findService(profile, id) {
-  return (profile.services || []).find(s => s.id === id);
-}
-
-async function bookingsOn(env, businessId, date) {
-  const r = await env.DB.prepare(
-    "SELECT id, start_min, end_min FROM bookings WHERE business_id = ? AND date = ? AND status = 'confirmed'"
-  ).bind(businessId, date).all();
-  return r.results || [];
+// The caller must give the phone number the booking was made with before they can change it.
+function confirmedForCaller(env, businessId, bookingId, phone) {
+  return env.DB.prepare(
+    "SELECT * FROM bookings WHERE id = ? AND business_id = ? AND customer_phone = ? AND status = 'confirmed'"
+  ).bind(bookingId, businessId, phone).first();
 }
 
 // ---------------- tools ----------------
+// Agent-facing wrappers around the shared booking core (bookings.js): they add notifications and shape
+// the JSON the voice agent reads.
 
 async function tool(name, business, body, env, ctx) {
   const p = business.profile;
@@ -126,55 +117,27 @@ async function tool(name, business, body, env, ctx) {
 
   switch (name) {
     case 'availability': {
-      const service = findService(p, body.service_id);
-      if (!service) return fail('unknown_service', `Unknown service. Valid ids: ${p.services.map(s => s.id).join(', ')}.`);
-      const res = computeSlots({ profile: p, service, date: body.date, bookings: await bookingsOn(env, business.id, body.date) });
-      if (!res.ok) return fail(res.reason, REASON_TEXT[res.reason]);
-      const slots = sortByPreferred(res.slots, body.preferred_time).slice(0, 6);
+      const res = await freeSlots(env, business, body);
+      if (!res.ok) return res;
+      const slots = res.slots.slice(0, 6);
       return {
-        ok: true, date: body.date, day: formatDate(body.date, 'en'), service: service.name_en,
-        duration_min: service.duration_min, price_gbp: service.price_gbp, slots,
+        ok: true, date: body.date, day: formatDate(body.date, 'en'), service: res.service.name_en,
+        duration_min: res.service.duration_min, price: res.service.price ?? res.service.price_gbp, currency: p.currency || 'GBP', slots,
         note: slots.length ? 'Offer at most 3 of these.' : 'Fully booked that day. Offer another day.',
       };
     }
 
     case 'book': {
-      const service = findService(p, body.service_id);
-      if (!service) return fail('unknown_service', 'Unknown service id. Check the business facts.');
-      const phone = normalizePhone(body.customer_phone);
-      if (!phone) return fail('bad_phone', 'The phone number looks wrong. Ask for it again, digit by digit.');
-      const name = String(body.customer_name || '').trim().slice(0, 80);
-      if (!name) return fail('missing_name', 'Ask for the caller\'s name.');
-      const start = parseHHMM(body.time);
-      if (!isValidDate(body.date) || start == null) return fail('bad_time', 'Date or time is not valid. Check availability again.');
-
-      // Re-check with fresh data: slot must still be offered.
-      const check = computeSlots({ profile: p, service, date: body.date, bookings: await bookingsOn(env, business.id, body.date) });
-      if (!check.ok) return fail(check.reason, REASON_TEXT[check.reason]);
-      if (!check.slots.includes(fmtHHMM(start))) {
-        return fail('slot_taken', `That time is no longer free. Nearest free times: ${sortByPreferred(check.slots, body.time).slice(0, 3).join(', ') || 'none that day'}.`);
-      }
-      // Validates everything above, writes nothing, notifies nobody (used by the daily synthetic check).
-      if (body.dry_run === true) return { ok: true, dry_run: true, date: body.date, time: fmtHHMM(start), service: service.name_en };
-
-      const id = bookingId();
-      const end = start + service.duration_min;
-      const lang = body.language === 'fa' ? 'fa' : 'en';
-      // Atomic insert: only succeeds if overlap count is still below capacity (guards two simultaneous calls).
-      const res = await env.DB.prepare(
-        `INSERT INTO bookings (id, business_id, service_id, date, start_min, end_min, customer_name, customer_phone, language, notes, status, source, created_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 'phone_ai', datetime('now')
-         WHERE (SELECT COUNT(*) FROM bookings WHERE business_id = ? AND date = ? AND status = 'confirmed' AND start_min < ? AND end_min > ?) < ?`
-      ).bind(id, business.id, service.id, body.date, start, end, name, phone, lang, String(body.notes || '').slice(0, 300),
-        business.id, body.date, end, start, p.capacity || 1).run();
-      if (!res.meta || res.meta.changes !== 1) return fail('slot_taken', 'That time was just taken. Check availability again and offer another time.');
-
-      const serviceName = lang === 'fa' ? service.name_fa : service.name_en;
+      // dry_run validates everything, writes nothing, notifies nobody (used by the daily synthetic check).
+      const b = await createBooking(env, business, body, { source: 'phone_ai', dryRun: body.dry_run === true });
+      if (!b.ok) return b;
+      if (b.dry_run) return { ok: true, dry_run: true, date: b.date, time: fmtHHMM(b.start), service: b.service.name_en };
+      const serviceName = b.lang === 'fa' ? b.service.name_fa : b.service.name_en;
       if (p.sms_enabled) {
-        sms(phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: body.date, time: fmtHHMM(start), id, address: p.address }));
+        sms(b.phone, bookingSms({ lang: b.lang, businessName: p.business_name, serviceName, date: b.date, time: fmtHHMM(b.start), id: b.id, address: p.address }));
       }
-      telegram(`✅ New booking ${id}\n${service.name_en} — ${formatDate(body.date, 'en')} ${fmtHHMM(start)}\n${name} · ${phone}${body.notes ? `\nNote: ${body.notes}` : ''}`);
-      return { ok: true, booking_id: id, date: body.date, time: fmtHHMM(start), service: service.name_en, sms_sent: !!p.sms_enabled };
+      telegram(`✅ New booking ${b.id}\n${b.service.name_en} — ${formatDate(b.date, 'en')} ${fmtHHMM(b.start)}\n${b.name} · ${b.phone}${body.notes ? `\nNote: ${body.notes}` : ''}`);
+      return { ok: true, booking_id: b.id, date: b.date, time: fmtHHMM(b.start), service: b.service.name_en, sms_sent: !!p.sms_enabled };
     }
 
     case 'find-bookings': {
@@ -194,38 +157,24 @@ async function tool(name, business, body, env, ctx) {
 
     case 'reschedule': {
       const phone = normalizePhone(body.customer_phone);
-      const start = parseHHMM(body.new_time);
-      if (!phone || !isValidDate(body.new_date) || start == null) return fail('bad_input', 'Check the phone number, new date and new time.');
-      const old = await env.DB.prepare(
-        "SELECT * FROM bookings WHERE id = ? AND business_id = ? AND customer_phone = ? AND status = 'confirmed'"
-      ).bind(body.booking_id, business.id, phone).first();
+      if (!phone || !isValidDate(body.new_date) || parseHHMM(body.new_time) == null) return fail('bad_input', 'Check the phone number, new date and new time.');
+      const old = await confirmedForCaller(env, business.id, body.booking_id, phone);
       if (!old) return fail('not_found', 'Booking not found for that number. Use find_bookings first.');
-      const service = findService(p, old.service_id);
-      const check = computeSlots({ profile: p, service, date: body.new_date, bookings: await bookingsOn(env, business.id, body.new_date), excludeId: old.id });
-      if (!check.ok) return fail(check.reason, REASON_TEXT[check.reason]);
-      if (!check.slots.includes(fmtHHMM(start))) return fail('slot_taken', `Not free. Nearest: ${sortByPreferred(check.slots, body.new_time).slice(0, 3).join(', ') || 'none that day'}.`);
-      const end = start + service.duration_min;
-      const res = await env.DB.prepare(
-        `UPDATE bookings SET date = ?, start_min = ?, end_min = ?, updated_at = datetime('now')
-         WHERE id = ? AND status = 'confirmed'
-           AND (SELECT COUNT(*) FROM bookings WHERE business_id = ? AND date = ? AND status = 'confirmed' AND id != ? AND start_min < ? AND end_min > ?) < ?`
-      ).bind(body.new_date, start, end, old.id, business.id, body.new_date, old.id, end, start, p.capacity || 1).run();
-      if (!res.meta || res.meta.changes !== 1) return fail('slot_taken', 'That time was just taken. Check availability again.');
+      const m = await moveBooking(env, business, old, body.new_date, body.new_time);
+      if (!m.ok) return m;
       const lang = old.language === 'fa' ? 'fa' : 'en';
-      const serviceName = lang === 'fa' ? service.name_fa : service.name_en;
-      if (p.sms_enabled) sms(phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: body.new_date, time: fmtHHMM(start), id: old.id, address: p.address }));
-      telegram(`🔁 Moved ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)} → ${formatDate(body.new_date, 'en')} ${fmtHHMM(start)}\n${old.customer_name} · ${phone}`);
-      return { ok: true, booking_id: old.id, date: body.new_date, time: fmtHHMM(start) };
+      const serviceName = lang === 'fa' ? m.service.name_fa : m.service.name_en;
+      if (p.sms_enabled) sms(phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: m.date, time: fmtHHMM(m.start), id: old.id, address: p.address }));
+      telegram(`🔁 Moved ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)} → ${formatDate(m.date, 'en')} ${fmtHHMM(m.start)}\n${old.customer_name} · ${phone}`);
+      return { ok: true, booking_id: old.id, date: m.date, time: fmtHHMM(m.start) };
     }
 
     case 'cancel': {
       const phone = normalizePhone(body.customer_phone);
       if (!phone) return fail('bad_phone', 'The phone number looks wrong.');
-      const old = await env.DB.prepare(
-        "SELECT * FROM bookings WHERE id = ? AND business_id = ? AND customer_phone = ? AND status = 'confirmed'"
-      ).bind(body.booking_id, business.id, phone).first();
+      const old = await confirmedForCaller(env, business.id, body.booking_id, phone);
       if (!old) return fail('not_found', 'Booking not found for that number. Use find_bookings first.');
-      await env.DB.prepare("UPDATE bookings SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?").bind(old.id).run();
+      await cancelBooking(env, business, old.id);
       const lang = old.language === 'fa' ? 'fa' : 'en';
       if (p.sms_enabled) sms(phone, cancelSms({ lang, businessName: p.business_name, date: old.date, time: fmtHHMM(old.start_min), id: old.id }));
       telegram(`❌ Cancelled ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)}\n${old.customer_name} · ${phone}`);
@@ -303,6 +252,21 @@ async function admin(request, env, path, url) {
        ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, profile_json = excluded.profile_json, active = excluded.active, updated_at = datetime('now')`
     ).bind(profile.business_id, agent_id, JSON.stringify(profile), active ? 1 : 0).run();
     return json({ ok: true, business_id: profile.business_id });
+  }
+  if (path === '/admin/users' && request.method === 'PUT') {
+    // Create the first owner of a business, or a team superadmin (business_id null).
+    const b = await request.json();
+    const role = ['owner', 'staff', 'superadmin'].includes(b.role) ? b.role : null;
+    const phone = b.phone ? normalizePhone(b.phone) : null;
+    const email = b.email ? parseIdentifier(b.email)?.value : null;
+    if (!role || !b.name || (!phone && !email) || (role !== 'superadmin' && !b.business_id)) {
+      return json({ ok: false, error: 'need name, role, phone or email, and business_id (unless superadmin)' }, 400);
+    }
+    const r = await env.DB.prepare(
+      `INSERT INTO users (business_id, name, phone, email, role, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT DO NOTHING RETURNING id`
+    ).bind(role === 'superadmin' ? null : b.business_id, String(b.name).slice(0, 80), phone, email, role).first();
+    return r ? json({ ok: true, user_id: r.id }) : json({ ok: false, error: 'exists' }, 409);
   }
   if (path === '/admin/health' && request.method === 'GET') {
     return json({ ok: true, since: new Date(Date.now() - 864e5).toISOString(), businesses: await healthSummary(env) });

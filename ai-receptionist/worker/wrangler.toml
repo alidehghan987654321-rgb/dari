@@ -2,6 +2,11 @@ name = "ai-receptionist"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
+# Owner panel (M3): static files from ../web, served on the same origin as /api so the session cookie
+# stays first-party. /panel/ -> web/panel/index.html. Anything that is not a file goes to the Worker.
+[assets]
+directory = "../web"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "receptionist"
@@ -29,3 +34,6 @@ enabled = true
 #   TELEGRAM_BOT_TOKEN          owner notifications
 #   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM   confirmation SMS
 #   EXTERNAL_BOOKING_KEY        optional
+#   SESSION_SECRET              owner panel: HMAC key for login codes and sessions (M3)
+#   RESEND_API_KEY, EMAIL_FROM  owner panel: login codes by email (optional; SMS works without it) (M3)
+#   ELEVENLABS_API_KEY          owner panel: play call recordings (optional) (M3)
