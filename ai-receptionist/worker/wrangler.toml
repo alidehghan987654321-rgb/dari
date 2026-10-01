@@ -1,0 +1,59 @@
+name = "ai-receptionist"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# The Worker renders agent prompts itself (M5): prompts/*.md are bundled as text.
+[[rules]]
+type = "Text"
+globs = ["**/*.md"]
+fallthrough = true
+
+# Owner panel (M3): static files from ../web, served on the same origin as /api so the session cookie
+# stays first-party. /panel/ -> web/panel/index.html. Anything that is not a file goes to the Worker.
+[assets]
+directory = "../web"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "receptionist"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+migrations_dir = "migrations"
+
+[vars]
+RETENTION_DAYS = "90"
+# M6: "true" if plan prices include VAT (sets the Stripe prices' tax_behavior).
+PRICES_INCLUDE_VAT = "false"
+# Our estimated costs per minute / SMS segment, in pence, for the margin report (M4). Placeholders: update from
+# the real ElevenLabs, LLM and Twilio invoices.
+COST_RATES = '{"voice_per_min": 9, "llm_per_min": 2, "telephony_per_min": 1.3, "sms_per_segment": 4}'
+# M5 provisioning: the public URL ElevenLabs tools call, the post-call webhook id (created once in the
+# ElevenLabs dashboard) and the default voices. ELEVENLABS_API_KEY is a secret.
+# WORKER_PUBLIC_URL = "https://ai-receptionist.<your-subdomain>.workers.dev"
+# ELEVENLABS_POST_CALL_WEBHOOK_ID = ""
+# ELEVENLABS_VOICES = '{"en": "<voice id>", "fa": "<voice id>", "options": [{"id": "<voice id>", "lang": "fa", "label_fa": "سارا", "label_en": "Sara", "sample_url": "/audio/voice-sara.mp3"}]}'
+# DEMO_NUMBER = "+44..."   # landing page "call the demo" (M8)
+# TWILIO_BUNDLE_SID / TWILIO_ADDRESS_SID: only to buy UK numbers automatically (approved Regulatory Bundle)
+# TEAM_ALERT_CHAT_ID = "-100..."   # our team Telegram chat for monitoring alerts (M2); the bot must be a member
+# EXTERNAL_BOOKING_API = "https://booking.example.com/api"   # our own booking product, when connected
+
+[triggers]
+# */5 * * * *  alert rules (M2)
+# 17 3 * * *   daily 03:17 UTC: data retention + synthetic check of every active business (M2)
+# 7 * * * *    hourly: usage thresholds and message-only mode (M4)
+crons = ["*/5 * * * *", "17 3 * * *", "7 * * * *"]
+
+# Workers Logs: keeps the one-line JSON tool logs searchable in the dashboard.
+[observability]
+enabled = true
+
+# Secrets (set with `npx wrangler secret put NAME`, never commit them):
+#   TOOL_SECRET                 shared with ElevenLabs tool headers
+#   ADMIN_SECRET                for /admin routes
+#   ELEVENLABS_WEBHOOK_SECRET   post-call webhook HMAC
+#   TELEGRAM_BOT_TOKEN          owner notifications
+#   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM   confirmation SMS
+#   EXTERNAL_BOOKING_KEY        optional
+#   SESSION_SECRET              owner panel: HMAC key for login codes and sessions (M3)
+#   RESEND_API_KEY, EMAIL_FROM  owner panel: login codes by email (optional; SMS works without it) (M3)
+#   ELEVENLABS_API_KEY          owner panel recordings (M3) and agent provisioning (M5)
+#   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET   billing (M6)

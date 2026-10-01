@@ -1,0 +1,65 @@
+# Conversation QA for the receptionist prompt (M1, text mode). Manual: Actions -> Receptionist QA -> Run workflow.
+# Needs the repository secret ANTHROPIC_API_KEY (or OPENAI_API_KEY with provider "openai").
+name: Receptionist QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "Comma-separated case ids (empty = all)"
+        required: false
+        default: ""
+      provider:
+        description: "anthropic or openai"
+        required: false
+        default: "anthropic"
+      model:
+        description: "Model id (empty = provider default, the same LLM the live agent uses)"
+        required: false
+        default: ""
+      mutate:
+        description: "Optional prompt breakage to prove the cases catch it (e.g. no-invent-guard)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: ai-receptionist/worker
+      - run: npm ci
+        working-directory: ai-receptionist/qa
+      - name: Run QA
+        working-directory: ai-receptionist/qa
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          QA_PROVIDER: ${{ inputs.provider }}
+          QA_MODEL: ${{ inputs.model }}
+          CASES: ${{ inputs.cases }}
+          MUTATE: ${{ inputs.mutate }}
+        run: |
+          args=()
+          [ -n "$CASES" ] && args+=(--cases "$CASES")
+          [ -n "$MUTATE" ] && args+=(--mutate "$MUTATE")
+          npm run qa -- "${args[@]}"
+      - name: Report in the run summary
+        if: always()
+        working-directory: ai-receptionist/qa
+        run: '[ -f report.md ] && cat report.md >> "$GITHUB_STEP_SUMMARY" || true'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-report
+          path: |
+            ai-receptionist/qa/report.md
+            ai-receptionist/qa/report.json

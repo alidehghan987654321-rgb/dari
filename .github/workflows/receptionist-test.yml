@@ -1,0 +1,33 @@
+# Unit and integration tests for the AI receptionist (ai-receptionist/).
+# Integration tests run the Worker locally with `wrangler dev` and a local D1; no Cloudflare account needed.
+name: Receptionist tests
+
+on:
+  push:
+    paths: ["ai-receptionist/**", ".github/workflows/receptionist-test.yml"]
+  pull_request:
+    paths: ["ai-receptionist/**", ".github/workflows/receptionist-test.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-receptionist/worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ai-receptionist/*/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:integration
+      - name: QA harness tests (scripted agent, no LLM)
+        working-directory: ai-receptionist/qa
+        run: npm ci && npm test

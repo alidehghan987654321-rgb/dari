@@ -1,0 +1,81 @@
+{
+  "_readme": "Webhook tools to add in ElevenLabs > Agent > Tools > Add webhook tool. Replace WORKER_URL and BUSINESS_ID. Add header Authorization: Bearer <TOOL_SECRET> (store TOOL_SECRET as a workspace secret). All bodies are JSON, method POST.",
+  "tools": [
+    {
+      "name": "check_availability",
+      "description": "Get free appointment slots for one service on one date (UK time). Call this before offering any time to the caller. Returns up to 6 slots; offer the caller at most 3.",
+      "method": "POST",
+      "url": "https://WORKER_URL/b/BUSINESS_ID/availability",
+      "body": {
+        "service_id": { "type": "string", "required": true, "description": "Service id from the business facts, for example 'mens-cut'." },
+        "date": { "type": "string", "required": true, "description": "Date in YYYY-MM-DD, UK local date. Convert words like 'tomorrow' or 'next Tuesday' yourself." },
+        "preferred_time": { "type": "string", "required": false, "description": "Optional preferred time HH:MM (24h). Slots closest to it are returned first." }
+      }
+    },
+    {
+      "name": "create_booking",
+      "description": "Book a slot. Only call after the caller clearly confirmed service, date, time and name.",
+      "method": "POST",
+      "url": "https://WORKER_URL/b/BUSINESS_ID/book",
+      "body": {
+        "service_id": { "type": "string", "required": true, "description": "Service id." },
+        "date": { "type": "string", "required": true, "description": "YYYY-MM-DD, UK local date." },
+        "time": { "type": "string", "required": true, "description": "Start time HH:MM (24h) exactly as returned by check_availability." },
+        "customer_name": { "type": "string", "required": true, "description": "Caller's full name as they said it, in Latin or Persian letters." },
+        "customer_phone": { "type": "string", "required": true, "description": "Caller's mobile number, confirmed digit by digit. UK format 07... or +44..." },
+        "language": { "type": "string", "required": true, "description": "'fa' if the call is in Persian, 'en' if in English. Used for the SMS language." },
+        "notes": { "type": "string", "required": false, "description": "Short note, for example 'first visit' or 'prefers Ali'." }
+      }
+    },
+    {
+      "name": "find_bookings",
+      "description": "Find upcoming bookings for a phone number. Use when the caller wants to change or cancel.",
+      "method": "POST",
+      "url": "https://WORKER_URL/b/BUSINESS_ID/find-bookings",
+      "body": {
+        "customer_phone": { "type": "string", "required": true, "description": "Phone number the booking was made with." }
+      }
+    },
+    {
+      "name": "reschedule_booking",
+      "description": "Move an existing booking to a new free slot. Check availability first and confirm with the caller.",
+      "method": "POST",
+      "url": "https://WORKER_URL/b/BUSINESS_ID/reschedule",
+      "body": {
+        "booking_id": { "type": "string", "required": true, "description": "Booking id from find_bookings." },
+        "customer_phone": { "type": "string", "required": true, "description": "Same phone number used in find_bookings." },
+        "new_date": { "type": "string", "required": true, "description": "YYYY-MM-DD." },
+        "new_time": { "type": "string", "required": true, "description": "HH:MM (24h) from check_availability." }
+      }
+    },
+    {
+      "name": "cancel_booking",
+      "description": "Cancel a booking after the caller confirmed which one.",
+      "method": "POST",
+      "url": "https://WORKER_URL/b/BUSINESS_ID/cancel",
+      "body": {
+        "booking_id": { "type": "string", "required": true, "description": "Booking id from find_bookings." },
+        "customer_phone": { "type": "string", "required": true, "description": "Same phone number used in find_bookings." }
+      }
+    },
+    {
+      "name": "take_message",
+      "description": "Send a message to the business owner when you cannot help, a transfer is not possible, or the caller wants a call back.",
+      "method": "POST",
+      "url": "https://WORKER_URL/b/BUSINESS_ID/message",
+      "body": {
+        "caller_name": { "type": "string", "required": true, "description": "Caller's name." },
+        "caller_phone": { "type": "string", "required": true, "description": "Number to call back, confirmed." },
+        "message": { "type": "string", "required": true, "description": "The message in one or two sentences, in English, with key details (what, when)." },
+        "urgency": { "type": "string", "required": true, "description": "'normal' or 'urgent'." }
+      }
+    }
+  ],
+  "system_tools": {
+    "end_call": "enable",
+    "language_detection": "enable (languages: Persian + English)",
+    "transfer_to_number": "enable, number = phone_for_transfer from the business profile; condition: see Escalation in the system prompt",
+    "voicemail_detection": "off for inbound",
+    "skip_turn": "enable (lets the caller think without the agent talking)"
+  }
+}
