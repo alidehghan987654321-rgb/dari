@@ -37,22 +37,40 @@ function freePort() {
   });
 }
 
-/** Mock for every outbound API. `requests` collects what the Worker sent; `fail` makes a service return 500. */
+/**
+ * Mock for every outbound API. `requests` collects what the Worker sent; `fail` makes a service return 500;
+ * `routes` (functions `(req) => ({ status, body }) | undefined`) let a test answer like a real API.
+ */
 export async function startMock() {
-  const mock = { requests: [], fail: new Set() };
+  const mock = { requests: [], fail: new Set(), routes: [] };
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', d => (body += d));
     req.on('end', () => {
-      const service = req.url.includes('/sendMessage') ? 'telegram'
-        : req.url.includes('/Messages.json') ? 'sms'
-        : req.url.includes('/emails') ? 'email' : 'other';
+      const u = req.url;
+      const service = u.includes('/sendMessage') ? 'telegram'
+        : u.includes('/Messages.json') ? 'sms'
+        : u.includes('/emails') ? 'email'
+        : u.startsWith('/v1/convai') ? 'elevenlabs'
+        : /PhoneNumbers/.test(u) ? 'twilio'
+        : u.startsWith('/v1/') ? 'stripe' : 'other';
       let parsed = body;
       try { parsed = JSON.parse(body); } catch { parsed = Object.fromEntries(new URLSearchParams(body)); }
-      mock.requests.push({ service, url: req.url, body: parsed, at: Date.now() });
-      const failing = mock.fail.has(service);
-      res.writeHead(failing ? 500 : 200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(failing ? { ok: false, error: 'mock failure' } : { ok: true, sid: 'SMmock', id: 'mock' }));
+      const entry = { service, method: req.method, url: u, body: parsed, headers: req.headers, at: Date.now() };
+      mock.requests.push(entry);
+      if (mock.fail.has(service)) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'mock failure' }));
+      }
+      for (const route of mock.routes) {
+        const out = route(entry);
+        if (out) {
+          res.writeHead(out.status || 200, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify(out.body ?? {}));
+        }
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, sid: 'SMmock', id: 'mock' }));
     });
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -68,8 +86,9 @@ export async function startMock() {
  *   vars        extra vars/secrets (merged over SECRETS and the mock API bases)
  *   migrate     apply D1 migrations first (default true; false simulates a broken database)
  *   noDatabase  start with the D1 binding removed entirely
+ *   varsFromMock (mockUrl) => vars, for settings that point at the mock (e.g. ELEVENLABS_API_BASE)
  */
-export async function startDev({ vars = {}, migrate = true, noDatabase = false } = {}) {
+export async function startDev({ vars = {}, varsFromMock = null, migrate = true, noDatabase = false } = {}) {
   const persist = mkdtempSync(join(tmpdir(), 'receptionist-d1-'));
   const mock = await startMock();
   let config = join(WORKER_DIR, 'wrangler.toml');
@@ -95,6 +114,7 @@ export async function startDev({ vars = {}, migrate = true, noDatabase = false }
     TWILIO_API_BASE: mock.url,
     RESEND_API_KEY: 'test-resend', EMAIL_FROM: 'Test <test@example.com>', EMAIL_API_BASE: mock.url,
     ELEVENLABS_API_KEY: 'test-xi', ELEVENLABS_API_BASE: mock.url,
+    ...(varsFromMock ? varsFromMock(mock.url) : {}),
     ...vars,
   };
   const args = ['dev', '--config', config, '--ip', '127.0.0.1', '--port', String(port), '--persist-to', persist,

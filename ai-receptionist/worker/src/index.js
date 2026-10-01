@@ -9,9 +9,11 @@
 //                                     PUT  /admin/users           body: { business_id?, name, phone?, email?, role } (M3)
 //                                     PUT  /admin/subscriptions   body: { business_id, plan_id, status, period_start, period_end } (M4)
 //                                     GET  /admin/usage?period=YYYY-MM   margin report (M4)
+//                                     POST /admin/provisioning/setup     one-off ElevenLabs workspace secret (M5)
+//                                     POST /admin/b/:businessId/provision { action: create|sync|attach-number|pause|resume|delete } (M5)
 // Owner panel API (session cookie):   /api/*  (see panel.js); the panel itself is static, served from ../web (M3)
 // Crons (wrangler.toml):              */5 * * * *  alert rules -> team Telegram chat (M2)
-//                                     17 3 * * *   retention + daily synthetic check (M2)
+//                                     17 3 * * *   retention + daily synthetic check (M2) + agent drift check (M5)
 //                                     7 * * * *    usage thresholds and message-only mode (M4)
 //
 // Tool responses are always HTTP 200 with { ok: true, ... } or
@@ -26,6 +28,7 @@ import { sendTelegram } from './notify.js';
 import { logToolEvent, recordEvent, trackedNotify, runAlerts, runSynthetic, healthSummary } from './monitor.js';
 import { handleApi } from './panel.js';
 import { parseIdentifier } from './auth.js';
+import { setup as provisioningSetup, provisionAction, ProvisionError, driftCheck, deleteExpiredAgents } from './provisioning.js';
 import { recordCallUsage, applyUsageRules, runUsageRules, usageReport, upsertSubscription, sendTrackedSms } from './usage.js';
 
 const json = (data, status = 200) =>
@@ -81,6 +84,8 @@ export default {
     ]);
     const quietCtx = { waitUntil: p => ctx.waitUntil(p) };
     await runSynthetic(env, (name, business, body) => tool(name, business, body, env, quietCtx));
+    await driftCheck(env);
+    await deleteExpiredAgents(env);
   },
 };
 
@@ -262,13 +267,23 @@ async function postCall(request, env, ctx) {
 
 // ---------------- admin ----------------
 
+async function provisioningResponse(fn) {
+  try {
+    return json({ ok: true, ...(await fn()) });
+  } catch (e) {
+    if (e instanceof ProvisionError) return json({ ok: false, error: e.code, message: e.message }, e.status);
+    throw e;
+  }
+}
+
 async function admin(request, env, path, url) {
   if (path === '/admin/businesses' && request.method === 'PUT') {
     const { agent_id = null, profile, active = true } = await request.json();
     if (!profile?.business_id || !/^[a-z0-9-]{2,64}$/.test(profile.business_id)) return json({ ok: false, error: 'profile.business_id must be a lowercase slug' }, 400);
     await env.DB.prepare(
       `INSERT INTO businesses (id, agent_id, profile_json, active, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-       ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, profile_json = excluded.profile_json, active = excluded.active, updated_at = datetime('now')`
+       ON CONFLICT(id) DO UPDATE SET agent_id = COALESCE(excluded.agent_id, businesses.agent_id), profile_json = excluded.profile_json,
+         active = excluded.active, needs_sync = 1, updated_at = datetime('now')`
     ).bind(profile.business_id, agent_id, JSON.stringify(profile), active ? 1 : 0).run();
     return json({ ok: true, business_id: profile.business_id });
   }
@@ -295,6 +310,14 @@ async function admin(request, env, path, url) {
     const period = url.searchParams.get('period') || new Date().toISOString().slice(0, 7);
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return json({ ok: false, error: 'period must be YYYY-MM' }, 400);
     return json({ ok: true, ...(await usageReport(env, period)) });
+  }
+  if (path === '/admin/provisioning/setup' && request.method === 'POST') {
+    return provisioningResponse(() => provisioningSetup(env));
+  }
+  const prov = /^\/admin\/b\/([a-z0-9-]{2,64})\/provision$/.exec(path);
+  if (prov && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return provisioningResponse(() => provisionAction(env, prov[1], body));
   }
   if (path === '/admin/health' && request.method === 'GET') {
     return json({ ok: true, since: new Date(Date.now() - 864e5).toISOString(), businesses: await healthSummary(env) });

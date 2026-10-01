@@ -2,6 +2,12 @@ name = "ai-receptionist"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
+# The Worker renders agent prompts itself (M5): prompts/*.md are bundled as text.
+[[rules]]
+type = "Text"
+globs = ["**/*.md"]
+fallthrough = true
+
 # Owner panel (M3): static files from ../web, served on the same origin as /api so the session cookie
 # stays first-party. /panel/ -> web/panel/index.html. Anything that is not a file goes to the Worker.
 [assets]
@@ -18,6 +24,12 @@ RETENTION_DAYS = "90"
 # Our estimated costs per minute / SMS segment, in pence, for the margin report (M4). Placeholders: update from
 # the real ElevenLabs, LLM and Twilio invoices.
 COST_RATES = '{"voice_per_min": 9, "llm_per_min": 2, "telephony_per_min": 1.3, "sms_per_segment": 4}'
+# M5 provisioning: the public URL ElevenLabs tools call, the post-call webhook id (created once in the
+# ElevenLabs dashboard) and the default voices. ELEVENLABS_API_KEY is a secret.
+# WORKER_PUBLIC_URL = "https://ai-receptionist.<your-subdomain>.workers.dev"
+# ELEVENLABS_POST_CALL_WEBHOOK_ID = ""
+# ELEVENLABS_VOICES = '{"en": "<voice id>", "fa": "<voice id>"}'
+# TWILIO_BUNDLE_SID / TWILIO_ADDRESS_SID: only to buy UK numbers automatically (approved Regulatory Bundle)
 # TEAM_ALERT_CHAT_ID = "-100..."   # our team Telegram chat for monitoring alerts (M2); the bot must be a member
 # EXTERNAL_BOOKING_API = "https://booking.example.com/api"   # our own booking product, when connected
 

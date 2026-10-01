@@ -14,7 +14,10 @@ ai-receptionist/
 │   └── test_scenarios.md             ← ۲۴ سناریوی تست فارسی/انگلیسی + جدول نتیجه
 ├── config/
 │   ├── tools.json                    ← تعریف ۶ ابزار وب‌هوک + ابزارهای سیستمی
+│   ├── agent_template.json           ← قالب نسخه‌دار ایجنت ElevenLabs (M5)
 │   └── agent_settings.md             ← تنظیمات پیشنهادی ایجنت (مدل، صدا، تایم‌اوت...)
+├── shared/prompt-core.mjs            ← ساخت پرامپت بدون فایل‌خوانی (مشترک Worker و Node)
+├── provisioning/cli.mjs              ← ساخت خودکار ایجنت از خط فرمان (M5)
 ├── scripts/
 │   ├── build_prompt.mjs              ← ساخت پرامپت نهایی هر مشتری از پروفایلش
 │   └── prompt.mjs                    ← منطق مشترک ساخت پرامپت (CLI، تست خودکار، ساخت ایجنت)
@@ -154,6 +157,30 @@ jq '{agent_id:"AGENT_ID", profile:.}' ../prompts/business_profile.example.json \
   - اشتراک `past_due` یا `paused`: بعد از ۳ روز مهلت، حالت فقط‌پیام. `cancelled`: فوراً
 - **حالت فقط‌پیام**: منشی همچنان جواب می‌دهد ولی ابزارهای نوبت خطای `message_only` برمی‌گردانند و منشی پیام می‌گیرد. پرامپت ساخته‌شده هم یک بند «نوبت‌دهی متوقف است» دارد. پنل یک بنر قرمز نشان می‌دهد.
 - **گزارش حاشیه سود**: `GET /admin/usage?period=YYYY-MM` درآمد (پلن + اضافه) در برابر هزینه تخمینی (صدا، LLM، تلفن، پیامک) برای هر کسب‌وکار. نرخ‌های هزینه در `COST_RATES` داخل `wrangler.toml` (موقت؛ از فاکتورهای واقعی به‌روز کنید).
+
+## ساخت خودکار ایجنت (M5)
+
+راه‌اندازی هر مشتری از ۲ ساعت کلیک در داشبورد ElevenLabs به یک دستور می‌رسد، و تغییر تنظیمات در پنل خودکار روی ایجنت زنده می‌نشیند.
+
+- **یک بار**: در ElevenLabs یک post-call webhook با آدرس `https://WORKER_URL/webhooks/post-call` بسازید (secret آن همان `ELEVENLABS_WEBHOOK_SECRET` است) و id آن را بردارید. بعد:
+  ```bash
+  npx wrangler secret put ELEVENLABS_API_KEY
+  # در wrangler.toml: WORKER_PUBLIC_URL، ELEVENLABS_POST_CALL_WEBHOOK_ID، ELEVENLABS_VOICES (id صدای انگلیسی و فارسی)
+  npm run db:init:remote && npm run deploy
+  export WORKER_URL=https://... ADMIN_SECRET=...
+  node provisioning/cli.mjs setup               # secret ابزارها را در workspace ElevenLabs می‌سازد
+  ```
+- **هر مشتری جدید**:
+  ```bash
+  node provisioning/cli.mjs create --profile prompts/my-business.json --number +44XXXXXXXXXX   # شماره موجود در Twilio
+  node provisioning/cli.mjs create --profile prompts/my-business.json --buy                    # خرید شماره جدید
+  ```
+  ایجنت با پرامپت ساخته‌شده، پیام خوشامد، فارسی و انگلیسی، صداها، LLM، شش ابزار وب‌هوک (با هدر Authorization از secret)، ابزارهای سیستمی، فیلدهای تحلیل، post-call webhook و نگهداری ۹۰ روزه ساخته می‌شود. اجرای دوباره ایجنت دوم نمی‌سازد.
+- **شماره UK**: خرید خودکار به Regulatory Bundle تأییدشده در Twilio نیاز دارد (`TWILIO_BUNDLE_SID` و `TWILIO_ADDRESS_SID`). بدون آن، پیام خطای روشن می‌دهد؛ شماره را دستی بخرید و با `--number` وصل کنید.
+- **همگام‌سازی**: ذخیره تنظیمات در پنل همان لحظه پرامپت ایجنت را به‌روز می‌کند. حالت فقط‌پیام (M4) هم خودکار روی پرامپت می‌رود. `node provisioning/cli.mjs sync <id> --force` برای همگام‌سازی دستی.
+- **دستورهای دیگر**: `pause` / `resume` (فقط‌پیام به دست تیم؛ قانون‌های مصرف آن را برنمی‌دارند)، `delete` (ایجنت، ابزارها و اتصال شماره؛ خود شماره Twilio می‌ماند).
+- **بررسی روزانه**: هر روز تنظیمات زنده هر ایجنت با چیزی که باید باشد مقایسه می‌شود و اختلاف (مثلاً ویرایش دستی در داشبورد) به گروه تیم گزارش می‌شود. ایجنت کسب‌وکارهایی که بیش از دوره نگهداری لغو شده‌اند حذف می‌شود.
+- **تغییر قالب**: `config/agent_template.json` را عوض کنید و `template_version` را یکی بالا ببرید؛ همگام‌سازی بعدی همه ایجنت‌ها و ابزارها را به‌روز می‌کند.
 
 ## نکته‌های مهم
 

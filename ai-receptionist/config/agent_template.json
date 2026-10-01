@@ -1,0 +1,31 @@
+{
+  "_readme": "Template every business's ElevenLabs agent is built from (M5). Bump template_version when you change anything here; syncAgent then updates every agent and its tools. Field names follow the ElevenLabs Agents API (checked against the official elevenlabs-js SDK). Values come from config/agent_settings.md.",
+  "template_version": 1,
+  "name_prefix": "Receptionist",
+  "llm": "claude-sonnet-5",
+  "llm_note": "No temperature: current Claude models reject non-default sampling values. agent_settings.md suggests 0.3 for other LLMs; set temperature here if you switch to one.",
+  "temperature": null,
+  "language": "en",
+  "additional_languages": ["fa"],
+  "tts": {
+    "model_id": "eleven_flash_v2_5",
+    "stability": 0.5,
+    "similarity_boost": 0.75,
+    "agent_output_audio_format": "ulaw_8000"
+  },
+  "asr": { "quality": "high", "user_input_audio_format": "ulaw_8000" },
+  "turn": { "turn_timeout": 7, "silence_end_call_timeout": 20 },
+  "conversation": { "max_duration_seconds": 600 },
+  "tool_response_timeout_secs": 10,
+  "data_collection": {
+    "caller_intent": { "type": "string", "description": "What the caller wanted: book, change, cancel, question, message, other." },
+    "booking_made": { "type": "boolean", "description": "True if a booking was created, moved or cancelled successfully." },
+    "language": { "type": "string", "description": "Language of the call: fa or en." },
+    "callback_needed": { "type": "boolean", "description": "True if the caller expects a call back from the business." }
+  },
+  "evaluation_criteria": [
+    { "id": "goal_met", "name": "Goal met", "conversation_goal_prompt": "Was the purpose of the call achieved (booking, answer, message taken or transfer)?" }
+  ],
+  "privacy": { "record_voice": true, "retention_days": 90 },
+  "transfer_condition": "The caller insists on speaking to a person, is upset after one attempt to help, or it is urgent for the business. Only during the transfer hours in the system prompt."
+}

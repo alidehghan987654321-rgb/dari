@@ -31,7 +31,7 @@ npm run qa -- --llm-judge                                # بررسی ادب/ک�
 | متغیر | پیش‌فرض | توضیح |
 | --- | --- | --- |
 | `QA_PROVIDER` | `anthropic` | یا `openai` (هر API سازگار با OpenAI؛ `OPENAI_BASE_URL`) |
-| `QA_MODEL` | `claude-sonnet-5-5` / `gpt-4.1` | همان LLMی که ایجنت ElevenLabs استفاده می‌کند |
+| `QA_MODEL` | مقدار `llm` در `config/agent_template.json` (الان `claude-sonnet-5`) / `gpt-4.1` | همان LLMی که ایجنت ElevenLabs استفاده می‌کند |
 | `QA_EFFORT` | `low` | فقط Anthropic؛ برای جواب‌های کوتاه تلفنی |
 
 ## حالت پلتفرم (اختیاری، آزمایشی)

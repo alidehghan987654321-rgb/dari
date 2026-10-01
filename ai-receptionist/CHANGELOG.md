@@ -2,6 +2,31 @@
 
 Newest first. Every entry: what changed, how to deploy, manual steps.
 
+## M5 — Automatic agent provisioning
+
+- **Added** `config/agent_template.json` (versioned) and `worker/src/provisioning.js`: idempotent `create` (an
+  existing agent is synced, never duplicated; a lock stops concurrent creates), `sync` (skips when nothing changed),
+  `attach-number` (existing Twilio number, or buy a local one; UK needs a Regulatory Bundle and says so),
+  `pause`/`resume`, `delete`. Each business gets its own 6 webhook tools; their Authorization header comes from one
+  ElevenLabs workspace secret. Admin API `POST /admin/b/:id/provision`, `POST /admin/provisioning/setup`;
+  CLI `provisioning/cli.mjs` (calls the admin API, so secrets stay in the Worker).
+- **Added** automatic sync: a panel settings save pushes the new prompt in the same request (no more "after the team
+  syncs" banner once provisioning is configured); entering/leaving message-only mode pushes the paused prompt.
+  Daily drift check (live agent vs what we render) reports to the team chat; agents of businesses cancelled longer
+  than the retention period are deleted.
+- **Changed** prompt rendering moved to `shared/prompt-core.mjs` (no file access) so the Worker renders the same
+  prompt as `build_prompt.mjs`; the Worker bundles `prompts/*.md` as text. `PUT /admin/businesses` keeps the
+  stored `agent_id` when the body has none.
+- **Changed** QA uses the agent template's LLM by default (`claude-sonnet-5`): the earlier default
+  (`claude-sonnet-5-5`) is not offered by ElevenLabs, so it was not "the same LLM".
+- **Assumptions**: request shapes come from the official elevenlabs-js and twilio-node SDK sources (their docs sites
+  were not reachable from the build environment); check them against the current API reference on first use. No
+  temperature is sent for Claude 5 models (they reject non-default sampling). The post-call webhook is created once
+  in the ElevenLabs dashboard and referenced by id. Deleting an agent keeps the Twilio number.
+- **Deploy**: `wrangler secret put ELEVENLABS_API_KEY`; set `WORKER_PUBLIC_URL`, `ELEVENLABS_POST_CALL_WEBHOOK_ID`,
+  `ELEVENLABS_VOICES` (and `TWILIO_BUNDLE_SID` + `TWILIO_ADDRESS_SID` to buy UK numbers); `npm run db:init:remote`
+  (migration 0005); `npm run deploy`; `node provisioning/cli.mjs setup`.
+
 ## M4 — Usage metering and plan limits
 
 - **Added** tables `plans` (seeded Basic/Pro, placeholder prices in data, minor units + currency), `subscriptions`,

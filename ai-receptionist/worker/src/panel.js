@@ -21,6 +21,7 @@ import {
 import { validateSettings, settingsOf, applySettings } from './profile.js';
 import { sendEmail } from './email.js';
 import { usageForPanel, sendTrackedSms } from './usage.js';
+import { trySync, provisioningConfigured } from './provisioning.js';
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
@@ -255,6 +256,11 @@ async function businessRoute(request, env, ctx, path, url, user, business) {
     const { message_only: _system, ...next } = applySettings(p, edits);
     await env.DB.prepare("UPDATE businesses SET profile_json = ?, needs_sync = 1, updated_at = datetime('now') WHERE id = ?")
       .bind(JSON.stringify(next), business.id).run();
+    // M5: push the new prompt to the live agent now (well within a minute). Until it succeeds needs_sync stays on.
+    if (provisioningConfigured(env) && business.agent_id) {
+      const r = await trySync(env, business.id);
+      return json({ ok: true, settings: settingsOf(next), needs_sync: !r });
+    }
     return json({ ok: true, settings: settingsOf(next), needs_sync: true });
   }
 

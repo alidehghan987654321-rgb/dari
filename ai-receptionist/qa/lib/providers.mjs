@@ -5,6 +5,7 @@
 //   session.toolResults([{ id, result }])
 // Use the same model the live agent uses (config/agent_settings.md) so QA measures what callers get.
 
+import { readFileSync } from 'node:fs';
 import Anthropic from '@anthropic-ai/sdk';
 
 const CONNECTED = '[The phone call has just connected.]';
@@ -16,7 +17,7 @@ const CONNECTED = '[The phone call has just connected.]';
  * Server-side refusal fallback ("default") is on, so a rare policy decline is re-run on Anthropic's
  * recommended fallback model instead of failing the case.
  */
-export function anthropicProvider({ model = 'claude-sonnet-5-5', effort = 'low' } = {}) {
+export function anthropicProvider({ model = agentLlm(), effort = 'low' } = {}) {
   const client = new Anthropic();
   const request = params => client.beta.messages.create({
     model, max_tokens: 4096, output_config: { effort },
@@ -125,9 +126,14 @@ export function fakeProvider(script) {
   };
 }
 
+/** The LLM the live agent runs on (config/agent_template.json), so QA measures what callers get. */
+export function agentLlm() {
+  return JSON.parse(readFileSync(new URL('../../config/agent_template.json', import.meta.url), 'utf8')).llm;
+}
+
 export function providerFromEnv(env = process.env) {
   const kind = env.QA_PROVIDER || 'anthropic';
-  if (kind === 'anthropic') return anthropicProvider({ model: env.QA_MODEL || undefined, effort: env.QA_EFFORT || undefined });
+  if (kind === 'anthropic') return anthropicProvider({ model: env.QA_MODEL || agentLlm(), effort: env.QA_EFFORT || undefined });
   if (kind === 'openai') return openaiProvider({ model: env.QA_MODEL || undefined });
   throw new Error(`Unknown QA_PROVIDER "${kind}" (use anthropic or openai)`);
 }

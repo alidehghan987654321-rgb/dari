@@ -166,10 +166,16 @@ export async function applyUsageRules(env, business, now = new Date()) {
     if (r.meta?.changes === 1) await notifyOwners(env, business, NOTICE_TEXT[kind](fa, used, plan.included_minutes, hardCap));
   }
 
-  if (res.messageOnly !== !!business.message_only || (res.messageOnly && res.reason !== business.message_only_reason)) {
+  // A pause set by our team (reason 'manual', M5) is only lifted by the team.
+  const manual = business.message_only_reason === 'manual';
+  if (!manual && (res.messageOnly !== !!business.message_only || (res.messageOnly && res.reason !== business.message_only_reason))) {
     await env.DB.prepare('UPDATE businesses SET message_only = ?, message_only_reason = ? WHERE id = ?')
       .bind(res.messageOnly ? 1 : 0, res.reason, business.id).run();
     console.log(JSON.stringify({ evt: 'message_only', business_id: business.id, on: res.messageOnly, reason: res.reason }));
+    // M5: the live prompt gets (or loses) its "bookings paused" block. Imported lazily: provisioning bundles
+    // the prompt templates, which plain Node (unit tests of this module) cannot load.
+    const { trySync } = await import('./provisioning.js');
+    await trySync(env, business.id);
   }
   return { ...res, used, period };
 }
