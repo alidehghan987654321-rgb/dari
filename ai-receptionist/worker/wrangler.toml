@@ -10,10 +10,17 @@ migrations_dir = "migrations"
 
 [vars]
 RETENTION_DAYS = "90"
+# TEAM_ALERT_CHAT_ID = "-100..."   # our team Telegram chat for monitoring alerts (M2); the bot must be a member
 # EXTERNAL_BOOKING_API = "https://booking.example.com/api"   # our own booking product, when connected
 
 [triggers]
-crons = ["17 3 * * *"]   # daily 03:17 UTC — data retention
+# */5 * * * *  alert rules (M2)
+# 17 3 * * *   daily 03:17 UTC: data retention + synthetic check of every active business (M2)
+crons = ["*/5 * * * *", "17 3 * * *"]
+
+# Workers Logs: keeps the one-line JSON tool logs searchable in the dashboard.
+[observability]
+enabled = true
 
 # Secrets (set with `npx wrangler secret put NAME`, never commit them):
 #   TOOL_SECRET                 shared with ElevenLabs tool headers

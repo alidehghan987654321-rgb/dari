@@ -93,7 +93,7 @@ export async function startDev({ vars = {}, migrate = true, noDatabase = false }
     ...vars,
   };
   const args = ['dev', '--config', config, '--ip', '127.0.0.1', '--port', String(port), '--persist-to', persist,
-    '--test-scheduled', '--show-interactive-dev-session=false', '--log-level', 'warn'];
+    '--test-scheduled', '--show-interactive-dev-session=false', '--log-level', 'log'];
   for (const [k, v] of Object.entries(allVars)) args.push('--var', `${k}:${v}`);
   const child = spawn(WRANGLER, args, { cwd: WORKER_DIR, env: QUIET_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';

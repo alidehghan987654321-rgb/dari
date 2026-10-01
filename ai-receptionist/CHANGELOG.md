@@ -2,6 +2,21 @@
 
 Newest first. Every entry: what changed, how to deploy, manual steps.
 
+## M2 — Monitoring and alerting
+
+- **Added** one JSON log line per tool call `{ts, business_id, tool, ok, error, ms}` (no names, numbers or message text)
+  and the same events in D1 `tool_events` (30-day retention). SMS and Telegram sends are recorded too.
+- **Added** alert rules every 5 minutes to the team Telegram chat (`TEAM_ALERT_CHAT_ID`): tool error rate, p95 latency,
+  notification failures, silent business (forwarding probably broken), database down, failed daily self-test.
+  Same alert at most once per hour per rule and business; a "Resolved" message when it clears. If D1 itself is down,
+  events and dedupe state are kept in memory (best effort) so the outage is still reported.
+- **Added** `dry_run: true` on `/book` (validates, writes nothing, sends nothing) and a daily synthetic check of every
+  active business. `GET /admin/health`. `businesses.active` column (`"active": false` in `PUT /admin/businesses`).
+- **Changed** tool handlers return plain objects; the router wraps them. Error logs no longer print stack traces
+  that could carry request data.
+- **Deploy**: `npm run db:init:remote` (migration 0002), set `TEAM_ALERT_CHAT_ID`, `npm run deploy`. The new
+  `*/5 * * * *` cron and `[observability]` (Workers Logs) come with the deploy.
+
 ## M1 — Automated conversation QA
 
 - **Added** `qa/`: `npm run qa` plays 23 scenarios from `prompts/test_scenarios.md` (`qa/scenarios.yaml`) against the

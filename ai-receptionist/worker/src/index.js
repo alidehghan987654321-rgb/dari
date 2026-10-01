@@ -2,9 +2,12 @@
 //
 // Tool routes (Bearer TOOL_SECRET):   POST /b/:businessId/{availability|book|find-bookings|reschedule|cancel|message}
 // ElevenLabs post-call webhook:       POST /webhooks/post-call   (HMAC, ELEVENLABS_WEBHOOK_SECRET)
-// Admin (Bearer ADMIN_SECRET):        PUT  /admin/businesses      body: { agent_id?, profile }
+// Admin (Bearer ADMIN_SECRET):        PUT  /admin/businesses      body: { agent_id?, profile, active? }
 //                                     GET  /admin/b/:businessId/bookings?date=YYYY-MM-DD
 //                                     GET  /admin/b/:businessId/calls?limit=20
+//                                     GET  /admin/health          last 24 h per business (M2)
+// Crons (wrangler.toml):              */5 * * * *  alert rules -> team Telegram chat (M2)
+//                                     17 3 * * *   retention + daily synthetic check (M2)
 //
 // Tool responses are always HTTP 200 with { ok: true, ... } or
 // { ok: false, error, message_for_agent } so the voice agent can explain the problem to the caller.
@@ -14,10 +17,13 @@ import {
   bookingId, safeEqual, verifyElevenLabsSignature, bookingSms, cancelSms, formatDate,
 } from './lib.js';
 import { sendTelegram, sendSms } from './notify.js';
+import { logToolEvent, recordEvent, trackedNotify, runAlerts, runSynthetic, healthSummary } from './monitor.js';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
-const fail = (error, message_for_agent) => json({ ok: false, error, message_for_agent });
+// Tool results are plain objects; the router turns them into HTTP 200 responses and records them.
+const fail = (error, message_for_agent) => ({ ok: false, error, message_for_agent });
+const SERVER_ERROR = 'The booking system had a problem. Apologise, do not confirm anything, and take a message.';
 
 const REASON_TEXT = {
   bad_date: 'The date is not valid. Ask the caller for the day again.',
@@ -43,27 +49,50 @@ export default {
       const m = /^\/b\/([a-z0-9-]{2,64})\/([a-z-]+)$/.exec(path);
       if (m && request.method === 'POST') {
         if (!authorized(request, env.TOOL_SECRET)) return json({ ok: false, error: 'unauthorized' }, 401);
-        const business = await loadBusiness(env, m[1]);
-        if (!business) return fail('unknown_business', 'System problem. Apologise and take a message.');
         const body = await request.json().catch(() => ({}));
-        return tool(m[2], business, body, env, ctx);
+        return json(await timedTool(m[1], m[2], body, env, ctx));
       }
       return json({ ok: false, error: 'not_found' }, 404);
     } catch (err) {
-      console.error('unhandled', err?.stack || err);
-      return fail('server_error', 'The booking system had a problem. Apologise, do not confirm anything, and take a message.');
+      console.error(JSON.stringify({ evt: 'unhandled', error: String(err?.message || err) }));
+      return json(fail('server_error', SERVER_ERROR));
     }
   },
 
-  // Daily cron (see wrangler.toml): GDPR retention — drop transcripts and old messages after RETENTION_DAYS.
-  async scheduled(event, env) {
+  async scheduled(event, env, ctx) {
+    if (event.cron === '*/5 * * * *') {
+      await runAlerts(env);
+      return;
+    }
+    // Daily (17 3 * * *): GDPR retention — drop transcripts and old messages after RETENTION_DAYS,
+    // monitoring events after 30 days — then the synthetic check of every active business.
     const days = Number(env.RETENTION_DAYS || 90);
     await env.DB.batch([
       env.DB.prepare(`UPDATE calls SET transcript_json = NULL WHERE created_at < datetime('now', ?)`).bind(`-${days} days`),
       env.DB.prepare(`DELETE FROM messages WHERE created_at < datetime('now', ?)`).bind(`-${days} days`),
+      env.DB.prepare('DELETE FROM tool_events WHERE ts < ?').bind(new Date(Date.now() - 30 * 864e5).toISOString()),
     ]);
+    const quietCtx = { waitUntil: p => ctx.waitUntil(p) };
+    await runSynthetic(env, (name, business, body) => tool(name, business, body, env, quietCtx));
   },
 };
+
+// Runs one tool call, logs one JSON line and records it in tool_events (no personal data in either).
+async function timedTool(businessId, name, body, env, ctx) {
+  const started = Date.now();
+  let result;
+  try {
+    const business = await loadBusiness(env, businessId);
+    result = business ? await tool(name, business, body, env, ctx) : fail('unknown_business', 'System problem. Apologise and take a message.');
+  } catch (err) {
+    console.error(JSON.stringify({ evt: 'tool_exception', business_id: businessId, tool: name, error: String(err?.message || err) }));
+    result = fail('server_error', SERVER_ERROR);
+  }
+  const evt = { ts: new Date().toISOString(), business_id: businessId, tool: name, ok: !!result.ok, error: result.ok ? null : result.error, ms: Date.now() - started };
+  logToolEvent(evt);
+  ctx.waitUntil(recordEvent(env, evt));
+  return result;
+}
 
 function authorized(request, secret) {
   const h = request.headers.get('authorization') || '';
@@ -91,6 +120,8 @@ async function bookingsOn(env, businessId, date) {
 
 async function tool(name, business, body, env, ctx) {
   const p = business.profile;
+  const sms = (to, text) => ctx.waitUntil(trackedNotify(env, business.id, 'sms', () => sendSms(env, p, to, text)));
+  const telegram = text => ctx.waitUntil(trackedNotify(env, business.id, 'telegram', () => sendTelegram(env, p, text)));
   if (p.booking_provider === 'external' && name !== 'message') return externalProvider(name, business, body, env);
 
   switch (name) {
@@ -100,11 +131,11 @@ async function tool(name, business, body, env, ctx) {
       const res = computeSlots({ profile: p, service, date: body.date, bookings: await bookingsOn(env, business.id, body.date) });
       if (!res.ok) return fail(res.reason, REASON_TEXT[res.reason]);
       const slots = sortByPreferred(res.slots, body.preferred_time).slice(0, 6);
-      return json({
+      return {
         ok: true, date: body.date, day: formatDate(body.date, 'en'), service: service.name_en,
         duration_min: service.duration_min, price_gbp: service.price_gbp, slots,
         note: slots.length ? 'Offer at most 3 of these.' : 'Fully booked that day. Offer another day.',
-      });
+      };
     }
 
     case 'book': {
@@ -123,6 +154,8 @@ async function tool(name, business, body, env, ctx) {
       if (!check.slots.includes(fmtHHMM(start))) {
         return fail('slot_taken', `That time is no longer free. Nearest free times: ${sortByPreferred(check.slots, body.time).slice(0, 3).join(', ') || 'none that day'}.`);
       }
+      // Validates everything above, writes nothing, notifies nobody (used by the daily synthetic check).
+      if (body.dry_run === true) return { ok: true, dry_run: true, date: body.date, time: fmtHHMM(start), service: service.name_en };
 
       const id = bookingId();
       const end = start + service.duration_min;
@@ -138,10 +171,10 @@ async function tool(name, business, body, env, ctx) {
 
       const serviceName = lang === 'fa' ? service.name_fa : service.name_en;
       if (p.sms_enabled) {
-        ctx.waitUntil(sendSms(env, p, phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: body.date, time: fmtHHMM(start), id, address: p.address })));
+        sms(phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: body.date, time: fmtHHMM(start), id, address: p.address }));
       }
-      ctx.waitUntil(sendTelegram(env, p, `✅ New booking ${id}\n${service.name_en} — ${formatDate(body.date, 'en')} ${fmtHHMM(start)}\n${name} · ${phone}${body.notes ? `\nNote: ${body.notes}` : ''}`));
-      return json({ ok: true, booking_id: id, date: body.date, time: fmtHHMM(start), service: service.name_en, sms_sent: !!p.sms_enabled });
+      telegram(`✅ New booking ${id}\n${service.name_en} — ${formatDate(body.date, 'en')} ${fmtHHMM(start)}\n${name} · ${phone}${body.notes ? `\nNote: ${body.notes}` : ''}`);
+      return { ok: true, booking_id: id, date: body.date, time: fmtHHMM(start), service: service.name_en, sms_sent: !!p.sms_enabled };
     }
 
     case 'find-bookings': {
@@ -156,7 +189,7 @@ async function tool(name, business, body, env, ctx) {
         date: b.date, day: formatDate(b.date, 'en'), time: fmtHHMM(b.start_min),
       }));
       if (!bookings.length) return fail('not_found', 'No upcoming booking for that number. Ask if they used another number, or take a message.');
-      return json({ ok: true, bookings });
+      return { ok: true, bookings };
     }
 
     case 'reschedule': {
@@ -180,9 +213,9 @@ async function tool(name, business, body, env, ctx) {
       if (!res.meta || res.meta.changes !== 1) return fail('slot_taken', 'That time was just taken. Check availability again.');
       const lang = old.language === 'fa' ? 'fa' : 'en';
       const serviceName = lang === 'fa' ? service.name_fa : service.name_en;
-      if (p.sms_enabled) ctx.waitUntil(sendSms(env, p, phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: body.new_date, time: fmtHHMM(start), id: old.id, address: p.address })));
-      ctx.waitUntil(sendTelegram(env, p, `🔁 Moved ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)} → ${formatDate(body.new_date, 'en')} ${fmtHHMM(start)}\n${old.customer_name} · ${phone}`));
-      return json({ ok: true, booking_id: old.id, date: body.new_date, time: fmtHHMM(start) });
+      if (p.sms_enabled) sms(phone, bookingSms({ lang, businessName: p.business_name, serviceName, date: body.new_date, time: fmtHHMM(start), id: old.id, address: p.address }));
+      telegram(`🔁 Moved ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)} → ${formatDate(body.new_date, 'en')} ${fmtHHMM(start)}\n${old.customer_name} · ${phone}`);
+      return { ok: true, booking_id: old.id, date: body.new_date, time: fmtHHMM(start) };
     }
 
     case 'cancel': {
@@ -194,9 +227,9 @@ async function tool(name, business, body, env, ctx) {
       if (!old) return fail('not_found', 'Booking not found for that number. Use find_bookings first.');
       await env.DB.prepare("UPDATE bookings SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?").bind(old.id).run();
       const lang = old.language === 'fa' ? 'fa' : 'en';
-      if (p.sms_enabled) ctx.waitUntil(sendSms(env, p, phone, cancelSms({ lang, businessName: p.business_name, date: old.date, time: fmtHHMM(old.start_min), id: old.id })));
-      ctx.waitUntil(sendTelegram(env, p, `❌ Cancelled ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)}\n${old.customer_name} · ${phone}`));
-      return json({ ok: true, booking_id: old.id, cancelled: true });
+      if (p.sms_enabled) sms(phone, cancelSms({ lang, businessName: p.business_name, date: old.date, time: fmtHHMM(old.start_min), id: old.id }));
+      telegram(`❌ Cancelled ${old.id}: ${formatDate(old.date, 'en')} ${fmtHHMM(old.start_min)}\n${old.customer_name} · ${phone}`);
+      return { ok: true, booking_id: old.id, cancelled: true };
     }
 
     case 'message': {
@@ -205,8 +238,8 @@ async function tool(name, business, body, env, ctx) {
       await env.DB.prepare(
         "INSERT INTO messages (business_id, caller_name, caller_phone, message, urgency, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))"
       ).bind(business.id, String(body.caller_name || '').slice(0, 80), phone, String(body.message || '').slice(0, 1000), urgent ? 'urgent' : 'normal').run();
-      ctx.waitUntil(sendTelegram(env, p, `${urgent ? '🚨 URGENT message' : '📩 Message'} from ${body.caller_name || 'caller'} (${phone})\n${body.message || ''}`));
-      return json({ ok: true, delivered: true, note: 'Tell the caller the team will call them back. Do not promise a time.' });
+      telegram(`${urgent ? '🚨 URGENT message' : '📩 Message'} from ${body.caller_name || 'caller'} (${phone})\n${body.message || ''}`);
+      return { ok: true, delivered: true, note: 'Tell the caller the team will call them back. Do not promise a time.' };
     }
 
     default:
@@ -224,7 +257,7 @@ async function externalProvider(name, business, body, env) {
     body: JSON.stringify(body),
   });
   if (!r.ok) return fail('external_error', 'The booking system did not answer. Apologise and take a message.');
-  return json(await r.json());
+  return r.json();
 }
 
 // ---------------- post-call webhook ----------------
@@ -255,7 +288,7 @@ async function postCall(request, env, ctx) {
     JSON.stringify(collected), JSON.stringify(d.transcript || [])).run();
 
   const facts = Object.entries(collected).map(([k, v]) => `${k}: ${v?.value ?? v}`).join('\n');
-  ctx.waitUntil(sendTelegram(env, p, `📞 Call from ${caller} · ${Math.round(duration / 60 * 10) / 10} min · ${success}\n${summary}${facts ? `\n\n${facts}` : ''}`));
+  ctx.waitUntil(trackedNotify(env, biz.id, 'telegram', () => sendTelegram(env, p, `📞 Call from ${caller} · ${Math.round(duration / 60 * 10) / 10} min · ${success}\n${summary}${facts ? `\n\n${facts}` : ''}`)));
   return json({ ok: true });
 }
 
@@ -263,13 +296,16 @@ async function postCall(request, env, ctx) {
 
 async function admin(request, env, path, url) {
   if (path === '/admin/businesses' && request.method === 'PUT') {
-    const { agent_id = null, profile } = await request.json();
+    const { agent_id = null, profile, active = true } = await request.json();
     if (!profile?.business_id || !/^[a-z0-9-]{2,64}$/.test(profile.business_id)) return json({ ok: false, error: 'profile.business_id must be a lowercase slug' }, 400);
     await env.DB.prepare(
-      `INSERT INTO businesses (id, agent_id, profile_json, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))
-       ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, profile_json = excluded.profile_json, updated_at = datetime('now')`
-    ).bind(profile.business_id, agent_id, JSON.stringify(profile)).run();
+      `INSERT INTO businesses (id, agent_id, profile_json, active, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, profile_json = excluded.profile_json, active = excluded.active, updated_at = datetime('now')`
+    ).bind(profile.business_id, agent_id, JSON.stringify(profile), active ? 1 : 0).run();
     return json({ ok: true, business_id: profile.business_id });
+  }
+  if (path === '/admin/health' && request.method === 'GET') {
+    return json({ ok: true, since: new Date(Date.now() - 864e5).toISOString(), businesses: await healthSummary(env) });
   }
   const m = /^\/admin\/b\/([a-z0-9-]{2,64})\/(bookings|calls|messages)$/.exec(path);
   if (m && request.method === 'GET') {
