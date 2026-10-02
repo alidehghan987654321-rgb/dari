@@ -89,6 +89,32 @@ CREATE TABLE IF NOT EXISTS requests (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS requests_user ON requests (user_id, id);
+-- The growing catalog: every find kept, deduplicated by its id, never deleted. The daily
+-- hunt adds to it (updates price/verdict when a product is seen again).
+CREATE TABLE IF NOT EXISTS catalog (
+    id TEXT PRIMARY KEY,            -- candidate id, "source:listing_id"
+    category TEXT NOT NULL DEFAULT '',
+    verdict TEXT NOT NULL DEFAULT '',
+    score INTEGER NOT NULL DEFAULT 0,
+    profit_usd REAL NOT NULL DEFAULT 0,
+    capital_usd REAL NOT NULL DEFAULT 0,
+    title_fa TEXT NOT NULL DEFAULT '',
+    data TEXT NOT NULL,             -- the full candidate (hunter.models.Candidate.to_dict)
+    first_found TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    times_found INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS catalog_browse ON catalog (verdict, category, score);
+CREATE INDEX IF NOT EXISTS catalog_updated ON catalog (updated_at);
+-- A product given to a seller as their exclusive pick (option B): capped per product so
+-- sellers don't all chase the same item. Spans the whole catalog, not one hunt.
+CREATE TABLE IF NOT EXISTS catalog_picks (
+    candidate_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (candidate_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS catalog_picks_user ON catalog_picks (user_id);
 """
 
 
@@ -283,6 +309,7 @@ class Database:
         for c in data.get("candidates", []):
             urls = [c["listing"]["url"], *(m["url"] for m in c.get("matches", []))]
             self.cache([link_key(u) for u in urls if u], c)
+        self.upsert_catalog(data.get("candidates", []))  # grows the permanent catalog
         return hunt_id
 
     def latest_hunt(self) -> tuple[int, dict] | None:
@@ -341,6 +368,178 @@ class Database:
                     "INSERT OR IGNORE INTO picks (hunt_id, candidate_id, user_id, created_at)"
                     " VALUES (?, ?, ?, ?)",
                     [(hunt_id, cid, user_id, iso(now())) for cid in candidate_ids],
+                )
+
+            yield taken, save
+
+    # --- the growing catalog ---------------------------------------------------
+
+    _CATALOG_SORTS = {
+        "new": "updated_at DESC, score DESC",
+        "score": "score DESC, updated_at DESC",
+        "profit": "profit_usd DESC, score DESC",
+        "capital": "capital_usd ASC, score DESC",
+    }
+
+    def upsert_catalog(self, candidates: list[dict[str, Any]], run_at: str | None = None) -> None:
+        """Add this hunt's finds to the catalog; a product already there keeps its first-found
+        date and gets its price, verdict and score refreshed."""
+        at = run_at or iso(now())
+        rows = [
+            (
+                c["id"],
+                c.get("category", ""),
+                c.get("verdict", ""),
+                int(c.get("score", 0) or 0),
+                float((c.get("pricing") or {}).get("profit_usd", 0) or 0),
+                float(c.get("starter_capital_usd", 0) or 0),
+                c.get("title_fa", ""),
+                json.dumps(c, ensure_ascii=False),
+                at,
+                at,
+            )
+            for c in candidates
+            if c.get("id")
+        ]
+        with self.tx() as db:
+            db.executemany(
+                "INSERT INTO catalog (id, category, verdict, score, profit_usd, capital_usd,"
+                " title_fa, data, first_found, updated_at, times_found) VALUES (?,?,?,?,?,?,?,?,?,?,1)"
+                " ON CONFLICT(id) DO UPDATE SET category=excluded.category, verdict=excluded.verdict,"
+                " score=excluded.score, profit_usd=excluded.profit_usd, capital_usd=excluded.capital_usd,"
+                " title_fa=excluded.title_fa, data=excluded.data, updated_at=excluded.updated_at,"
+                " times_found=catalog.times_found+1",
+                rows,
+            )
+
+    def catalog_page(
+        self,
+        *,
+        category: str = "all",
+        verdict: str = "all",
+        sort: str = "new",
+        fresh_hours: float | None = None,
+        q: str = "",
+        limit: int = 24,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        where, args = [], []
+        if category and category != "all":
+            where.append("category = ?")
+            args.append(category)
+        if verdict and verdict != "all":
+            where.append("verdict = ?")
+            args.append(verdict)
+        if fresh_hours:
+            where.append("first_found > ?")
+            args.append(iso(now() - timedelta(hours=fresh_hours)))
+        if q:
+            where.append("(title_fa LIKE ? OR data LIKE ?)")
+            args += [f"%{q}%", f"%{q}%"]
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        order = self._CATALOG_SORTS.get(sort, self._CATALOG_SORTS["new"])
+        cutoff = iso(now() - timedelta(hours=24))
+        with self.tx() as db:
+            rows = db.execute(
+                f"SELECT data, first_found, updated_at, times_found FROM catalog{clause}"
+                f" ORDER BY {order} LIMIT ? OFFSET ?",
+                (*args, limit, offset),
+            ).fetchall()
+            total = db.execute(f"SELECT COUNT(*) AS n FROM catalog{clause}", args).fetchone()["n"]
+            taken = {
+                r["candidate_id"]: r["n"]
+                for r in db.execute(
+                    "SELECT candidate_id, COUNT(*) AS n FROM catalog_picks GROUP BY candidate_id"
+                )
+            }
+        items = []
+        for r in rows:
+            c = json.loads(r["data"])
+            c["first_found"], c["updated_at"] = r["first_found"], r["updated_at"]
+            c["times_found"] = r["times_found"]
+            c["is_new"] = r["first_found"] >= cutoff
+            c["taken"] = taken.get(c["id"], 0)
+            items.append(c)
+        return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+    def catalog_counts(self) -> dict[str, Any]:
+        with self.tx() as db:
+            verd = {
+                r["verdict"]: r["n"]
+                for r in db.execute("SELECT verdict, COUNT(*) AS n FROM catalog GROUP BY verdict")
+            }
+            cats = [
+                r["category"]
+                for r in db.execute(
+                    "SELECT category, COUNT(*) AS n FROM catalog WHERE category <> ''"
+                    " GROUP BY category ORDER BY n DESC"
+                )
+            ]
+            total = db.execute("SELECT COUNT(*) AS n FROM catalog").fetchone()["n"]
+            fresh = db.execute(
+                "SELECT COUNT(*) AS n FROM catalog WHERE first_found > ?",
+                (iso(now() - timedelta(hours=24)),),
+            ).fetchone()["n"]
+        return {
+            "total": total,
+            "green": verd.get("green", 0),
+            "yellow": verd.get("yellow", 0),
+            "red": verd.get("red", 0),
+            "new": fresh,
+            "categories": cats,
+        }
+
+    def catalog_for_picks(self, categories: list[str], limit: int = 400) -> list[dict[str, Any]]:
+        """The best green/yellow finds to hand out as a seller's exclusive picks."""
+        q = "SELECT data FROM catalog WHERE verdict IN ('green','yellow')"
+        args: list[Any] = []
+        if categories:
+            q += f" AND category IN ({','.join('?' * len(categories))})"
+            args += list(categories)
+        q += " ORDER BY score DESC, updated_at DESC LIMIT ?"
+        args.append(limit)
+        with self.tx() as db:
+            rows = db.execute(q, args).fetchall()
+        return [json.loads(r["data"]) for r in rows]
+
+    def catalog_items(self, ids: list[str]) -> list[dict[str, Any]]:
+        if not ids:
+            return []
+        with self.tx() as db:
+            rows = db.execute(
+                f"SELECT data FROM catalog WHERE id IN ({','.join('?' * len(ids))})", ids
+            ).fetchall()
+        by_id = {}
+        for r in rows:
+            c = json.loads(r["data"])
+            by_id[c["id"]] = c
+        return [by_id[i] for i in ids if i in by_id]
+
+    def my_catalog_picks(self, user_id: int) -> list[str]:
+        with self.tx() as db:
+            rows = db.execute(
+                "SELECT candidate_id FROM catalog_picks WHERE user_id = ? ORDER BY rowid",
+                (user_id,),
+            ).fetchall()
+        return [r["candidate_id"] for r in rows]
+
+    @contextmanager
+    def picking_catalog(self):
+        """Hand out exclusive picks from the catalog: yields (taken counts, save function)."""
+        with self.tx() as db:
+            db.execute("BEGIN IMMEDIATE")
+            taken: dict[str, int] = {
+                r["candidate_id"]: r["n"]
+                for r in db.execute(
+                    "SELECT candidate_id, COUNT(*) AS n FROM catalog_picks GROUP BY candidate_id"
+                )
+            }
+
+            def save(user_id: int, candidate_ids: list[str]) -> None:
+                db.executemany(
+                    "INSERT OR IGNORE INTO catalog_picks (candidate_id, user_id, created_at)"
+                    " VALUES (?, ?, ?)",
+                    [(cid, user_id, iso(now())) for cid in candidate_ids],
                 )
 
             yield taken, save

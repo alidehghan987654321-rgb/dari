@@ -947,6 +947,8 @@ select.input option { background: #1b1b1b; color: var(--ink); }
 .icon-btn .i { width: 16px; height: 16px; }
 .order-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .linklike { border: 0; background: none; color: var(--accent-ink); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+.more-row { display: flex; justify-content: center; margin-top: 20px; }
+.more-row .btn { min-width: 220px; }
 
 /* support */
 .support-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; }

@@ -108,6 +108,16 @@ def build_preview(hunt: dict, pricing: PricingConfig | None = None) -> str:
                 for c in CATEGORIES.values()
             ],
             "hunt": {"started_at": hunt["started_at"], "sample": True},
+            # The catalog, inlined for the demo: every find, marked so a few look "new today".
+            "catalog": candidates,
+            "catalog_counts": {
+                "total": len(candidates),
+                "green": counts.get("green", 0),
+                "yellow": counts.get("yellow", 0),
+                "red": counts.get("red", 0),
+                "new": sum(1 for c in candidates if c.get("is_new")),
+                "categories": list(dict.fromkeys(c["category"] for c in candidates)),
+            },
             "pricing": pricing_settings(pricing),
             "toman_per_usd": 255_000,
             "per_product": 3,

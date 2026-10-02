@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 
-from .categories import Category, hunt_categories
+from .categories import Category, hunt_categories, hunt_rotation
 from .db import Database
 from .engine import HuntResult, Hunter
 from .links import link_key
@@ -67,8 +67,13 @@ def daily_hunt(db: Database, cfg: PricingConfig) -> str:
         return "already_running"
     try:
         try:
-            hunt_id, _, result = run_hunt(db, cfg)
-            return f"hunt {hunt_id}: {len(result.candidates)} products"
+            # Hunt a few categories a day on rotation, so the catalog fills across all of
+            # them over the following days (HUNTER_CATEGORIES_PER_DAY; 0 hunts them all).
+            per_day = int(os.environ.get("HUNTER_CATEGORIES_PER_DAY", "3") or "3")
+            today = hunt_rotation(per_day)
+            hunt_id, _, result = run_hunt(db, cfg, categories=today)
+            names = ", ".join(c.key for c in today)
+            return f"hunt {hunt_id}: {len(result.candidates)} products in {names}"
         except NoSources:
             if db.latest_hunt_time():
                 return "no_sources"

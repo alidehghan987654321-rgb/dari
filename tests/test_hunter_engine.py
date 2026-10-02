@@ -560,7 +560,9 @@ def test_the_hunt_searches_1688_once_per_category():
     supplier = Batched()
     result = Hunter([sample], supplier).hunt()
     assert supplier.singles == 0 and result.candidates
-    assert len(supplier.batches) == len(hunt_categories())
+    # One batched 1688 search per category that produced listings (not one per product).
+    with_listings = [c for c in hunt_categories() if sample.trending(c, 20)]
+    assert len(supplier.batches) == len(with_listings)
     assert all(len(set(b)) == len(b) for b in supplier.batches)
 
 
@@ -810,3 +812,19 @@ def test_keepa_waits_when_out_of_tokens():
     keepa.sleep = waits.append
     assert keepa._get("product", asin="B0CJRVK5Q1") == {"products": []}
     assert waits == [3.0]
+
+
+def test_hunt_rotation_cycles_through_every_category():
+    from hunter.categories import hunt_categories, hunt_rotation
+
+    all_cats = hunt_categories()
+    per_day = 3
+    n_batches = (len(all_cats) + per_day - 1) // per_day
+    seen: set[str] = set()
+    for day in range(n_batches):
+        batch = hunt_rotation(per_day, day_index=day)
+        assert 1 <= len(batch) <= per_day
+        seen.update(c.key for c in batch)
+    assert seen == {c.key for c in all_cats}
+    assert len(hunt_rotation(0)) == len(all_cats)  # 0 hunts them all
+    assert len(hunt_rotation(999)) == len(all_cats)

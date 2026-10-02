@@ -1094,3 +1094,42 @@ def test_order_export_is_a_file(client):
     assert "attachment" in r.headers["content-disposition"]
     # openpyxl in CI -> a real .xlsx (a zip, starting "PK"); a CSV (UTF-8 BOM) otherwise
     assert r.content[:2] == b"PK" or r.content[:3] == b"\xef\xbb\xbf"
+
+
+# --- the growing catalog -------------------------------------------------------
+
+
+def test_catalog_grows_and_filters(client, sample_hunt):
+    _active(client)
+    cat = client.get("/api/catalog").json()
+    unique = len({c["id"] for c in sample_hunt["candidates"]})
+    assert cat["counts"]["total"] == unique and cat["total"] == unique
+    assert cat["items"]
+    greens = client.get("/api/catalog?verdict=green&limit=60").json()
+    assert greens["items"] and all(c["verdict"] == "green" for c in greens["items"])
+    p1 = client.get("/api/catalog?limit=2&offset=0").json()
+    p2 = client.get("/api/catalog?limit=2&offset=2").json()
+    assert len(p1["items"]) <= 2
+    if p1["items"] and p2["items"]:
+        assert {c["id"] for c in p1["items"]}.isdisjoint({c["id"] for c in p2["items"]})
+
+
+def test_catalog_needs_a_subscription(client):
+    signup(client)
+    assert client.get("/api/catalog").status_code == 402
+
+
+def test_catalog_dedups_and_keeps_history(tmp_path, sample_hunt):
+    db = Database(str(tmp_path / "c.db"))
+    db.save_hunt(sample_hunt)
+    first = db.catalog_counts()["total"]
+    db.save_hunt(sample_hunt)  # the same products found again
+    assert first > 0 and db.catalog_counts()["total"] == first  # deduped, not doubled
+
+
+def test_picks_come_from_the_catalog(client):
+    _active(client)
+    p = client.get("/api/picks").json()
+    assert p["candidates"] and p["capital_usd"] >= 0
+    again = client.get("/api/picks").json()  # saved and stable
+    assert [c["id"] for c in again["candidates"]] == [c["id"] for c in p["candidates"]]

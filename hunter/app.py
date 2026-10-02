@@ -501,15 +501,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         best = [c for c in candidates if c["verdict"] == "green"][: settings.teaser_size]
         return {**head, "locked": True, "candidates": [teaser(c) for c in best]}
 
+    @app.get("/api/catalog")
+    def catalog(
+        user=Depends(require_active),
+        category: str = "all",
+        verdict: str = "all",
+        sort: str = "new",
+        fresh: bool = False,
+        q: str = "",
+        offset: int = 0,
+        limit: int = 24,
+    ):
+        """The whole growing catalog, open to every subscriber: filtered, sorted, paginated."""
+        page = db.catalog_page(
+            category=category,
+            verdict=verdict,
+            sort=sort,
+            fresh_hours=24 if fresh else None,
+            q=q.strip()[:80],
+            limit=max(1, min(60, limit)),
+            offset=max(0, offset),
+        )
+        if offset == 0:
+            page["counts"] = db.catalog_counts()
+        return page
+
     @app.get("/api/picks")
     def picks(user=Depends(require_active)):
-        hunt_id, data = latest_or_404()
-        by_id = {c["id"]: c for c in data["candidates"]}
-        ids = db.picks(hunt_id, user["id"])
+        """A seller's exclusive picks (option B), drawn from the catalog and capped per
+        product so sellers don't all chase the same item."""
+        ids = db.my_catalog_picks(user["id"])
         if not ids:
-            with db.picking(hunt_id) as (taken, save):
+            with db.picking_catalog() as (taken, save):
                 ids = choose_picks(
-                    data["candidates"],
+                    db.catalog_for_picks(user["categories"]),
                     user["categories"],
                     user["budget_usd"],
                     taken,
@@ -517,11 +542,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     max_picks=settings.picks_per_seller,
                 )
                 save(user["id"], ids)
-        chosen = [by_id[i] for i in ids if i in by_id]
+        chosen = db.catalog_items(ids)
         return {
-            "hunt_id": hunt_id,
             "budget_usd": user["budget_usd"],
-            "capital_usd": round(sum(c["starter_capital_usd"] for c in chosen), 2),
+            "capital_usd": round(sum(c.get("starter_capital_usd", 0) for c in chosen), 2),
             "per_product": settings.per_product,
             "candidates": chosen,
         }

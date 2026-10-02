@@ -9,7 +9,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var state = {
     config: null, me: null, hunt: null, picks: null, tab: "home", calc: null,
-    filter: { cat: "all", verdict: "all", sort: "score", fresh: false }, authMode: "signup", analysis: null, jobs: undefined,
+    filter: { cat: "all", verdict: "all", sort: "new", fresh: false, q: "" }, authMode: "signup", analysis: null, jobs: undefined, catalog: null,
   };
 
   var ERRORS = {
@@ -33,7 +33,7 @@
     "pay-failed": "پرداخت تأیید نشد. اگه پولی کم شده، ظرف 72 ساعت برمی‌گرده.",
   };
   var VERDICT = { green: "شکار خوب", yellow: "با احتیاط", red: "نیار" };
-  var TITLES = { dash: "میز کار", media: "عکس و ویدیو", hunt: "شکارهای امروز", picks: "شکارهای اختصاصی من", analyze: "تحلیل لینک", order: "سبد سفارش", calc: "ماشین‌حساب واردات", account: "حساب من" };
+  var TITLES = { dash: "میز کار", media: "عکس و ویدیو", hunt: "کاتالوگ شکارها", picks: "شکارهای اختصاصی من", analyze: "تحلیل لینک", order: "سبد سفارش", calc: "ماشین‌حساب واردات", account: "حساب من" };
   var PUBLIC = { home: true, calc: true };  // what visitors can open; "home" is the landing
 
   // --- helpers ----------------------------------------------------------------
@@ -179,7 +179,7 @@
     else if (state.tab === "analyze") { main.innerHTML = analyzeHTML(); bindAnalyze(); }
     else if (state.tab === "order") renderOrder();
     else if (state.tab === "account") { main.innerHTML = accountHTML(); bindAccount(); }
-    else { main.innerHTML = huntHTML(); bindHunt(); }
+    else renderCatalog();
     bindCards(main);
   }
 
@@ -229,7 +229,8 @@
         "<div><div class=\"card-title\">" + title + "</div>" +
           (c.listing && c.listing.title && c.title_fa ? '<div class="card-sub">' + esc(c.listing.title) + "</div>" : "") +
           '<div class="card-cat"><span>' + esc(catName(c.category)) + '</span><span class="pill ' + c.verdict + '"><span class="dot"></span>' + VERDICT[c.verdict] + "</span>" +
-            (c.is_new ? '<span class="pill new">جدید امروز</span>' : "") + "</div></div>" +
+            (c.is_new ? '<span class="pill new">جدید امروز</span>' : "") +
+            (typeof c.taken === "number" && c.taken > 0 ? '<span class="pill neutral" title="تعداد فروشنده‌هایی که این محصول رو برداشتن">' + toman(c.taken) + " فروشنده برداشته</span>" : "") + "</div></div>" +
         '<div class="score ' + c.verdict + '" title="امتیاز از 100">' + c.score + "<small>امتیاز</small></div>" +
       "</div>";
     if (c.locked) {
@@ -1986,65 +1987,145 @@
     };
   }
 
-  // --- hunt tab ------------------------------------------------------------------
+  // --- catalog tab (the growing library of finds) --------------------------------
 
-  function huntHTML() {
-    var h = state.hunt;
-    if (!h) return '<div class="empty">هنوز شکاری انجام نشده. مدیر سایت باید دستور <span class="num">python -m hunter hunt</span> رو اجرا کنه.</div>';
-    var counts = h.counts || {};
-    var fresh = h.candidates.filter(function (c) { return c.is_new; }).length;
-    var head =
-      '<div class="page-head"><div><span class="eyebrow">آخرین جستجو: ' + esc(faDate(h.started_at)) + "</span>" +
-      '<h1 class="section-title">شکارهای امروز</h1>' +
-      '<p class="section-sub" style="margin:0">هر محصول با قیمت واقعی Temu و آمازون مقایسه شده؛ سبزها رو می‌شه با خیال راحت آورد.</p></div></div>' +
-      (h.sample ? '<div class="notice"><b>داده‌ی نمونه:</b> ' + esc(h.note || "این اعداد برای نمایش‌ان.") + "</div>" : "") +
-      '<div class="summary">' +
-        '<span class="pill green"><span class="dot"></span>' + toman(counts.green || 0) + " شکار خوب</span>" +
-        '<span class="pill yellow"><span class="dot"></span>' + toman(counts.yellow || 0) + " با احتیاط</span>" +
-        '<span class="pill red"><span class="dot"></span>' + toman(counts.red || 0) + " نیار</span>" +
-        (fresh ? '<span class="pill new">' + toman(fresh) + " محصول جدید امروز</span>" : "") +
-      "</div>";
-    if (h.locked) {
-      return head + '<div class="notice"><b>اشتراک نداری.</b> فقط چند نمونه قفل‌شده می‌بینی. از «حساب من» اشتراک بخر.</div><div class="grid">' +
-        h.candidates.map(cardHTML).join("") + "</div>";
-    }
-    var cats = {};
-    h.candidates.forEach(function (c) { cats[c.category] = true; });
+  function catKey() {
     var f = state.filter;
-    var list = h.candidates.filter(function (c) {
-      return (f.cat === "all" || c.category === f.cat) && (f.verdict === "all" || c.verdict === f.verdict) && (!f.fresh || c.is_new);
+    return [f.cat, f.verdict, f.sort, f.fresh ? 1 : 0, (f.q || "")].join("|");
+  }
+
+  function catalogSummary(counts) {
+    counts = counts || {};
+    return '<div class="summary">' +
+      '<span class="pill neutral">' + toman(counts.total || 0) + " محصول در کاتالوگ</span>" +
+      '<span class="pill green"><span class="dot"></span>' + toman(counts.green || 0) + " شکار خوب</span>" +
+      '<span class="pill yellow"><span class="dot"></span>' + toman(counts.yellow || 0) + " با احتیاط</span>" +
+      '<span class="pill red"><span class="dot"></span>' + toman(counts.red || 0) + " نیار</span>" +
+      (counts.new ? '<span class="pill new">' + toman(counts.new) + " جدید امروز</span>" : "") +
+      "</div>";
+  }
+
+  function catalogFilters(cats) {
+    var f = state.filter;
+    var opts = (cats || []).map(function (k) {
+      return '<option value="' + esc(k) + '"' + (f.cat === k ? " selected" : "") + ">" + esc(catName(k)) + "</option>";
+    }).join("");
+    return '<div class="filters">' +
+      '<div class="field"><label for="flt-q">جستجو</label><input class="input" id="flt-q" placeholder="اسم محصول…" value="' + esc(f.q || "") + '"></div>' +
+      '<div class="field"><label for="flt-cat">دسته</label><select class="input" id="flt-cat"><option value="all">همه‌ی دسته‌ها</option>' + opts + "</select></div>" +
+      '<div class="field"><label for="flt-sort">مرتب‌سازی</label><select class="input" id="flt-sort">' +
+        '<option value="new"' + (f.sort === "new" ? " selected" : "") + ">جدیدترین</option>" +
+        '<option value="score"' + (f.sort === "score" ? " selected" : "") + ">بهترین‌ها</option>" +
+        '<option value="profit"' + (f.sort === "profit" ? " selected" : "") + ">بیشترین سود</option>" +
+        '<option value="capital"' + (f.sort === "capital" ? " selected" : "") + ">کمترین سرمایه</option></select></div>" +
+      '<div class="field"><span class="label">وضعیت</span><div class="chips" id="flt-verdict">' +
+        [["all", "همه"], ["green", "شکار خوب"], ["yellow", "با احتیاط"], ["red", "نیار"]].map(function (v) {
+          return '<button type="button" data-v="' + v[0] + '" aria-pressed="' + (f.verdict === v[0]) + '">' + v[1] + "</button>";
+        }).join("") + "</div></div>" +
+      '<div class="field"><span class="label">فقط جدیدها</span><div class="chips"><button type="button" id="flt-new" aria-pressed="' + !!f.fresh + '">جدید امروز</button></div></div>' +
+    "</div>";
+  }
+
+  function catalogHead(counts) {
+    return '<div class="page-head"><div><span class="eyebrow">کتابخانه‌ی محصولات</span>' +
+      '<h1 class="section-title">کاتالوگ شکارها</h1>' +
+      '<p class="section-sub" style="margin:0">هر چیزی که تا حالا شکار شده این‌جا می‌مونه و هر روز بیشتر می‌شه. همه‌ی مشترک‌ها می‌بینن؛ «شکار من» مخصوص خودته.</p></div></div>' +
+      catalogSummary(counts) + catalogFilters((counts && counts.categories) || []);
+  }
+
+  function drawCatalog(main, page) {
+    var items = page.items || [], counts = page.counts || {};
+    var body = items.length
+      ? '<div class="grid">' + items.map(cardHTML).join("") + "</div>"
+      : '<div class="empty">چیزی با این فیلتر پیدا نشد.</div>';
+    var left = (page.total || 0) - items.length;
+    var more = left > 0
+      ? '<div class="more-row"><button type="button" class="btn ghost" id="cat-more">بیشتر (' + toman(left) + " تای دیگه)</button></div>" : "";
+    main.innerHTML = catalogHead(counts) + body + more;
+    bindCatalog(main);
+    bindCards(main);
+  }
+
+  function renderCatalog() {
+    var main = $("main");
+    if (!DEMO && !state.me.active) { main.innerHTML = lockedHTML(); return; }
+    if (DEMO) { drawCatalogDemo(main); return; }
+    if (!state.catalog || state.catalog.key !== catKey()) {
+      main.innerHTML = '<p class="loading">در حال باز کردن کاتالوگ…</p>';
+      fetchCatalog(0, false);
+      return;
+    }
+    drawCatalog(main, state.catalog);
+  }
+
+  function catalogQuery(offset) {
+    var f = state.filter;
+    return "/api/catalog?offset=" + offset + "&limit=24&sort=" + encodeURIComponent(f.sort) +
+      "&category=" + encodeURIComponent(f.cat) + "&verdict=" + encodeURIComponent(f.verdict) +
+      (f.fresh ? "&fresh=true" : "") + (f.q ? "&q=" + encodeURIComponent(f.q) : "");
+  }
+
+  function fetchCatalog(offset, append) {
+    api(catalogQuery(offset)).then(function (p) {
+      if (append && state.catalog) {
+        state.catalog.items = state.catalog.items.concat(p.items || []);
+        state.catalog.offset = p.offset;
+      } else {
+        state.catalog = { key: catKey(), items: p.items || [], total: p.total || 0, offset: p.offset || 0, limit: p.limit || 24, counts: p.counts || (state.catalog && state.catalog.counts) || {} };
+      }
+      if (state.tab === "hunt") drawCatalog($("main"), state.catalog);
+    }, function (e) {
+      if (state.tab === "hunt") $("main").innerHTML = '<div class="empty">' + esc(errText(e)) + "</div>";
+    });
+  }
+
+  // The demo has the catalog inlined; filter, sort and page it in the browser.
+  function drawCatalogDemo(main) {
+    var all = (state.config && state.config.catalog) || [];
+    var f = state.filter, ql = (f.q || "").toLowerCase();
+    var list = all.filter(function (c) {
+      return (f.cat === "all" || c.category === f.cat) &&
+        (f.verdict === "all" || c.verdict === f.verdict) &&
+        (!f.fresh || c.is_new) &&
+        (!f.q || (c.title_fa || "").indexOf(f.q) >= 0 || (((c.listing && c.listing.title) || "").toLowerCase().indexOf(ql) >= 0));
     });
     var sorters = {
+      new: function (a, b) { return b.score - a.score; },
       score: function (a, b) { return b.score - a.score; },
-      margin: function (a, b) { return b.pricing.margin - a.pricing.margin; },
+      profit: function (a, b) { return b.pricing.profit_usd - a.pricing.profit_usd; },
       capital: function (a, b) { return a.starter_capital_usd - b.starter_capital_usd; },
     };
-    if (f.sort !== "score") list = list.slice().sort(sorters[f.sort]);
-    var filters =
-      '<div class="filters">' +
-        '<div class="field"><label for="flt-cat">دسته</label><select class="input" id="flt-cat"><option value="all">همه‌ی دسته‌ها</option>' +
-          Object.keys(cats).map(function (k) { return '<option value="' + esc(k) + '"' + (f.cat === k ? " selected" : "") + ">" + esc(catName(k)) + "</option>"; }).join("") + "</select></div>" +
-        '<div class="field"><label for="flt-sort">مرتب‌سازی</label><select class="input" id="flt-sort">' +
-          '<option value="score"' + (f.sort === "score" ? " selected" : "") + ">بهترین‌ها اول</option>" +
-          '<option value="margin"' + (f.sort === "margin" ? " selected" : "") + ">بیشترین حاشیه‌ی سود</option>" +
-          '<option value="capital"' + (f.sort === "capital" ? " selected" : "") + ">کمترین سرمایه‌ی شروع</option></select></div>" +
-        '<div class="field"><span class="label">وضعیت</span><div class="chips" id="flt-verdict">' +
-          [["all", "همه"], ["green", "شکار خوب"], ["yellow", "با احتیاط"], ["red", "نیار"]].map(function (v) {
-            return '<button type="button" data-v="' + v[0] + '" aria-pressed="' + (f.verdict === v[0]) + '">' + v[1] + "</button>";
-          }).join("") + "</div></div>" +
-        '<div class="field"><span class="label">فقط جدیدها</span><div class="chips"><button type="button" id="flt-new" aria-pressed="' + f.fresh + '">جدید امروز</button></div></div>' +
-      "</div>";
-    return head + filters + (list.length ? '<div class="grid">' + list.map(cardHTML).join("") + "</div>" : '<div class="empty">چیزی با این فیلتر پیدا نشد.</div>');
+    list = list.slice().sort(sorters[f.sort] || sorters.new);
+    var shown = state.catDemoShown || 24;
+    var counts = (state.config && state.config.catalog_counts) || demoCatalogCounts(all);
+    drawCatalog(main, { items: list.slice(0, shown), total: list.length, counts: counts });
   }
-  function bindHunt() {
-    var cat = $("flt-cat"), sort = $("flt-sort"), v = $("flt-verdict");
-    if (cat) cat.onchange = function () { state.filter.cat = cat.value; render(); };
-    if (sort) sort.onchange = function () { state.filter.sort = sort.value; render(); };
-    if (v) each(v, "button", function (b) {
-      b.onclick = function () { state.filter.verdict = b.dataset.v; render(); };
-    });
-    var fresh = $("flt-new");
-    if (fresh) fresh.onclick = function () { state.filter.fresh = !state.filter.fresh; render(); };
+
+  function demoCatalogCounts(all) {
+    var c = { total: all.length, green: 0, yellow: 0, red: 0, new: 0 }, cats = {};
+    all.forEach(function (x) { c[x.verdict] = (c[x.verdict] || 0) + 1; if (x.is_new) c.new++; cats[x.category] = true; });
+    c.categories = Object.keys(cats);
+    return c;
+  }
+
+  function bindCatalog(root) {
+    var cat = $("flt-cat"), sort = $("flt-sort"), v = $("flt-verdict"), q = $("flt-q"), fresh = $("flt-new"), more = $("cat-more");
+    function changed() { state.catDemoShown = 24; state.catalog = null; render(); }
+    if (cat) cat.onchange = function () { state.filter.cat = cat.value; changed(); };
+    if (sort) sort.onchange = function () { state.filter.sort = sort.value; changed(); };
+    if (v) each(v, "button", function (b) { b.onclick = function () { state.filter.verdict = b.dataset.v; changed(); }; });
+    if (fresh) fresh.onclick = function () { state.filter.fresh = !state.filter.fresh; changed(); };
+    if (q) {
+      var t;
+      var apply = function () { state.filter.q = q.value.trim(); state.catKeepFocus = true; changed(); };
+      q.oninput = function () { clearTimeout(t); t = setTimeout(apply, 350); };
+      q.onkeydown = function (e) { if (e.key === "Enter") { clearTimeout(t); apply(); } };
+      if (state.catKeepFocus) { q.focus(); try { var n = q.value.length; q.setSelectionRange(n, n); } catch (e) {} state.catKeepFocus = false; }
+    }
+    if (more) more.onclick = function () {
+      if (DEMO) { state.catDemoShown = (state.catDemoShown || 24) + 24; drawCatalogDemo($("main")); return; }
+      fetchCatalog((state.catalog ? state.catalog.offset : 0) + 24, true);
+    };
   }
 
   // --- picks tab -----------------------------------------------------------------
