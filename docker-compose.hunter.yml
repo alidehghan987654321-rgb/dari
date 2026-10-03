@@ -1,0 +1,55 @@
+# The product hunter: the sellers' website, the daily hunt and HTTPS (hunter/DEPLOY.md).
+#   docker compose -f docker-compose.hunter.yml up -d --build
+# Settings come from .env (HUNTER_DOMAIN, HUNTER_PUBLIC_URL, API keys, Zarinpal).
+name: hunter
+
+x-hunter: &hunter
+  build:
+    context: .
+    dockerfile: hunter/Dockerfile
+  env_file: .env
+  environment:
+    # In the volume, whatever .env says, so a rebuild never loses the data.
+    HUNTER_DB: /data/hunter.db
+    HUNTER_BACKUPS: /data/backups
+  volumes:
+    - hunter_data:/data
+  restart: unless-stopped
+
+services:
+  # The website, only reachable through caddy.
+  site:
+    <<: *hunter
+    environment:
+      HUNTER_DB: /data/hunter.db
+      HUNTER_BACKUPS: /data/backups
+      FORWARDED_ALLOW_IPS: "*"  # the visitor's address comes from caddy (login throttling)
+
+  # Every day at HUNTER_HUNT_AT (UTC): the hunt, then a database backup (14 kept).
+  hunt:
+    <<: *hunter
+    command: ["python", "-m", "hunter", "schedule", "--at", "${HUNTER_HUNT_AT:-01:00}"]
+    healthcheck:
+      disable: true
+
+  # HTTPS for HUNTER_DOMAIN; the certificate comes and renews by itself.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      HUNTER_DOMAIN: ${HUNTER_DOMAIN:-localhost}
+    volumes:
+      - ./hunter/deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - site
+
+volumes:
+  hunter_data:
+  caddy_data:
+  caddy_config:

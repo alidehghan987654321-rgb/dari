@@ -265,3 +265,11 @@ docker compose build --no-cache && docker compose up -d   # Docker
 pip install -r requirements-dev.txt
 pytest
 ```
+
+## شکارچی محصول
+
+این ریپو یه برنامه‌ی جدا هم داره: سایتی برای فروشنده‌ها که هر روز محصولات مناسب واردات از چین رو پیدا می‌کنه،
+قیمت فروشِ رقابتی با Temu پیشنهاد می‌ده و با اشتراک زرین‌پال کار می‌کنه. یه ماشین‌حساب واردات رایگان هم داره.
+
+- توضیح کامل: [hunter/README.md](hunter/README.md)
+- آنلاین کردنش روی Cloudflare (`hunter.gryffin.uk`، با همون دو Secret ربات) یا روی یه سرور: [hunter/DEPLOY.md](hunter/DEPLOY.md)

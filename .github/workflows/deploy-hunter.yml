@@ -1,0 +1,185 @@
+# Tests, then deploys the product hunter to Cloudflare: a Worker on hunter.gryffin.uk and
+# one container, with the database kept in R2 (cloudflare/hunter.jsonc, hunter/DEPLOY.md).
+#
+# Needs the same two repository secrets as the bot's deploy (Settings -> Secrets and
+# variables -> Actions): CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. Until they're
+# there, the deploy is skipped. Optional secrets:
+#   HUNTER_ENV            the site's settings as KEY=value lines, like .env (Keepa, Apify,
+#                         Zarinpal, dollar rate...)
+#   R2_ACCESS_KEY_ID      a dedicated R2 token for the database; without one, the API
+#   R2_SECRET_ACCESS_KEY  token's own R2 access is used
+name: Deploy the hunter to Cloudflare
+
+on:
+  push:
+    branches: [main, claude/telegram-video-downloader-bot-xwpwbv, claude/trusting-cori-54e2u9]
+    paths:
+      - "hunter/**"
+      - "cloudflare/hunter.jsonc"
+      - "cloudflare/src/hunter.ts"
+      - "cloudflare/package*.json"
+      - "tests/test_hunter_*.py"
+      - ".github/workflows/deploy-hunter.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hunter
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q tests/test_hunter_*.py
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check the secrets are set
+        id: secrets
+        run: |
+          missing=""
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::Not deployed. Add these repository secrets (Settings -> Secrets and variables -> Actions):$missing"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - name: Install wrangler
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: cloudflare
+        run: |
+          npm ci
+          domain=$(sed -n 's/.*"DOMAIN": *"\([^"]*\)".*/\1/p' hunter.jsonc)
+          bucket=$(sed -n 's/.*"LITESTREAM_BUCKET": *"\([^"]*\)".*/\1/p' hunter.jsonc)
+          echo "DOMAIN=$domain" >> "$GITHUB_ENV"
+          echo "BUCKET=$bucket" >> "$GITHUB_ENV"
+
+      - name: R2 bucket for the database
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: cloudflare
+        continue-on-error: true  # checked in the next step
+        run: npx wrangler r2 bucket info "$BUCKET" >/dev/null 2>&1 || npx wrangler r2 bucket create "$BUCKET"
+
+      - name: The site's settings and secrets
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          HUNTER_ENV: ${{ secrets.HUNTER_ENV }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          endpoint="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
+          if [ -n "$R2_ACCESS_KEY_ID" ]; then
+            key="$R2_ACCESS_KEY_ID" secret="$R2_SECRET_ACCESS_KEY"
+          else
+            # An API token's S3 credentials are its ID and the SHA-256 of its value.
+            auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+            key=$(curl -fsS -H "$auth" https://api.cloudflare.com/client/v4/user/tokens/verify | jq -r '.result.id // empty' || true)
+            [ -n "$key" ] || key=$(curl -fsS -H "$auth" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" | jq -r '.result.id // empty' || true)
+            secret=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)
+          fi
+          if [ -n "$key" ] && AWS_ACCESS_KEY_ID="$key" AWS_SECRET_ACCESS_KEY="$secret" \
+              aws s3api head-bucket --bucket "$BUCKET" --endpoint-url "$endpoint" --region auto >/dev/null 2>&1; then
+            echo "The database is kept in R2 ($BUCKET)."
+            echo "PERSISTENT=yes" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No access to the R2 bucket '$BUCKET': the site runs, but its database is lost whenever the container restarts. Give the API token 'Workers R2 Storage: Edit', or add R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY (hunter/DEPLOY.md)."
+            key="" secret=""
+            echo "PERSISTENT=no" >> "$GITHUB_ENV"
+          fi
+          # The cron's secret: stable across deploys, so a running container keeps matching it.
+          cron=$(printf 'hunter-cron:%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -c1-40)
+          echo "::add-mask::$cron"
+          echo "CRON_SECRET=$cron" >> "$GITHUB_ENV"
+          umask 077
+          KEY="$key" SECRET="$secret" ENDPOINT="$endpoint" CRON="$cron" python3 - > "$RUNNER_TEMP/secrets.json" <<'EOF'
+          import json, os, re, sys
+          out = {"HUNTER_CRON_SECRET": os.environ["CRON"]}
+          if os.environ["KEY"]:
+              out.update(LITESTREAM_ACCESS_KEY_ID=os.environ["KEY"], LITESTREAM_SECRET_ACCESS_KEY=os.environ["SECRET"],
+                         LITESTREAM_ENDPOINT=os.environ["ENDPOINT"])
+          # Set by the Worker or the image; a value in HUNTER_ENV would break them.
+          fixed = {"HUNTER_DB", "HUNTER_BACKUPS", "HUNTER_PUBLIC_URL", "HUNTER_DOMAIN", "HUNTER_CRON_SECRET", "HUNTER_HUNT_AT"}
+          keys = []
+          for line in os.environ.get("HUNTER_ENV", "").splitlines():
+              line = line.strip()
+              if not line or line.startswith("#") or "=" not in line:
+                  continue
+              name, value = (part.strip() for part in line.split("=", 1))
+              value = value.strip("'\"")
+              if not re.fullmatch(r"(HUNTER|KEEPA|APIFY|ZARINPAL|ANTHROPIC)_[A-Z0-9_]+", name) or name in fixed or not value:
+                  continue
+              if name == "HUNTER_PAYMENT" and value == "demo":
+                  print("::warning::HUNTER_PAYMENT=demo ignored: every payment would succeed without a gateway.", file=sys.stderr)
+                  continue
+              out[name] = value
+              keys.append(name)
+          print("Settings from HUNTER_ENV:", ", ".join(keys) or "none", file=sys.stderr)
+          print(json.dumps(out))
+          EOF
+          if grep -qE '"(KEEPA_API_KEY|APIFY_TOKEN)"' "$RUNNER_TEMP/secrets.json"; then
+            echo "LIVE_DATA=yes" >> "$GITHUB_ENV"
+          fi
+
+      - name: Deploy (builds the Docker image and uploads it)
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: cloudflare
+        run: |
+          # Secrets first when the Worker already exists, so the new container starts with them.
+          if npx wrangler deployments list -c hunter.jsonc > /dev/null 2>&1; then
+            npx wrangler secret bulk "$RUNNER_TEMP/secrets.json" -c hunter.jsonc
+            npx wrangler deploy -c hunter.jsonc
+          else
+            npx wrangler deploy -c hunter.jsonc
+            npx wrangler secret bulk "$RUNNER_TEMP/secrets.json" -c hunter.jsonc
+          fi
+          rm "$RUNNER_TEMP/secrets.json"
+
+      - name: Wait for the site to come up
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          # The first start also waits for the domain's HTTPS certificate.
+          for _ in $(seq 1 30); do
+            if health=$(curl -fsS -m 90 "https://$DOMAIN/healthz"); then
+              echo "Up at https://$DOMAIN: $health"
+              break
+            fi
+            sleep 20
+          done
+          [ -n "${health:-}" ] || { echo "::warning::https://$DOMAIN didn't answer within 10 minutes; check the container's logs in the Cloudflare dashboard."; exit 0; }
+          # With data keys and only the sample hunt so far, hunt now instead of at 01:00 UTC.
+          if [ "${LIVE_DATA:-}" = yes ] && curl -fsS "https://$DOMAIN/api/config" | jq -e '.hunt == null or .hunt.sample' >/dev/null; then
+            curl -fsS -X POST -H "X-Hunter-Cron: $CRON_SECRET" "https://$DOMAIN/internal/hunt" && echo " - the first live hunt started"
+          fi
+          {
+            echo "### The hunter is at https://$DOMAIN"
+            echo "- Database kept in R2: ${PERSISTENT:-no}"
+            echo "- Live data keys (Keepa/Apify): ${LIVE_DATA:-no}; without them the site shows the sample hunt"
+          } >> "$GITHUB_STEP_SUMMARY"
