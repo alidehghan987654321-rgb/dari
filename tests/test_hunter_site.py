@@ -13,6 +13,7 @@ from hunter.preview import build_preview
 from hunter.sources.sample import SampleData
 
 PASSWORD = "secret-pass"
+ADMIN_CODE = "a-long-admin-code-for-the-tests-only"
 
 
 @pytest.fixture(scope="module")
@@ -45,6 +46,13 @@ def signup(client, email="seller@example.com", **extra):
         **extra,
     }
     r = client.post("/api/signup", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def become_admin(client):
+    """The logged-in seller (whose email is listed as an admin's) claims admin rights."""
+    r = client.post("/api/admin/claim", json={"code": ADMIN_CODE})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -639,12 +647,13 @@ def test_charm_prices():
 
 
 def test_pricing_report_is_for_admins(settings):
-    settings.admins = ("boss@example.com",)
+    settings.admins, settings.admin_token = ("boss@example.com",), ADMIN_CODE
     with TestClient(create_app(settings)) as c:
         signup(c)
         assert c.get("/api/admin/pricing").status_code == 403
     with TestClient(create_app(settings)) as c:
         signup(c, "boss@example.com")
+        become_admin(c)
         r = c.get("/api/admin/pricing")
     assert r.status_code == 200
     body = r.json()
@@ -862,7 +871,7 @@ def test_preview_carries_the_calculator(sample_hunt):
 
 
 def test_admins_from_the_setting_and_granting_from_the_site(settings):
-    settings.admins = ("boss@example.com",)
+    settings.admins, settings.admin_token = ("boss@example.com",), ADMIN_CODE
     with TestClient(create_app(settings)) as c:
         seller = signup(c, email="seller@example.com")
         assert seller["is_admin"] is False
@@ -870,6 +879,8 @@ def test_admins_from_the_setting_and_granting_from_the_site(settings):
         assert r.status_code == 403  # sellers can't give themselves a subscription
         c.post("/api/logout")
         boss = signup(c, email="Boss@Example.com")
+        assert boss["is_admin"] is False and boss["can_claim_admin"] is True
+        boss = become_admin(c)
         assert boss["is_admin"] is True and boss["active"] is True
         r = c.post(
             "/api/admin/grant",
@@ -892,23 +903,37 @@ def test_admins_from_the_setting_and_granting_from_the_site(settings):
 def test_admins_setting_from_env(monkeypatch):
     monkeypatch.setenv("HUNTER_ADMINS", " A@example.com, b@example.com ,")
     monkeypatch.setenv("HUNTER_CRON_SECRET", "x")
+    monkeypatch.setenv("HUNTER_ADMIN_TOKEN", ADMIN_CODE)
     s = Settings.from_env()
     assert s.admins == ("a@example.com", "b@example.com") and s.cron_secret == "x"
+    assert s.admin_token == ADMIN_CODE
+    monkeypatch.setenv("HUNTER_ADMIN_TOKEN", "short")  # too short to be a secret: ignored
+    assert Settings.from_env().admin_token == ""
 
 
 # --- support, and each product's pictures and videos ------------------------------------
 
 
-def test_support_contact_is_shown_and_is_an_admin(client):
-    support = client.get("/api/config").json()["support"]
-    assert support == {
-        "name": "امید علی دهقان",
-        "phone": "09120412723",
-        "email": "afran.persianmall@gmail.com",
-    }
-    assert signup(client, email="Afran.PersianMall@gmail.com")["is_admin"]
-    other = TestClient(client.app)
-    assert not signup(other, email="someone@example.com")["is_admin"]
+def test_support_contact_is_shown_and_may_become_an_admin_with_the_code(settings):
+    settings.admin_token = ADMIN_CODE
+    with TestClient(create_app(settings)) as client:
+        support = client.get("/api/config").json()["support"]
+        assert support == {
+            "name": "امید علی دهقان",
+            "phone": "09120412723",
+            "email": "afran.persianmall@gmail.com",
+        }
+        # The support email is on the site for anyone to read: signing up with it is not
+        # enough to become an admin.
+        me = signup(client, email="Afran.PersianMall@gmail.com")
+        assert me["is_admin"] is False and me["can_claim_admin"] is True
+        assert client.get("/api/admin/pricing").status_code == 403
+        assert become_admin(client)["is_admin"] is True
+        other = TestClient(client.app)
+        me = signup(other, email="someone@example.com")
+        assert me["is_admin"] is False and me["can_claim_admin"] is False
+        r = other.post("/api/admin/claim", json={"code": ADMIN_CODE})
+        assert r.status_code == 403  # the right code, but not an admin's email
 
 
 def media_site(link_settings, sample_hunt, pictures):

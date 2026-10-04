@@ -45,6 +45,7 @@
 
      ```
      HUNTER_ADMINS=you@example.com
+     HUNTER_ADMIN_TOKEN=یه-رمز-تصادفی-حداقل-۲۴-حرفی
      KEEPA_API_KEY=...
      APIFY_TOKEN=...
      HUNTER_TEMU_ACTOR=...
@@ -53,8 +54,11 @@
      HUNTER_TOMAN_PER_USD=255000
      ```
 
-     `HUNTER_ADMINS` ایمیل(های) مدیره: با ثبت‌نام یا ورود با همین ایمیل، مدیر میشی. چون روی Cloudflare خط
-     فرمان نداری، فعال کردن اشتراک فروشنده‌ها از **حساب من ← مدیریت** انجام میشه.
+     `HUNTER_ADMINS` ایمیل(های) مدیره و `HUNTER_ADMIN_TOKEN` رمز مدیر شدن (بسازش با
+     `python -c "import secrets; print(secrets.token_urlsafe(32))"`). با همون ایمیل ثبت‌نام کن، در **حساب من**
+     کادر «ورود مدیر سایت» میاد؛ رمز رو بزن. فقط ایمیل کافی نیست، چون هر کسی می‌تونه با هر ایمیلی ثبت‌نام کنه.
+     بعد از مدیر شدن `HUNTER_ADMIN_TOKEN` رو از `HUNTER_ENV` پاک کن. چون روی Cloudflare خط فرمان نداری، فعال
+     کردن اشتراک فروشنده‌ها از **حساب من ← مدیریت** انجام میشه.
 5. **اجرا:** مخزن ← **Actions** ← **Deploy the hunter to Cloudflare** ← **Run workflow**. بار اول چند دقیقه طول
    می‌کشه. بعد https://hunter.gryffin.uk باز میشه. خلاصه‌ی اجرا نشون می‌ده دیتابیس در R2 هست یا نه، و کلید داده
    داری یا نه.
@@ -226,6 +230,8 @@ cd /opt/hunter && git pull && docker compose -f docker-compose.hunter.yml up -d 
 - [ ] خودت مدیر شدی (مرحله‌ی ۴).
 - [ ] پرداخت آزمایشی sandbox از همین سرور موفق شد؛ بعد `ZARINPAL_SANDBOX` رو خالی کردی.
 - [ ] `HUNTER_PAYMENT=zarinpal` (نه `demo`).
+- [ ] برای GitHub، Cloudflare، زرین‌پال و ایمیل پشتیبانی ورود دومرحله‌ای (2FA) روشنه.
+- [ ] `HUNTER_ADMIN_TOKEN` بعد از مدیر شدن خالی شده.
 - [ ] یه شکار زنده با کلیدهای واقعی انجام شد (اول با `--categories home_kitchen --per-category 5`) و عددهاش
       منطقیه.
 - [ ] نرخ دلار (`HUNTER_TOMAN_PER_USD`) به‌روزه.

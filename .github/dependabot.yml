@@ -1,0 +1,20 @@
+# Every dependency is pinned; Dependabot opens a pull request when one has a new release or a
+# security fix, so updates arrive reviewed and tested (CI) instead of slipping in.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /hunter
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /cloudflare
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

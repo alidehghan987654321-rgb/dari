@@ -7,22 +7,24 @@ get products of your own and analyse any product.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import logging
 import os
 import re
+import sqlite3
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from starlette.datastructures import MutableHeaders
+from pydantic import BaseModel, Field, field_validator
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 
 from . import auth
 from .allocate import choose_picks
@@ -40,6 +42,7 @@ from .media import (
     collect,
     disposition,
     extension,
+    fetch,
     file_name,
     store_ready,
     zip_images,
@@ -61,18 +64,29 @@ log = logging.getLogger(__name__)
 
 STATIC = Path(__file__).resolve().parent / "static"
 COOKIE = "hunter_session"
+# On https the cookie is "__Host-" prefixed: the browser then only takes it from this exact
+# host, over https, for the whole site, so a sibling subdomain (another product on
+# gryffin.uk) can't plant or overwrite it.
+SECURE_COOKIE = "__Host-hunter_session"
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 LINK = re.compile(r"^https?://\S+$")
+PHONE = re.compile(r"^\+?[0-9][0-9 ()-]{0,18}$")
+NATIONAL_ID = re.compile(r"^[0-9]{10}$")
+PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+MAX_BODY = 256 * 1024  # bytes; every request body the site takes is far smaller
+MIN_ADMIN_TOKEN = 24  # characters; a shorter HUNTER_ADMIN_TOKEN is ignored
 ASSETS = ("app.css", "calc.js", "app.js")  # versioned in the page so a deploy isn't cached
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Frame-Options": "DENY",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
     "Content-Security-Policy": (
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';"
-        " script-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none';"
-        " base-uri 'self'; form-action 'self'"
+        " script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none';"
+        " frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     ),
 }
 
@@ -98,8 +112,14 @@ class Settings:
     image_client: httpx.Client | None = None  # for the image proxy (tests pass a fake)
     namer: PersianNamer | None = None  # Persian product names with Claude
     cron_secret: str = ""  # lets a scheduler start the daily hunt (POST /internal/hunt)
-    admins: tuple[str, ...] = ()  # these emails are admins as soon as they sign up or log in
-    # Support and the project's manager, shown on the site; their email is an admin too.
+    # Who may become an admin from the site: a seller whose email is listed here (or is the
+    # support email) AND who enters admin_token (HUNTER_ADMIN_TOKEN) in their account. An
+    # email alone is never enough: anyone can sign up with any address.
+    admins: tuple[str, ...] = ()
+    admin_token: str = ""
+    allow_demo_payment: bool = False  # DemoGateway on an https site (HUNTER_ALLOW_DEMO_PAYMENT)
+    max_cart: int = 200  # products in one seller's order cart
+    # Support and the project's manager, shown on the site.
     support_name: str = "امید علی دهقان"
     support_phone: str = "09120412723"
     support_email: str = "afran.persianmall@gmail.com"
@@ -114,7 +134,7 @@ class Settings:
         gateway: Gateway | None = None
         mode = env("HUNTER_PAYMENT", "zarinpal")
         if mode == "demo":
-            gateway = DemoGateway()
+            gateway = DemoGateway()  # refused on an https site, see create_app
         elif env("ZARINPAL_MERCHANT_ID"):
             gateway = Zarinpal(env("ZARINPAL_MERCHANT_ID"), sandbox=env("ZARINPAL_SANDBOX") == "1")
         toman_per_usd = float(env("HUNTER_TOMAN_PER_USD") or "255000")  # empty: the default
@@ -142,6 +162,8 @@ class Settings:
             admins=tuple(
                 e.strip().lower() for e in env("HUNTER_ADMINS", "").split(",") if e.strip()
             ),
+            admin_token=admin_token_from_env(env("HUNTER_ADMIN_TOKEN", "")),
+            allow_demo_payment=env("HUNTER_ALLOW_DEMO_PAYMENT") == "1",
             support_name=env("HUNTER_SUPPORT_NAME", cls.support_name),
             support_phone=env("HUNTER_SUPPORT_PHONE", cls.support_phone),
             support_email=env("HUNTER_SUPPORT_EMAIL", cls.support_email).strip().lower(),
@@ -155,11 +177,20 @@ class Settings:
 # --- request bodies --------------------------------------------------------------
 
 
+def clean_phone(value: str) -> str:
+    value = value.translate(PERSIAN_DIGITS).strip()
+    if value and not PHONE.match(value):
+        raise ValueError("bad_phone")
+    return value
+
+
 class Signup(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     email: str = Field(max_length=120)
     phone: str = Field(default="", max_length=20)
     password: str = Field(min_length=8, max_length=200)
+
+    _phone = field_validator("phone")(clean_phone)
 
 
 class Login(BaseModel):
@@ -171,8 +202,20 @@ class Profile(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     phone: str = Field(default="", max_length=20)
     national_id: str = Field(default="", max_length=20)
-    categories: list[str] = Field(default_factory=list, max_length=len(CATEGORIES))
+    categories: list[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=len(CATEGORIES)
+    )
     budget_usd: float = Field(ge=0, le=10_000_000)
+
+    _phone = field_validator("phone")(clean_phone)
+
+    @field_validator("national_id")
+    @classmethod
+    def _national_id(cls, value: str) -> str:
+        value = re.sub(r"[\s-]", "", value.translate(PERSIAN_DIGITS))
+        if value and not NATIONAL_ID.match(value):
+            raise ValueError("bad_national_id")
+        return value
 
 
 class OrderRequest(BaseModel):
@@ -196,17 +239,21 @@ class OrderRequest(BaseModel):
 
 
 class Pay(BaseModel):
-    plan: str
+    plan: str = Field(max_length=40)
 
 
 class Grant(BaseModel):
     email: str = Field(max_length=120)
     days: int = Field(default=30, ge=1, le=3650)
-    plan: str | None = None
+    plan: str | None = Field(default=None, max_length=40)
+
+
+class AdminClaim(BaseModel):
+    code: str = Field(min_length=1, max_length=200)
 
 
 class Links(BaseModel):
-    urls: list[str] = Field(min_length=1, max_length=50)
+    urls: list[Annotated[str, Field(max_length=2000)]] = Field(min_length=1, max_length=50)
 
 
 class Analyze(BaseModel):
@@ -218,9 +265,9 @@ class Analyze(BaseModel):
     listing_pack: int = Field(default=1, ge=1, le=100)
     supplier_pack: int = Field(default=1, ge=1, le=100)
     moq: int = Field(default=1, ge=1, le=100_000)
-    monthly_sold: int | None = Field(default=None, ge=0)
-    reviews: int | None = Field(default=None, ge=0)
-    supplier_sales: int | None = Field(default=None, ge=0)
+    monthly_sold: int | None = Field(default=None, ge=0, le=10**9)
+    reviews: int | None = Field(default=None, ge=0, le=10**9)
+    supplier_sales: int | None = Field(default=None, ge=0, le=10**9)
     market: str = Field(default="prepaid", pattern="^(prepaid|cod)$")
     items_per_cart: int = Field(default=3, ge=1, le=20)
 
@@ -256,34 +303,56 @@ def teaser(candidate: dict[str, Any]) -> dict[str, Any]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
+    if (
+        isinstance(settings.gateway, DemoGateway)
+        and settings.secure_cookies
+        and not settings.allow_demo_payment
+    ):
+        # Every "payment" would succeed: on a real (https) site that's free subscriptions.
+        log.error("HUNTER_PAYMENT=demo refused on %s: online payment is off", settings.public_url)
+        settings = replace(settings, gateway=None)
     db = Database(settings.db_path)
     db.fail_unfinished_analyses()
-    throttle = auth.Throttle()
-    app = FastAPI(title=settings.brand, docs_url=None, redoc_url=None)
+    logins = auth.Throttle(limit=8, window=600)  # wrong passwords, per address and email
+    logins_by_ip = auth.Throttle(limit=30, window=600)  # one address trying many emails
+    logins_by_email = auth.Throttle(limit=20, window=600)  # many addresses, one email
+    signups = auth.Throttle(limit=20, window=3600)  # sign-up attempts per address
+    claims = auth.Throttle(limit=5, window=3600)  # wrong admin codes
+    payments = auth.Throttle(limit=10, window=3600)  # payments started per seller
+    app = FastAPI(title=settings.brand, docs_url=None, redoc_url=None, openapi_url=None)
     headers = dict(SECURITY_HEADERS)
     if settings.secure_cookies:
-        headers["Strict-Transport-Security"] = "max-age=31536000"
+        headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     app.add_middleware(SecurityHeaders, headers=headers)
+    app.add_middleware(SameOrigin, origin=settings.public_url)
+    app.add_middleware(BodyLimit, limit=MAX_BODY)
     page = (STATIC / "index.html").read_text(encoding="utf-8").replace("{{v}}", asset_version())
     image_client = settings.image_client or httpx.Client(timeout=20, follow_redirects=False)
+    cookie = SECURE_COOKIE if settings.secure_cookies else COOKIE
     app.state.settings = settings
     app.state.db = db
+
+    def client_ip(request: Request) -> str:
+        """The visitor's address; behind Cloudflare or Caddy, the one they report (uvicorn's
+        proxy headers, FORWARDED_ALLOW_IPS)."""
+        return request.client.host if request.client else ""
 
     def set_session(response: Response, user_id: int) -> None:
         token = auth.new_token()
         db.create_session(token, user_id)
         response.set_cookie(
-            COOKIE,
+            cookie,
             token,
             max_age=30 * 86400,
+            path="/",
             httponly=True,
             samesite="lax",
             secure=settings.secure_cookies,
         )
 
     def current_user(request: Request) -> dict[str, Any] | None:
-        token = request.cookies.get(COOKIE)
-        return db.session_user(token) if token else None
+        token = request.cookies.get(cookie)
+        return db.session_user(token) if token and len(token) <= 100 else None
 
     def require_user(user=Depends(current_user)) -> dict[str, Any]:
         if not user:
@@ -295,13 +364,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(402, "subscription_required")
         return user
 
-    def admin_by_setting(user: dict[str, Any]) -> dict[str, Any]:
-        """HUNTER_ADMINS and the support email: where there's no shell to run make-admin
-        (Cloudflare)."""
-        if user["email"] in settings.admin_emails and not user["is_admin"]:
-            db.make_admin(user["email"])
-            user = db.user(user["id"])
-        return user
+    def may_claim_admin(user: dict[str, Any]) -> bool:
+        return (
+            bool(settings.admin_token)
+            and not user["is_admin"]
+            and user["email"] in settings.admin_emails
+        )
+
+    def me_view(user: dict[str, Any]) -> dict[str, Any]:
+        """The seller as their own page sees them."""
+        return {**public_user(user), "can_claim_admin": may_claim_admin(user)}
 
     # --- pages -----------------------------------------------------------------
 
@@ -327,16 +399,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         until = db.grant(email, body.days, body.plan)
         if not until:
             raise HTTPException(404, "no_such_seller")
+        log.warning("admin %s granted %s days (%s) to %s", user["id"], body.days, body.plan, email)
         return {"email": email, "paid_until": until}
+
+    @app.post("/api/admin/claim")
+    def admin_claim(
+        body: AdminClaim, request: Request, response: Response, user=Depends(require_user)
+    ):
+        """Makes a seller an admin from the site (on Cloudflare there's no shell for
+        make-admin): their email must be one of HUNTER_ADMINS or the support email, and they
+        must give HUNTER_ADMIN_TOKEN. Unknown when no token is set."""
+        if not settings.admin_token:
+            raise HTTPException(404, "Not Found")
+        keys = (f"ip|{client_ip(request)}", f"user|{user['id']}")
+        if any(claims.blocked(k) for k in keys):
+            raise HTTPException(429, "too_many_attempts")
+        if user["email"] not in settings.admin_emails or not auth.same_secret(
+            body.code.strip(), settings.admin_token
+        ):
+            for k in keys:
+                claims.fail(k)
+            log.warning("admin claim refused: user %s from %s", user["id"], client_ip(request))
+            raise HTTPException(403, "wrong_admin_code")
+        db.make_admin(user["email"])
+        log.warning("user %s (%s) is now an admin", user["id"], user["email"])
+        db.delete_sessions(user["id"])  # a new session for the new rights; others logged out
+        set_session(response, user["id"])
+        return me_view(db.user(user["id"]))
 
     @app.post("/internal/hunt", include_in_schema=False)
     def internal_hunt(request: Request, background: BackgroundTasks):
         """The daily hunt, for a scheduler that can't run a command (Cloudflare's cron
         trigger). Unknown to anyone without the secret."""
-        given = request.headers.get("x-hunter-cron", "")
-        if not settings.cron_secret or not hmac.compare_digest(
-            given.encode(), settings.cron_secret.encode()
-        ):
+        if not auth.same_secret(request.headers.get("x-hunter-cron", ""), settings.cron_secret):
             raise HTTPException(404, "Not Found")
         background.add_task(lambda: log.info("daily hunt: %s", daily_hunt(db, settings.pricing)))
         return {"started": True}
@@ -380,43 +475,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/api/signup")
-    def signup(body: Signup, response: Response):
+    def signup(body: Signup, request: Request, response: Response):
+        ip = client_ip(request)
+        if signups.blocked(ip):
+            raise HTTPException(429, "too_many_signups")
         email = body.email.strip().lower()
         if not EMAIL.match(email):
             raise HTTPException(422, "bad_email")
+        if body.password.strip().lower() == email:
+            raise HTTPException(422, "weak_password")
+        signups.hit(ip)  # counted before "email_taken", so it can't list who has an account
         if db.user_by_email(email):
             raise HTTPException(409, "email_taken")
-        user_id = db.create_user(
-            email, body.name.strip(), body.phone.strip(), auth.hash_password(body.password)
-        )
+        try:
+            user_id = db.create_user(
+                email, body.name.strip(), body.phone, auth.hash_password(body.password)
+            )
+        except sqlite3.IntegrityError:  # the same email, signed up a moment ago
+            raise HTTPException(409, "email_taken") from None
         set_session(response, user_id)
-        return public_user(admin_by_setting(db.user(user_id)))
+        return me_view(db.user(user_id))
 
     @app.post("/api/login")
     def login(body: Login, request: Request, response: Response):
         email = body.email.strip().lower()
-        key = f"{request.client.host if request.client else ''}|{email}"
-        if throttle.blocked(key):
+        ip = client_ip(request)
+        key = f"{ip}|{email}"
+        if logins.blocked(key) or logins_by_ip.blocked(ip) or logins_by_email.blocked(email):
             raise HTTPException(429, "too_many_attempts")
         user = db.user_by_email(email)
-        if not user or not auth.check_password(body.password, user["password_hash"]):
-            throttle.fail(key)
+        # A missing account is checked against a dummy hash: it takes as long as a wrong
+        # password, so the login doesn't tell who has an account.
+        ok = auth.check_password(
+            body.password, user["password_hash"] if user else auth.dummy_hash()
+        )
+        if not user or not ok:
+            logins.fail(key)
+            logins_by_ip.fail(ip)
+            logins_by_email.fail(email)
             raise HTTPException(401, "wrong_login")
-        throttle.reset(key)
+        logins.reset(key)
+        if auth.needs_rehash(user["password_hash"]):  # made with weaker settings: upgrade it
+            db.set_password_hash(user["id"], auth.hash_password(body.password))
         set_session(response, user["id"])
-        return public_user(admin_by_setting(user))
+        return me_view(user)
 
     @app.post("/api/logout")
     def logout(request: Request, response: Response):
-        token = request.cookies.get(COOKIE)
+        token = request.cookies.get(cookie)
         if token:
             db.delete_session(token)
-        response.delete_cookie(COOKIE)
+        response.delete_cookie(
+            cookie, path="/", httponly=True, samesite="lax", secure=settings.secure_cookies
+        )
         return {"ok": True}
 
     @app.get("/api/me")
     def me(user=Depends(require_user)):
-        return public_user(user)
+        return me_view(user)
 
     @app.put("/api/me")
     def update_me(body: Profile, user=Depends(require_user)):
@@ -424,12 +540,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.update_profile(
             user["id"],
             name=body.name.strip(),
-            phone=body.phone.strip(),
+            phone=body.phone,
             categories=cats,
             budget_usd=body.budget_usd,
-            national_id=body.national_id.strip(),
+            national_id=body.national_id,
         )
-        return public_user(db.user(user["id"]))
+        return me_view(db.user(user["id"]))
 
     # --- payment -----------------------------------------------------------------
 
@@ -440,6 +556,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "unknown_plan")
         if settings.gateway is None:
             raise HTTPException(503, "no_online_payment")
+        if payments.blocked(str(user["id"])):
+            raise HTTPException(429, "too_many_payments")
+        payments.hit(str(user["id"]))
         payment_id = db.create_payment(
             user["id"], plan.id, plan.days, plan.amount_rial, settings.gateway.name
         )
@@ -459,7 +578,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/pay/callback", include_in_schema=False)
     def pay_callback(Authority: str = "", Status: str = ""):  # noqa: N803 (Zarinpal's names)
-        payment = db.payment_by_authority(Authority) if Authority else None
+        payment = db.payment_by_authority(Authority) if 0 < len(Authority) <= 100 else None
         if not payment or settings.gateway is None:
             return RedirectResponse("/#pay-failed", status_code=303)
         if payment["status"] == "paid":
@@ -559,7 +678,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/requests")
     def add_request(body: OrderRequest, user=Depends(require_active)):
         data = body.model_dump()
-        rid = db.add_request(user["id"], data)
+        rid = db.add_request(user["id"], data, limit=settings.max_cart)
+        if rid is None:
+            raise HTTPException(409, "cart_full")
         return {"id": rid, **quote(data, settings.pricing)}
 
     @app.put("/api/requests/{request_id}")
@@ -750,22 +871,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/img", include_in_schema=False)
     def image(u: str, user=Depends(require_user)):
         """Product pictures through our server: Amazon's, Temu's and 1688's image hosts
-        are often unreachable from Iran. Only those hosts, only images."""
-        parts = urlsplit(u)
-        host = (parts.hostname or "").lower()
-        if parts.scheme != "https" or not any(
-            host == h or host.endswith("." + h) for h in IMAGE_HOSTS
-        ):
+        are often unreachable from Iran. Only those hosts, only images, never too big."""
+        if not allowed(u, IMAGE_HOSTS):
             raise HTTPException(400, "not_an_image_host")
-        try:
-            r = image_client.get(u)
-        except httpx.HTTPError:
-            raise HTTPException(502, "image_error") from None
-        kind = r.headers.get("content-type", "")
-        if r.status_code != 200 or not kind.startswith("image/") or len(r.content) > 8_000_000:
+        got = fetch(image_client, u, MAX_IMAGE)
+        kind = got[1].split(";")[0].strip().lower() if got else ""
+        if not got or got[0] != 200 or not kind.startswith("image/") or kind == "image/svg+xml":
             raise HTTPException(502, "image_error")
         return Response(
-            r.content, media_type=kind, headers={"Cache-Control": "private, max-age=604800"}
+            got[2], media_type=kind, headers={"Cache-Control": "private, max-age=604800"}
         )
 
     # --- a product's pictures and videos, for the seller's own listing -----------------
@@ -816,14 +930,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ):
             r.close()
             raise HTTPException(502, "media_error")
+        if kind == "image/svg+xml":  # a picture that can carry script
+            r.close()
+            raise HTTPException(502, "media_error")
         where = "inline" if inline else disposition(file_name(name, n, "jpg" if ready else ext))
         if not is_video:
+            data = bytearray()
             try:
-                data = r.read()
+                if int(r.headers.get("content-length") or 0) > MAX_IMAGE:
+                    raise HTTPException(502, "media_error")
+                for chunk in r.iter_bytes(65536):
+                    data += chunk
+                    if len(data) > MAX_IMAGE:  # never held in full when it's too big
+                        raise HTTPException(502, "media_error")
+            except httpx.HTTPError:
+                raise HTTPException(502, "media_error") from None
             finally:
                 r.close()
-            if len(data) > MAX_IMAGE:
-                raise HTTPException(502, "media_error")
+            data = bytes(data)
             if ready:
                 try:
                     data, kind = store_ready(data), "image/jpeg"
@@ -860,13 +984,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         found = media(id, user)
         pictures = []
         for item in found["images"]:
-            try:
-                r = image_client.get(item["url"])
-            except httpx.HTTPError:
-                continue
-            kind = r.headers.get("content-type", "")
-            if r.status_code == 200 and kind.startswith("image/") and len(r.content) <= MAX_IMAGE:
-                pictures.append((r.content, extension(kind, item["url"])))
+            got = (
+                fetch(image_client, item["url"], MAX_IMAGE)
+                if allowed(item["url"], IMAGE_HOSTS)
+                else None
+            )
+            kind = got[1].split(";")[0].strip().lower() if got else ""
+            if got and got[0] == 200 and kind.startswith("image/") and kind != "image/svg+xml":
+                pictures.append((got[2], extension(kind, item["url"])))
         if not pictures:
             raise HTTPException(502, "no_pictures")
         return Response(
@@ -881,7 +1006,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 class SecurityHeaders:
     """Adds the security headers to every response (plain ASGI, so background tasks and
-    streaming are untouched)."""
+    streaming are untouched). A seller's own data (/api/, /order/) is never kept by the
+    browser's or any proxy's cache."""
+
+    PRIVATE = ("/api/", "/order/")
 
     def __init__(self, app, headers: dict[str, str]):
         self.app, self.headers = app, headers
@@ -889,6 +1017,7 @@ class SecurityHeaders:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        private = scope["path"].startswith(self.PRIVATE)
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
@@ -896,9 +1025,80 @@ class SecurityHeaders:
                 for k, v in self.headers.items():
                     if k not in h:
                         h[k] = v
+                if private and "cache-control" not in h:
+                    h["Cache-Control"] = "no-store"
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+
+class SameOrigin:
+    """Refuses a request that changes something (POST, PUT, DELETE...) when a browser sent it
+    from another site, or from another subdomain of ours: the session cookie's SameSite=Lax
+    alone lets a sibling site (another product on gryffin.uk) through. Browsers say where a
+    request comes from in Sec-Fetch-Site and Origin; a request without either isn't from a
+    browser page (the cron, curl) and carries no one's cookies by accident."""
+
+    SAFE = {"GET", "HEAD", "OPTIONS"}
+
+    def __init__(self, app, origin: str):
+        self.app = app
+        parts = urlsplit(origin)
+        self.origin = f"{parts.scheme}://{parts.netloc}".lower()
+
+    def allowed(self, headers: Headers) -> bool:
+        site = headers.get("sec-fetch-site")
+        if site is not None and site not in ("same-origin", "none"):
+            return False
+        origin = headers.get("origin")
+        if origin is None:
+            return True
+        origin = origin.lower()
+        return origin == self.origin or urlsplit(origin).netloc == headers.get("host", "").lower()
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["method"] not in self.SAFE:
+            if not self.allowed(Headers(scope=scope)):
+                return await JSONResponse({"detail": "cross_site_request"}, 403)(
+                    scope, receive, send
+                )
+        await self.app(scope, receive, send)
+
+
+class BodyLimit:
+    """Refuses a request body over ``limit`` bytes before it's read into memory, whether
+    the size is declared (Content-Length) or not (chunked)."""
+
+    def __init__(self, app, limit: int):
+        self.app, self.limit = app, limit
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        length = Headers(scope=scope).get("content-length", "")
+        if length and (not length.isdigit() or int(length) > self.limit):
+            return await JSONResponse({"detail": "request_too_large"}, 413)(scope, receive, send)
+        received = 0
+
+        async def limited():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.limit:
+                    raise StarletteHTTPException(413, "request_too_large")
+            return message
+
+        await self.app(scope, limited, send)
+
+
+def admin_token_from_env(token: str) -> str:
+    """HUNTER_ADMIN_TOKEN, if it's long enough to be a secret."""
+    token = token.strip()
+    if token and len(token) < MIN_ADMIN_TOKEN:
+        log.error("HUNTER_ADMIN_TOKEN ignored: shorter than %s characters", MIN_ADMIN_TOKEN)
+        return ""
+    return token
 
 
 def asset_version() -> str:

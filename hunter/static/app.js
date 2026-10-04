@@ -25,6 +25,15 @@
     unprofitable_settings: "با این تنظیمات هیچ قیمتی سود نمی‌ده.",
     no_such_seller: "فروشنده‌ای با این ایمیل ثبت‌نام نکرده.",
     admins_only: "این کار فقط برای مدیر سایته.",
+    wrong_admin_code: "کد مدیریت درست نیست.",
+    too_many_signups: "از این اینترنت تلاش زیادی برای ثبت‌نام شده؛ یک ساعت دیگه امتحان کن.",
+    too_many_payments: "پرداخت‌های زیادی شروع کردی؛ یک ساعت دیگه امتحان کن یا با پشتیبانی تماس بگیر.",
+    weak_password: "رمز عبور نباید همون ایمیلت باشه.",
+    cart_full: "سبد سفارش پره؛ اول چند قلم رو بردار یا فایلش رو بگیر.",
+    cross_site_request: "این درخواست از سایت دیگه‌ای اومده بود و رد شد. صفحه رو دوباره باز کن.",
+    request_too_large: "اطلاعات فرستاده‌شده خیلی بزرگه.",
+    bad_phone: "شماره موبایل فقط عدد باشه.",
+    bad_national_id: "کد ملی باید 10 رقم باشه.",
     network: "ارتباط با سرور برقرار نشد.",
   };
   var HASH_MESSAGES = {
@@ -118,6 +127,10 @@
       return r.json().catch(function () { return {}; }).then(function (data) {
         if (!r.ok) {
           var detail = data && data.detail;
+          if (Array.isArray(detail)) {  // a field the server refused (bad_phone...): its code
+            var known = detail.map(function (d) { return /^Value error, (\w+)$/.exec((d && d.msg) || ""); }).filter(Boolean)[0];
+            if (known) detail = known[1];
+          }
           var err = new Error(typeof detail === "string" ? detail : "خطا در ورودی‌ها");
           err.code = typeof detail === "string" ? detail : "invalid";
           err.status = r.status;
@@ -2565,6 +2578,7 @@
         '<div class="label" style="margin-bottom:6px">دسته‌هایی که کار می‌کنی</div><div class="cats">' + cats + "</div>" +
         '<div class="error" id="profile-error"></div><button class="btn" type="submit">ذخیره' + ic("save") + "</button></form>" +
       supportHTML() +
+      (me.can_claim_admin ? claimHTML() : "") +
       (me.is_admin ? adminHTML() : "") +
       (me.is_admin || DEMO ? '<section class="panel" id="pricing-panel">' +
         (DEMO && cfg.pricing_report ? pricingHTML(cfg.pricing_report) : '<p class="section-sub">در حال محاسبه‌ی قیمت‌گذاری…</p>') + "</section>" : "") +
@@ -2618,6 +2632,15 @@
       '<p class="hint">همه‌ی این عددها از تنظیمات عوض میشن: HUNTER_MARGIN (حد سود)، HUNTER_MIN_MARGIN (کف)، HUNTER_SUBSCRIBERS و HUNTER_COSTS (هر هزینه با کلیدش). راهنما در hunter/README.md.</p>';
   }
 
+  // A seller whose email is an admin's (HUNTER_ADMINS or the support email) becomes one with
+  // the code in HUNTER_ADMIN_TOKEN: an email alone proves nothing, anyone can sign up with it.
+  function claimHTML() {
+    return '<form class="panel" id="claim-form"><h2 class="section-title">ورود مدیر سایت</h2>' +
+      '<p class="section-sub">ایمیلت در فهرست مدیرهاست. برای گرفتن دسترسی مدیر، کد مدیریت (HUNTER_ADMIN_TOKEN) رو وارد کن. پنج بار اشتباه، یک ساعت قفل میشه.</p>' +
+      '<div class="form-grid" style="margin-bottom:16px"><div class="field"><label for="c-code">کد مدیریت</label>' +
+      '<input class="input" id="c-code" type="password" dir="ltr" autocomplete="off" required></div></div>' +
+      '<div class="error" id="claim-error"></div><button class="btn" type="submit">تأیید' + ic("check") + "</button></form>";
+  }
   // For the site's admin: activate a seller who paid by bank transfer.
   function adminHTML() {
     var plans = state.config.plans.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.name_fa) + "</option>"; }).join("");
@@ -2644,6 +2667,14 @@
     if (pricing && !DEMO) api("/api/admin/pricing").then(function (r) { pricing.innerHTML = pricingHTML(r); }, function (e) {
       pricing.innerHTML = '<p class="error">' + esc(errText(e)) + "</p>";
     });
+    var claim = $("claim-form");
+    if (claim) claim.onsubmit = function (ev) {
+      ev.preventDefault();
+      $("claim-error").textContent = "";
+      api("/api/admin/claim", { method: "POST", body: { code: $("c-code").value } }).then(function (me) {
+        state.me = me; toast("دسترسی مدیر فعال شد."); render();
+      }, function (e) { $("c-code").value = ""; $("claim-error").textContent = errText(e); });
+    };
     var grant = $("grant-form");
     if (grant) grant.onsubmit = function (ev) {
       ev.preventDefault();

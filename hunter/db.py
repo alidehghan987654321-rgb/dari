@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .auth import token_hash
 from .links import link_key
 
 SCHEMA = """
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
+    token TEXT PRIMARY KEY,  -- the token's SHA-256, never the token itself (auth.token_hash)
     user_id INTEGER NOT NULL REFERENCES users(id),
     expires_at TEXT NOT NULL
 );
@@ -143,6 +144,9 @@ class Database:
                 db.execute("ALTER TABLE users ADD COLUMN plan TEXT")
             if "national_id" not in columns:
                 db.execute("ALTER TABLE users ADD COLUMN national_id TEXT NOT NULL DEFAULT ''")
+            # Sessions from before tokens were hashed: 64 hex characters is a hash, anything
+            # else a token kept as it was. Those sellers log in again.
+            db.execute("DELETE FROM sessions WHERE length(token) != 64 OR token GLOB '*[^0-9a-f]*'")
 
     @contextmanager
     def tx(self):
@@ -215,6 +219,10 @@ class Database:
                 db.execute("UPDATE users SET plan = ? WHERE id = ?", (plan, row["id"]))
             return self.extend_subscription(db, row["id"], days)
 
+    def set_password_hash(self, user_id: int, password_hash: str) -> None:
+        with self.tx() as db:
+            db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+
     def make_admin(self, email: str) -> bool:
         with self.tx() as db:
             cur = db.execute("UPDATE users SET is_admin = 1 WHERE email = ?", (email,))
@@ -227,7 +235,7 @@ class Database:
             db.execute("DELETE FROM sessions WHERE expires_at < ?", (iso(now()),))
             db.execute(
                 "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
-                (token, user_id, iso(now() + timedelta(days=days))),
+                (token_hash(token), user_id, iso(now() + timedelta(days=days))),
             )
 
     def session_user(self, token: str) -> dict[str, Any] | None:
@@ -235,13 +243,18 @@ class Database:
             row = db.execute(
                 "SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id"
                 " WHERE sessions.token = ? AND sessions.expires_at > ?",
-                (token, iso(now())),
+                (token_hash(token), iso(now())),
             ).fetchone()
         return _user(row)
 
     def delete_session(self, token: str) -> None:
         with self.tx() as db:
-            db.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            db.execute("DELETE FROM sessions WHERE token = ?", (token_hash(token),))
+
+    def delete_sessions(self, user_id: int) -> None:
+        """Logs a seller out everywhere."""
+        with self.tx() as db:
+            db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
 
     # --- payments --------------------------------------------------------------
 
@@ -546,9 +559,17 @@ class Database:
 
     # --- order cart (ثبت درخواست): products a seller wants to order -------------
 
-    def add_request(self, user_id: int, data: dict) -> int:
+    def add_request(self, user_id: int, data: dict, limit: int | None = None) -> int | None:
+        """Adds a product to the seller's cart; None when the cart already holds ``limit``."""
         at = iso(now())
         with self.tx() as db:
+            if limit is not None:
+                db.execute("BEGIN IMMEDIATE")
+                (count,) = db.execute(
+                    "SELECT COUNT(*) FROM requests WHERE user_id = ?", (user_id,)
+                ).fetchone()
+                if count >= limit:
+                    return None
             cur = db.execute(
                 "INSERT INTO requests (user_id, data, created_at, updated_at) VALUES (?, ?, ?, ?)",
                 (user_id, json.dumps(data, ensure_ascii=False), at, at),

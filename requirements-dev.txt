@@ -1,6 +1,6 @@
 -r requirements.txt
 pytest
 # The hunter's picture downloads (hunter/requirements.txt has it for its image).
-pillow>=11.0
+pillow==12.3.0
 # The hunter order export writes an .xlsx when this is present (else CSV).
-openpyxl>=3.1
+openpyxl==3.1.5

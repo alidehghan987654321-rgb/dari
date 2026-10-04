@@ -32,6 +32,17 @@ export class Hunter extends Container<Env> {
   }
 }
 
+/** Compares a secret in constant time (both hashed first, so lengths don't leak either). */
+async function sameSecret(given: string, expected: string | undefined): Promise<boolean> {
+  if (!expected) return false;
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(given)),
+    crypto.subtle.digest("SHA-256", enc.encode(expected)),
+  ]);
+  return crypto.subtle.timingSafeEqual(a, b);
+}
+
 function startHunt(env: Env): Promise<Response> {
   return getContainer(env.HUNTER).fetch(
     new Request(`https://${env.DOMAIN}/internal/hunt`, {
@@ -46,8 +57,7 @@ export default {
     const url = new URL(request.url);
     // /internal/* is for the cron below (and the deploy workflow, which knows the secret).
     if (url.pathname.startsWith("/internal/")) {
-      const secret = env.HUNTER_CRON_SECRET;
-      if (!secret || request.headers.get("X-Hunter-Cron") !== secret) {
+      if (!(await sameSecret(request.headers.get("X-Hunter-Cron") ?? "", env.HUNTER_CRON_SECRET))) {
         return new Response("Not Found", { status: 404 });
       }
     }

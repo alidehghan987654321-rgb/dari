@@ -115,6 +115,19 @@ def build_order(
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
+# A cell starting with one of these is run as a formula by Excel or LibreOffice when the sheet
+# is a CSV ("CSV injection"); in an .xlsx only "=" is, when the cell is stored as a formula.
+# The sheet goes from the seller to RhinoMall's staff, so nothing a seller typed (a product
+# name, a note) may ever run on their computers.
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r", "\n", "＝", "＋", "－", "＠")
+
+
+def _csv_safe(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith(FORMULA_START):
+        return "'" + value
+    return value
+
+
 def _xlsx(header: list[list[Any]], rows: list[list[Any]], summary: dict[str, Any]) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -147,6 +160,10 @@ def _xlsx(header: list[list[Any]], rows: list[list[Any]], summary: dict[str, Any
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = ws.cell(row=head_at + 1, column=1)
+    for line in ws.iter_rows():
+        for c in line:
+            if isinstance(c.value, str):  # text stays text, never a formula
+                c.data_type = "s"
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -156,10 +173,6 @@ def _csv(header: list[list[Any]], rows: list[list[Any]], summary: dict[str, Any]
     buf = io.StringIO()
     buf.write("﻿")  # BOM, so Excel reads the Persian as UTF-8
     w = csv.writer(buf)
-    for line in header:
-        w.writerow(line)
-    w.writerow(COLUMNS)
-    for row in rows:
-        w.writerow(row)
-    w.writerow(_totals_row(summary))
+    for line in [*header, COLUMNS, *rows, _totals_row(summary)]:
+        w.writerow([_csv_safe(v) for v in line])
     return buf.getvalue().encode("utf-8")

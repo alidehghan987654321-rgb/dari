@@ -10,6 +10,8 @@ import zipfile
 from typing import Any
 from urllib.parse import quote, urlsplit
 
+import httpx
+
 # Hosts we fetch from for sellers, and nothing else.
 IMAGE_HOSTS = ("alicdn.com", "1688.com", "media-amazon.com", "ssl-images-amazon.com", "kwcdn.com")
 VIDEO_HOSTS = (*IMAGE_HOSTS, "taobao.com", "tbcdn.cn")
@@ -23,9 +25,47 @@ SOURCE_FA = {"temu": "Temu", "amazon": "آمازون", "1688": "1688"}
 
 
 def allowed(url: str, hosts: tuple[str, ...]) -> bool:
-    parts = urlsplit(url or "")
+    """An https link on one of ``hosts`` (or a subdomain), on the standard port, with nothing
+    a parser could read differently from the HTTP client that fetches it: no user@ part, no
+    backslash, no spaces or control characters. Anything else might reach another server
+    (SSRF), so it's refused."""
+    url = url or ""
+    if len(url) > 2048 or "\\" in url or any(ord(ch) <= 32 or ord(ch) == 127 for ch in url):
+        return False
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+        fetched = httpx.URL(url)
+    except (ValueError, httpx.InvalidURL):
+        return False
     host = (parts.hostname or "").lower()
-    return parts.scheme == "https" and any(host == h or host.endswith("." + h) for h in hosts)
+    if (
+        parts.scheme != "https"
+        or not host.isascii()
+        or "@" in parts.netloc
+        or port not in (None, 443)
+        or fetched.raw_host.decode("ascii", "replace").lower() != host  # where it connects
+        or fetched.userinfo
+    ):
+        return False
+    return any(host == h or host.endswith("." + h) for h in hosts)
+
+
+def fetch(client: httpx.Client, url: str, limit: int) -> tuple[int, str, bytes] | None:
+    """GETs a picture without ever holding more than ``limit`` bytes of it: (status,
+    content type, body), or None when it failed or was too big."""
+    try:
+        with client.stream("GET", url) as r:
+            if int(r.headers.get("content-length") or 0) > limit:
+                return None
+            body = bytearray()
+            for chunk in r.iter_bytes(65536):
+                body += chunk
+                if len(body) > limit:
+                    return None
+            return r.status_code, r.headers.get("content-type", ""), bytes(body)
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
 def collect(candidate: dict[str, Any], detail: dict[str, Any] | None) -> dict[str, list[dict]]:
