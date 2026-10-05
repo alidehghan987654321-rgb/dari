@@ -104,6 +104,7 @@ jobs:
             key=$(curl -fsS -H "$auth" https://api.cloudflare.com/client/v4/user/tokens/verify | jq -r '.result.id // empty' || true)
             [ -n "$key" ] || key=$(curl -fsS -H "$auth" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" | jq -r '.result.id // empty' || true)
             secret=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)
+            echo "::add-mask::$secret"  # an R2 secret: never shown in the log
           fi
           if [ -n "$key" ] && AWS_ACCESS_KEY_ID="$key" AWS_SECRET_ACCESS_KEY="$secret" \
               aws s3api head-bucket --bucket "$BUCKET" --endpoint-url "$endpoint" --region auto >/dev/null 2>&1; then
@@ -138,6 +139,9 @@ jobs:
                   continue
               if name == "HUNTER_PAYMENT" and value == "demo":
                   print("::warning::HUNTER_PAYMENT=demo ignored: every payment would succeed without a gateway.", file=sys.stderr)
+                  continue
+              if name == "HUNTER_ALLOW_DEMO_PAYMENT":
+                  print("::warning::HUNTER_ALLOW_DEMO_PAYMENT ignored: never on the real site.", file=sys.stderr)
                   continue
               out[name] = value
               keys.append(name)

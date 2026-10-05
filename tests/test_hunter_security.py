@@ -366,3 +366,68 @@ def test_picture_proxy_stops_at_the_size_limit(settings):
         assert r.status_code == 502  # a picture that can carry script
         r = c.get("/img", params={"u": "https://user@cbu01.alicdn.com/a.png"})
         assert r.status_code == 400
+
+
+# --- second pass: keys in logs, picture bombs, the analysis quota -------------------------
+
+
+def test_api_keys_never_reach_the_log(caplog):
+    import logging
+
+    from hunter import logs
+
+    handler = logging.StreamHandler(io.StringIO())
+    logging.getLogger().addHandler(handler)
+    try:
+        logs.install()
+        log = logging.getLogger("hunter.test")
+        log.warning("GET https://api.keepa.com/product?key=SECRET1&domain=1")
+        try:
+            raise RuntimeError("401 for https://api.apify.com/v2/x?token=SECRET2")
+        except RuntimeError:
+            log.exception("failed")
+        httpx_client = httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
+        httpx_client.get("https://api.keepa.com/product", params={"key": "SECRET3"})
+        text = handler.stream.getvalue()
+    finally:
+        logging.getLogger().removeHandler(handler)
+    assert "SECRET" not in text and "key=***" in text and "token=***" in text
+
+
+def test_picture_bomb_is_refused_before_decoding():
+    import struct
+    import zlib
+
+    from hunter.media import store_ready
+
+    def chunk(kind, data):
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    # A 70-byte PNG that claims 10000x10000 pixels: under Pillow's own limit, over ours.
+    header = struct.pack(">IIBBBBB", 10_000, 10_000, 8, 2, 0, 0, 0)
+    bomb = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IEND", b"")
+    with pytest.raises(ValueError, match="too big"):
+        store_ready(bomb)
+
+
+def test_analysis_quota_holds_when_requests_race(settings):
+    """Counted and queued in one step: requests sent at once can't each see room left."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    db = Database(settings.db_path)
+    user_id = db.create_user("a@example.com", "a", "", auth.hash_password(PASSWORD))
+    urls = [f"https://www.temu.com/x-g-{1000000 + i}.html" for i in range(5)]
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(lambda _: db.queue_analyses(user_id, urls, quota=12), range(8)))
+    assert sum(1 for r in results if r) == 2  # 2 x 5 = 10 fit in 12; a third wouldn't
+    assert db.analyses_since(user_id) == 10
+
+
+def test_huge_catalog_offset_is_not_a_crash(settings):
+    with TestClient(create_app(settings)) as c:
+        signup(c)
+        Database(settings.db_path).grant("seller@example.com", 30)
+        assert c.get("/api/catalog", params={"offset": 10**30}).status_code == 200

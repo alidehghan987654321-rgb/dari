@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import re
+import threading
 import zipfile
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -20,6 +21,11 @@ MAX_VIDEO = 150_000_000
 MAX_IMAGES = 24  # per product
 MAX_VIDEOS = 6
 READY_SIZE = 1200  # px, the square store picture
+# A picture bigger than this is refused before it's decoded: a small file can claim a huge
+# size ("decompression bomb") and take all the server's memory once opened.
+MAX_PIXELS = 40_000_000
+# At most this many pictures are made store-ready at once, for the same reason.
+_RESIZING = threading.BoundedSemaphore(2)
 
 SOURCE_FA = {"temu": "Temu", "amazon": "آمازون", "1688": "1688"}
 
@@ -119,7 +125,9 @@ def store_ready(data: bytes, size: int = READY_SIZE) -> bytes:
     """The picture centred on a white square (what most stores ask for), as a JPEG."""
     from PIL import Image, ImageOps  # only needed here
 
-    with Image.open(io.BytesIO(data)) as im:
+    with _RESIZING, Image.open(io.BytesIO(data)) as im:
+        if im.width * im.height > MAX_PIXELS:  # known from the header, before decoding
+            raise ValueError("picture too big")
         im = ImageOps.exif_transpose(im)
         if im.mode in ("RGBA", "LA", "P"):
             im = im.convert("RGBA")

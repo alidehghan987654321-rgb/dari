@@ -58,7 +58,8 @@ class Apify:
 
     def run(self, actor: str, payload: dict) -> list[dict]:
         url = RUN_URL.format(actor=actor.replace("/", "~"))
-        r = self.http.post(url, params={"token": self.token}, json=payload)
+        # The token goes in a header, not the link: links end up in logs and error messages.
+        r = self.http.post(url, headers={"Authorization": f"Bearer {self.token}"}, json=payload)
         r.raise_for_status()
         data = r.json()
         return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []

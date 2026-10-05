@@ -24,6 +24,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from . import logs
 from .categories import find_category
 from .db import Database
 from .engine import Hunter
@@ -76,7 +77,11 @@ def cmd_serve(args) -> int:
     settings = Settings.from_env()
     if args.db:
         settings.db_path = args.db
-    uvicorn.run(create_app(settings), host=args.host, port=args.port, proxy_headers=True)
+    config = uvicorn.Config(
+        create_app(settings), host=args.host, port=args.port, proxy_headers=True
+    )
+    logs.install("uvicorn", "uvicorn.error", "uvicorn.access")  # set up by Config just now
+    uvicorn.Server(config).run()
     return 0
 
 
@@ -192,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO"), format="%(levelname)s %(name)s: %(message)s"
     )
+    logs.install()  # API keys never reach the log
     db_default = os.environ.get("HUNTER_DB", "hunter-data/hunter.db")
     backups_default = os.environ.get("HUNTER_BACKUPS", "hunter-data/backups")
 

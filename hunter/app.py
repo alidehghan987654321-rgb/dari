@@ -639,7 +639,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fresh_hours=24 if fresh else None,
             q=q.strip()[:80],
             limit=max(1, min(60, limit)),
-            offset=max(0, offset),
+            offset=max(0, min(offset, 1_000_000)),  # SQLite can't take a huge number
         )
         if offset == 0:
             page["counts"] = db.catalog_counts()
@@ -813,9 +813,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "no_links")
         if len(urls) > settings.links_per_request:
             raise HTTPException(422, "too_many_links")
-        if len(urls) > links_left(user):
+        ids = db.queue_analyses(user["id"], urls, quota=quota(user))
+        if ids is None:
             raise HTTPException(429, "monthly_limit")
-        ids = db.queue_analyses(user["id"], urls)
         background.add_task(run_analyses, list(zip(ids, urls)))
         return {"queued": len(ids), "left": links_left(user)}
 

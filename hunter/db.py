@@ -627,8 +627,22 @@ class Database:
 
     # --- product links sellers bring -------------------------------------------
 
-    def queue_analyses(self, user_id: int, urls: list[str]) -> list[int]:
+    def queue_analyses(
+        self, user_id: int, urls: list[str], quota: int | None = None, days: int = 30
+    ) -> list[int] | None:
+        """Queues links for analysis; None when they'd take the seller past ``quota`` in
+        ``days``. Counted and queued in one transaction, so requests sent at the same moment
+        can't each see room left and together go past it (every analysis costs us money)."""
         with self.tx() as db:
+            if quota is not None:
+                db.execute("BEGIN IMMEDIATE")
+                since = iso(now() - timedelta(days=days))
+                (used,) = db.execute(
+                    "SELECT COUNT(*) FROM analyses WHERE user_id = ? AND created_at > ?",
+                    (user_id, since),
+                ).fetchone()
+                if used + len(urls) > quota:
+                    return None
             return [
                 db.execute(
                     "INSERT INTO analyses (user_id, url, status, created_at) VALUES (?, ?, 'queued', ?)",

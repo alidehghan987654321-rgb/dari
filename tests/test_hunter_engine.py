@@ -349,6 +349,7 @@ def test_apify_runs_the_actor_with_the_filled_input():
 
     def handler(request):
         seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
         seen["body"] = json.loads(request.content)
         return httpx.Response(
             201, json=[{"title": "x", "price": 3, "url": "https://1688/1", "sales": 60}]
@@ -357,7 +358,7 @@ def test_apify_runs_the_actor_with_the_filled_input():
     apify = Apify("TOKEN", client=httpx.Client(transport=httpx.MockTransport(handler)))
     got = Supplier1688(apify, "someone/1688-image").by_image("https://img/a.jpg", 5)
     assert "acts/someone~1688-image/run-sync-get-dataset-items" in seen["url"]
-    assert "token=TOKEN" in seen["url"]
+    assert "TOKEN" not in seen["url"] and seen["auth"] == "Bearer TOKEN"  # never in a link
     assert seen["body"] == {"imageUrls": ["https://img/a.jpg"], "maxItems": 5}
     assert got[0].price_cny == 3
 
