@@ -1,0 +1,244 @@
+/* Gryffin: the company's home page. A directory of its products, each of which keeps its
+   own site.
+
+   World: Persian illumination. A lapis field owns the top of the page (the name, the line,
+   the product list) and saffron is the one accent: the way into each product, the focus
+   ring, the selection. Below, a cool limestone ground for contact and the footer.
+   Type: Lalezar (Borna Izadpanah, after the lettering of Tehran's Lalezar street signs) for
+   display, Vazirmatn for text. Both self-hosted, licences in ./licenses.
+   Shapes: rows and tiles 16px, round things fully round. Nothing else.
+   Persian text never gets letter-spacing: it breaks the joins between letters.
+   No scripts anywhere (the CSP forbids them); motion is CSS, and only the product list has
+   an entrance. */
+
+@font-face {
+  font-family: "Lalezar";
+  src: url("fonts/Lalezar.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("fonts/Vazirmatn-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("fonts/Vazirmatn-Bold.woff2") format("woff2");
+  font-weight: 600 800;
+  font-display: swap;
+}
+
+:root {
+  --lapis: #16337d;
+  --lapis-up: #1e4092;
+  --on-lapis: #f6f8ff;
+  --on-lapis-soft: #c9d4f3;
+  --rule-on-lapis: rgb(214 225 255 / 0.16);
+  --saffron: #f2b33d;
+  --on-saffron: #1a2340;
+  --ground: #f3f5f9;
+  --ink: #101a33;
+  --ink-soft: #46516b;
+  --rule: #d6dce8;
+  --shadow: 5 14 46;
+  --font-display: "Lalezar", "Vazirmatn", Tahoma, system-ui, sans-serif;
+  --font-body: "Vazirmatn", Tahoma, "Segoe UI", system-ui, sans-serif;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --gutter: clamp(16px, 4vw, 40px);
+  --radius: 16px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --lapis: #0f2459;
+    --lapis-up: #17327a;
+    --on-lapis-soft: #b9c6ea;
+    --ground: #0b1224;
+    --ink: #e6ebf7;
+    --ink-soft: #a6b1ca;
+    --rule: #1f2b47;
+    --shadow: 0 0 0;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --lapis: #0f2459;
+  --lapis-up: #17327a;
+  --on-lapis-soft: #b9c6ea;
+  --ground: #0b1224;
+  --ink: #e6ebf7;
+  --ink-soft: #a6b1ca;
+  --rule: #1f2b47;
+  --shadow: 0 0 0;
+  color-scheme: dark;
+}
+
+/* --- the parts of the page the browser draws ---------------------------------------- */
+* { box-sizing: border-box; }
+html {
+  -webkit-text-size-adjust: 100%;
+  scrollbar-color: var(--lapis) var(--ground);
+  background: var(--lapis);
+}
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  line-height: 1.85;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection { background: var(--saffron); color: var(--on-saffron); }
+a { color: inherit; text-underline-offset: 0.3em; text-decoration-thickness: 1px; }
+:focus-visible { outline: 3px solid var(--saffron); outline-offset: 3px; border-radius: 6px; }
+[dir="ltr"] { unicode-bidi: isolate; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.wrap { max-width: 1120px; margin-inline: auto; padding-inline: var(--gutter); }
+
+/* --- the lapis field: name, line, products ----------------------------------------- */
+.field { background: var(--lapis); color: var(--on-lapis); padding-bottom: clamp(48px, 7vw, 96px); }
+
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 72px; }
+.wordmark { display: flex; align-items: baseline; gap: 10px; text-decoration: none; }
+.wordmark b { font-family: var(--font-display); font-weight: 400; font-size: 1.9rem; line-height: 1; }
+.wordmark span { font-size: 0.9rem; color: var(--on-lapis-soft); }
+.bar nav { display: flex; gap: 6px; }
+.bar nav a {
+  padding: 8px 14px; border-radius: 999px; text-decoration: none; color: var(--on-lapis-soft);
+  transition: background-color 180ms ease, color 180ms ease;
+}
+.bar nav a:hover { color: var(--on-lapis); background: var(--rule-on-lapis); }
+
+.hero { padding-block: clamp(40px, 7vw, 88px) clamp(32px, 5vw, 56px); }
+.hero h1 {
+  margin: 0;
+  max-width: 13em;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(2.35rem, 3.4vw + 1.2rem, 4.25rem);
+  line-height: 1.32;
+  text-wrap: balance;
+}
+.hero .lede { margin: 18px 0 0; max-width: 46ch; font-size: clamp(1.08rem, 0.4vw + 1rem, 1.25rem); color: var(--on-lapis-soft); }
+
+.directory-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding-bottom: 14px; }
+.directory-head h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 1.7rem; line-height: 1.3; }
+.directory-head .count { color: var(--on-lapis-soft); font-variant-numeric: tabular-nums; }
+
+.list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule-on-lapis); }
+.list > li + li { border-top: 1px solid var(--rule-on-lapis); }
+
+/* A product: its mark and name read as a sign; what it does sits beside it, then the way in. */
+.product {
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 0.85fr) minmax(0, 1.5fr) 52px;
+  grid-template-areas: "mark sign detail go";
+  gap: 8px 32px;
+  align-items: center;
+  margin-inline: -20px;
+  padding: 28px 20px;
+  border-radius: var(--radius);
+  transition: background-color 180ms ease, transform 160ms var(--ease-out);
+}
+.mark {
+  grid-area: mark;
+  display: grid; place-items: center; width: 64px; height: 64px; overflow: hidden;
+  border-radius: var(--radius); background: #fff;
+  box-shadow: 0 8px 18px -10px rgb(var(--shadow) / 0.7);
+}
+.mark img { width: 56px; height: 56px; }
+.mark.letter { background: var(--saffron); color: var(--on-saffron); font-family: var(--font-display); font-size: 2.3rem; line-height: 1; }
+.sign { grid-area: sign; min-width: 0; }
+.detail { grid-area: detail; min-width: 0; }
+.sign h3 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: clamp(1.9rem, 1.6vw + 1.3rem, 2.6rem); line-height: 1.3; }
+.go-link { text-decoration: none; }
+.go-link::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); }  /* the whole row is the link */
+.go-link:focus-visible { outline: none; }
+.product:has(.go-link:focus-visible) { outline: 3px solid var(--saffron); outline-offset: 2px; }
+.tagline { margin: 0; color: var(--on-lapis-soft); }
+.for { margin: 0; }
+.for b { color: var(--saffron); font-weight: 700; }
+.what { margin: 2px 0 0; max-width: 62ch; color: var(--on-lapis-soft); }
+.address { margin: 10px 0 0; font-size: 0.86rem; color: var(--on-lapis-soft); }
+.go {
+  grid-area: go;
+  display: grid; place-items: center; width: 52px; height: 52px; border-radius: 999px;
+  background: var(--saffron); color: var(--on-saffron);
+  transition: transform 220ms var(--ease-out);
+}
+.go svg { width: 24px; height: 24px; stroke-width: 2.25; }
+.product:active { transform: scale(0.99); }
+@media (hover: hover) and (pointer: fine) {
+  .product:hover { background: var(--lapis-up); }
+  .product:hover .go { transform: translateX(-5px); }  /* forward, in a right-to-left page */
+}
+.product:focus-within { background: var(--lapis-up); }
+
+/* The one authored moment: the products rise into place, one after another. */
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+  .list > li { animation: rise 620ms var(--ease-out) both; }
+  .list > li:nth-child(2) { animation-delay: 70ms; }
+  .list > li:nth-child(3) { animation-delay: 140ms; }
+  .list > li:nth-child(4) { animation-delay: 210ms; }
+  .list > li:nth-child(5) { animation-delay: 280ms; }
+  .list > li:nth-child(n + 6) { animation-delay: 350ms; }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(16px); } }
+
+/* --- the page for an address that isn't there (404.html) --------------------------- */
+.missing { min-height: 100vh; min-height: 100dvh; }
+.home-link {
+  display: inline-flex; align-items: center; margin-top: 28px; padding: 12px 22px; border-radius: 999px;
+  background: var(--saffron); color: var(--on-saffron); font-weight: 700; text-decoration: none;
+  transition: transform 160ms var(--ease-out);
+}
+.home-link:active { transform: scale(0.97); }
+
+/* --- contact and footer, on limestone ---------------------------------------------- */
+.contact { padding-block: clamp(52px, 8vw, 96px); }
+.contact-in { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr); gap: 28px 56px; align-items: start; }
+.contact h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: clamp(2rem, 1.4vw + 1.5rem, 2.6rem); line-height: 1.3; }
+.contact-say p { margin: 8px 0 0; color: var(--ink-soft); max-width: 40ch; }
+.ways { margin: 0; display: flex; flex-wrap: wrap; gap: 24px 48px; padding-top: 10px; }
+.ways > div { min-width: 0; }
+.ways dt { font-size: 0.9rem; color: var(--ink-soft); }
+.ways dd { margin: 4px 0 0; font-weight: 700; }
+.ways dd a { display: inline-flex; align-items: center; gap: 8px; text-decoration: underline; text-decoration-color: var(--rule); }
+.ways dd a:hover { text-decoration-color: currentColor; }
+.ways svg { flex: none; width: 18px; height: 18px; color: var(--lapis); }
+
+.foot { border-top: 1px solid var(--rule); font-size: 0.9rem; color: var(--ink-soft); }
+.foot-in { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; padding-block: 20px 28px; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ways svg { color: var(--saffron); }
+}
+:root[data-theme="dark"] .ways svg { color: var(--saffron); }
+
+/* --- narrow screens ----------------------------------------------------------------- */
+@media (max-width: 960px) {
+  .contact-in { grid-template-columns: 1fr; }
+  .product {
+    grid-template-columns: 64px minmax(0, 1fr) 52px;
+    grid-template-areas: "mark sign go" "detail detail detail";
+    row-gap: 14px;
+  }
+}
+@media (max-width: 640px) {
+  .bar nav a { padding: 8px 10px; }
+  .product { grid-template-columns: 52px minmax(0, 1fr) 40px; column-gap: 14px; margin-inline: -12px; padding: 22px 12px; }
+  .ways { flex-direction: column; gap: 18px; }
+  .ways dd { overflow-wrap: anywhere; }
+  .mark { width: 52px; height: 52px; border-radius: 14px; }
+  .mark img { width: 46px; height: 46px; }
+  .mark.letter { font-size: 1.9rem; }
+  .go { width: 40px; height: 40px; }
+  .go svg { width: 20px; height: 20px; }
+}

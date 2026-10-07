@@ -1,2 +1,5 @@
 README.md
 .assetsignore
+build.py
+products.json
+__pycache__

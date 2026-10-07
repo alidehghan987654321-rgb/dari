@@ -4,17 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>گریفین</title>
-<meta name="description" content="گریفین ابزارهای آنلاین برای کسب‌وکارهای فارسی‌زبان می‌سازه: شکارچی برای فروشنده‌هایی که از چین وارد می‌کنن، و Bookfin برای نوبت‌دهی سالن‌های زیبایی.">
-<meta name="theme-color" content="#0a7a75">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a7a75'/%3E%3Ctext x='32' y='44' font-family='Georgia,serif' font-size='38' font-weight='700' fill='white' text-anchor='middle'%3EG%3C/text%3E%3C/svg%3E">
-<link rel="preload" href="fonts/MarkaziText-arabic.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="site.css">
+<meta name="description" content="گریفین ابزارهای آنلاین برای کسب‌وکارهای فارسی‌زبان می‌سازه. هر محصول سایت خودش رو داره؛ از اینجا به هر کدوم برو.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#16337d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2316337d'/%3E%3Ccircle cx='46' cy='18' r='6' fill='%23f2b33d'/%3E%3Ctext x='30' y='47' font-family='system-ui,sans-serif' font-size='36' font-weight='800' fill='white' text-anchor='middle'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="preload" href="assets/fonts/Lalezar.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
-<!--site:start-->
-<div class="site" dir="rtl" lang="fa">
-  <header class="bar">
-    <a class="wordmark" href="#top" aria-label="گریفین، صفحه‌ی اصلی"><b>گریفین</b><span>Gryffin</span></a>
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <!-- Tabler Icons (MIT, assets/licenses/tabler-icons-MIT.txt) -->
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12l14 0"/><path d="M5 12l6 6"/><path d="M5 12l6 -6"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M5 4h4l2 5l-2.5 1.5a11 11 0 0 0 5 5l1.5 -2.5l5 2v4a2 2 0 0 1 -2 2a16 16 0 0 1 -15 -15a2 2 0 0 1 2 -2"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-10"/><path d="M3 7l9 6l9 -6"/></symbol>
+</svg>
+
+<div class="field">
+  <header class="bar wrap">
+    <a class="wordmark" href="/" aria-label="گریفین، صفحه‌ی اصلی"><b>گریفین</b><span lang="en" dir="ltr">Gryffin</span></a>
     <nav aria-label="بخش‌ها">
       <a href="#products">محصول‌ها</a>
       <a href="#contact">تماس</a>
@@ -22,67 +29,73 @@
   </header>
 
   <main id="top">
-    <section class="hero">
-      <p class="eyebrow"><span class="mono ltr">gryffin.uk</span><span>ابزارهای آنلاین برای کسب‌وکارهای فارسی‌زبان</span></p>
-      <h1>
-        <span class="line">برای <em>فروشنده‌ها</em> محصول پرسود پیدا می‌کنیم؛</span>
-        <span class="line">برای <em>سالن‌ها</em> نوبت‌ها رو مرتب می‌کنیم.</span>
-      </h1>
-      <p class="lede">هر محصول گریفین سایت خودش رو داره و کار خودش رو انجام می‌ده. از فهرست زیر محصولی رو که لازم داری انتخاب کن تا مستقیم به سایتش بری.</p>
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <h1 id="hero-title">ابزارهای آنلاین برای کسب‌وکارهای فارسی‌زبان</h1>
+      <p class="lede">هر محصول گریفین سایت خودش رو داره. محصولی رو که لازم داری انتخاب کن تا مستقیم به سایتش بری.</p>
     </section>
 
-    <section id="products" aria-labelledby="products-title">
+    <section id="products" class="directory wrap" aria-labelledby="products-title">
       <div class="directory-head">
         <h2 id="products-title">محصول‌ها</h2>
-        <span class="count">2 محصول</span>
+        <!--products:count--><span class="count">2 محصول</span><!--/products:count-->
       </div>
-
-      <!-- One row per product. To add one, copy a row and change its name, text and address. -->
-      <article class="product" aria-labelledby="p-shekarchi">
-        <div class="mark"><img src="img/shekarchi.png" alt="لوگوی شکارچی" width="64" height="64"></div>
-        <div class="main">
-          <h3 id="p-shekarchi"><b>شکارچی</b><span>یابنده‌ی محصول برای واردات از چین</span></h3>
-          <p class="for"><b>برای</b> فروشنده‌های راینومال که از چین وارد می‌کنن</p>
-          <p class="what">هر روز پرفروش‌های Temu و آمازون رو پیدا می‌کنه، همون جنس رو در 1688 نشون می‌ده و قیمت فروش رو با سهم راینومال حساب می‌کنه. ماشین‌حساب واردات و فایل اکسل سفارش هم داره.</p>
-        </div>
-        <div class="way-in">
-          <p class="address">آدرس<br><span class="mono ltr">hunter.gryffin.uk</span></p>
-          <a class="enter" href="https://hunter.gryffin.uk/">ورود به شکارچی <span class="arrow" aria-hidden="true">←</span></a>
-        </div>
-      </article>
-
-      <article class="product" aria-labelledby="p-bookfin">
-        <div class="mark letter" aria-hidden="true">B</div>
-        <div class="main">
-          <h3 id="p-bookfin"><b>Bookfin</b><span>نوبت‌دهی سالن</span></h3>
-          <p class="for"><b>برای</b> سالن‌های زیبایی و آرایشگاه‌ها</p>
-          <p class="what">نوبت‌دهی آنلاین برای سالن‌های زیبایی و آرایشگاه‌ها. مشتری از روی سایت نوبت می‌گیره و سالن همه‌ی نوبت‌ها رو یک‌جا می‌بینه.</p>
-        </div>
-        <div class="way-in">
-          <p class="address">آدرس<br><span class="mono ltr">bookfin.gryffin.uk/ir</span></p>
-          <a class="enter" href="https://bookfin.gryffin.uk/ir">ورود به Bookfin <span class="arrow" aria-hidden="true">←</span></a>
-        </div>
-      </article>
-    </section>
-
-    <section id="contact" class="contact" aria-labelledby="contact-title">
-      <div>
-        <h2 id="contact-title">تماس با ما</h2>
-        <p>برای خرید اشتراک، راه‌اندازی یا هر سؤالی درباره‌ی محصول‌ها با ما در ارتباط باش.</p>
-      </div>
-      <dl class="ways">
-        <div><dt>مدیر پروژه و پشتیبانی</dt><dd>امید علی دهقان</dd></div>
-        <div><dt>تلفن</dt><dd><a class="ltr" href="tel:+989120412723">0912 041 2723</a></dd></div>
-        <div><dt>ایمیل</dt><dd><a class="ltr mono" href="mailto:afran.persianmall@gmail.com">afran.persianmall@gmail.com</a></dd></div>
-      </dl>
+      <!--products:start (built from products.json by build.py; edit products.json, not this list)-->
+      <ul class="list" role="list">
+        <li>
+          <article class="product" aria-labelledby="p-shekarchi">
+            <span class="mark"><img src="assets/img/shekarchi.png" alt="" width="56" height="56"></span>
+            <div class="sign">
+              <h3 id="p-shekarchi"><a class="go-link" href="https://hunter.gryffin.uk/">شکارچی</a></h3>
+              <p class="tagline">یابنده‌ی محصول برای واردات از چین</p>
+            </div>
+            <div class="detail">
+              <p class="for"><b>برای</b> فروشنده‌های راینومال که از چین وارد می‌کنن</p>
+              <p class="what">هر روز پرفروش‌های Temu و آمازون رو پیدا می‌کنه، همون جنس رو در 1688 نشون می‌ده و قیمت فروش رو با سهم راینومال حساب می‌کنه. ماشین‌حساب واردات و فایل اکسل سفارش هم داره.</p>
+              <p class="address"><span dir="ltr">hunter.gryffin.uk</span></p>
+            </div>
+            <span class="go" aria-hidden="true"><svg><use href="#i-arrow"/></svg></span>
+          </article>
+        </li>
+        <li>
+          <article class="product" aria-labelledby="p-bookfin">
+            <span class="mark letter" aria-hidden="true">B</span>
+            <div class="sign">
+              <h3 id="p-bookfin"><a class="go-link" href="https://bookfin.gryffin.uk/ir">Bookfin</a></h3>
+              <p class="tagline">نوبت‌دهی آنلاین سالن</p>
+            </div>
+            <div class="detail">
+              <p class="for"><b>برای</b> سالن‌های زیبایی و آرایشگاه‌ها</p>
+              <p class="what">مشتری از روی سایت نوبت می‌گیره و سالن همه‌ی نوبت‌ها رو یک‌جا می‌بینه.</p>
+              <p class="address"><span dir="ltr">bookfin.gryffin.uk/ir</span></p>
+            </div>
+            <span class="go" aria-hidden="true"><svg><use href="#i-arrow"/></svg></span>
+          </article>
+        </li>
+      </ul>
+      <!--products:end-->
     </section>
   </main>
-
-  <footer>
-    <span>© 1405 گریفین</span>
-    <span class="mono ltr">gryffin.uk</span>
-  </footer>
 </div>
-<!--site:end-->
+
+<section id="contact" class="contact" aria-labelledby="contact-title">
+  <div class="wrap contact-in">
+    <div class="contact-say">
+      <h2 id="contact-title">تماس</h2>
+      <p>برای خرید اشتراک، راه‌اندازی یا هر سؤالی درباره‌ی محصول‌ها با ما در ارتباط باش.</p>
+    </div>
+    <dl class="ways">
+      <div><dt>مدیر پروژه و پشتیبانی</dt><dd>امید علی دهقان</dd></div>
+      <div><dt>تلفن</dt><dd><a href="tel:+989120412723"><svg aria-hidden="true"><use href="#i-phone"/></svg><span dir="ltr">0912 041 2723</span></a></dd></div>
+      <div><dt>ایمیل</dt><dd><a href="mailto:afran.persianmall@gmail.com"><svg aria-hidden="true"><use href="#i-mail"/></svg><span dir="ltr">afran.persianmall@gmail.com</span></a></dd></div>
+    </dl>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <span>© 1405 گریفین</span>
+    <span dir="ltr">gryffin.uk</span>
+  </div>
+</footer>
 </body>
 </html>

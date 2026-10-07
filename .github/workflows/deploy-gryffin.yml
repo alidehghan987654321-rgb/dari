@@ -1,4 +1,5 @@
-# Deploys the company's home page (gryffin/) to Cloudflare on gryffin.uk and www.gryffin.uk.
+# Deploys the company's home page (gryffin/) to Cloudflare on gryffin.uk and www.gryffin.uk,
+# with any product sites hosted under it (gryffin/build.py).
 # Runs only when started by hand (Actions -> "Deploy the Gryffin home page" -> Run workflow),
 # so the main domain never changes because of an ordinary push. Needs the repository secrets
 # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; until they're set it's skipped with a warning.
@@ -33,6 +34,9 @@ jobs:
 
       - uses: actions/checkout@v4
         if: steps.secrets.outputs.ready == 'true'
+      - name: Check the page is built from products.json
+        if: steps.secrets.outputs.ready == 'true'
+        run: python3 gryffin/build.py --check
       - uses: actions/setup-node@v4
         if: steps.secrets.outputs.ready == 'true'
         with:
