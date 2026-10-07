@@ -181,3 +181,55 @@ def test_stylesheet_fonts_exist_and_headers_are_strict():
     assert "script-src 'none'" in headers and "frame-ancestors 'none'" in headers
     ignored = (GRYFFIN / ".assetsignore").read_text(encoding="utf-8").split()
     assert {"build.py", "products.json", "README.md"} <= set(ignored)
+
+
+# --- the showcase: pictures, points, and panel widths ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "change, problem",
+    [
+        ({"shots": [{"src": "assets/img/none.webp", "alt": "x"}]}, "shot"),
+        ({"shots": [{"src": "assets/img/shekarchi-dash.webp"}]}, "alt"),
+        ({"shots": [{"src": "../../etc/passwd", "alt": "x"}]}, "shot"),
+        ({"shots": [{"src": "assets/img/shekarchi-dash.webp", "alt": "x"}] * 3}, "up to 2"),
+        ({"points": ["a"] * 6}, "points"),
+        ({"points": ["سریع – ساده"]}, "dash"),
+    ],
+)
+def test_bad_pictures_or_points_are_refused(site, change, problem):
+    write_registry(site, [product(**change)])
+    with pytest.raises(gb.RegistryError, match=problem):
+        gb.build(root=site)
+
+
+def test_a_product_with_pictures_is_shown_in_frames(site):
+    shot = {"src": "assets/img/shekarchi-dash.webp", "alt": "میز <کار>"}
+    write_registry(site, [product(shots=[shot], points=["یک", "دو"])])
+    gb.build(root=site)
+    page = (site / "index.html").read_text(encoding="utf-8")
+    assert 'class="panel featured"' in page and 'class="frame front"' in page
+    assert 'alt="میز &lt;کار&gt;"' in page
+    assert page.count('<use href="#i-check"/>') == 2
+
+
+@pytest.mark.parametrize(
+    "shots, wide",
+    [
+        ([1, 0], [True, True]),  # a lone picture-less panel takes the row
+        ([1, 0, 0], [True, False, False]),  # two share a row
+        ([0, 0, 0], [False, False, True]),  # the odd one out takes the row
+        ([0, 1, 0, 0, 0], [True, True, False, False, True]),
+    ],
+)
+def test_no_panel_sits_beside_an_empty_space(shots, wide):
+    assert gb.widths([{"shots": [1] if s else []} for s in shots]) == wide
+
+
+def test_the_ornaments_match_their_geometry():
+    spec = importlib.util.spec_from_file_location("gryffin_ornament", GRYFFIN / "ornament.py")
+    orn = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(orn)
+    assert orn.main(["--check"]) == 0
+    page = (GRYFFIN / "index.html").read_text(encoding="utf-8")
+    assert page.count('pathLength="1"') >= 10  # drawn in, ring by ring

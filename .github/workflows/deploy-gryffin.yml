@@ -36,7 +36,7 @@ jobs:
         if: steps.secrets.outputs.ready == 'true'
       - name: Check the page is built from products.json
         if: steps.secrets.outputs.ready == 'true'
-        run: python3 gryffin/build.py --check
+        run: python3 gryffin/build.py --check && python3 gryffin/ornament.py --check
       - uses: actions/setup-node@v4
         if: steps.secrets.outputs.ready == 'true'
         with:
