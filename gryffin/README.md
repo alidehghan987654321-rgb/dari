@@ -98,11 +98,15 @@ python gryffin/build.py add bookfin path/to/page.html        # یا یه فای�
 `gryffin.uk` و `www.gryffin.uk`:
 
 1. همون دو secret شکارچی باید در GitHub باشه: `CLOUDFLARE_API_TOKEN` و `CLOUDFLARE_ACCOUNT_ID`.
-2. در GitHub برو به **Actions** ← **Deploy the Gryffin home page** ← **Run workflow**. قبل از دیپلوی چک میشه که
-   صفحه با `products.json` یکی باشه.
+2. هر بار که چیزی در `gryffin/` روی شاخه‌ی سایت عوض بشه، خودکار دیپلوی میشه. قبلش چک میشه که صفحه با
+   `products.json` و هندسه‌ی تزئین‌ها یکی باشه. دستی هم میشه اجراش کرد: **Actions** ← **Deploy the Gryffin home
+   page** ← **Run workflow**.
+3. اگه secretها هنوز نیستن، اجرا با یه هشدار رد میشه و چیزی عوض نمیشه. بعد از گذاشتن secretها، همون اجرا رو
+   **Re-run** کن.
 
-این workflow عمداً **فقط دستی** اجرا میشه، نه با هر push، که دامنه‌ی اصلی اتفاقی عوض نشه. اگه `gryffin.uk` الان
-به جای دیگه‌ای اشاره کنه، Cloudflare دیپلوی رو رد می‌کنه و چیزی رو عوض نمی‌کنه؛ اول اون رکورد DNS رو بردار.
+اگه `gryffin.uk` یا `www.gryffin.uk` الان در DNS کلودفلر به جای دیگه‌ای اشاره کنه، کلودفلر دیپلوی رو رد می‌کنه و
+چیزی رو عوض نمی‌کنه. اول اون دو رکورد رو بردار. زیردامنه‌ها مثل `bookfin.gryffin.uk` و `hunter.gryffin.uk` دست
+نمی‌خورن.
 
 برای امتحان روی کامپیوتر خودت: `python -m http.server -d gryffin 8000` و بعد `http://localhost:8000`.
 

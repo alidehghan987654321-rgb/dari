@@ -1,11 +1,18 @@
 # Deploys the company's home page (gryffin/) to Cloudflare on gryffin.uk and www.gryffin.uk,
 # with any product sites hosted under it (gryffin/build.py).
-# Runs only when started by hand (Actions -> "Deploy the Gryffin home page" -> Run workflow),
-# so the main domain never changes because of an ordinary push. Needs the repository secrets
-# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; until they're set it's skipped with a warning.
+# Runs when the home page itself (gryffin/) changes on the site's branch, or by hand. A push
+# that touches anything else never changes the main domain. Needs the repository secrets
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; until they're set it's skipped with a warning,
+# and re-running that run once they're set deploys it.
 name: Deploy the Gryffin home page
 
 on:
+  push:
+    branches: [main, claude/trusting-cori-54e2u9]
+    paths:
+      - "gryffin/**"
+      - "cloudflare/gryffin.jsonc"
+      - ".github/workflows/deploy-gryffin.yml"
   workflow_dispatch:
 
 concurrency:
