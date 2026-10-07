@@ -1,0 +1,12 @@
+# The product hunter on its own; its Docker image installs only this. Every version is pinned
+# (a new release can't slip into the site unseen); Dependabot proposes updates as pull requests.
+fastapi==0.141.1
+uvicorn==0.54.0
+httpx==0.28.1
+python-dotenv==1.2.3
+# Store-ready product pictures (white 1200×1200 squares) for sellers to download.
+pillow==12.3.0
+# Optional: Persian product names with Claude (used only when ANTHROPIC_API_KEY is set).
+anthropic==1.11.0
+# The RhinoMall order sheet as a real .xlsx (hunter/export.py); without it a CSV is written.
+openpyxl==3.1.5

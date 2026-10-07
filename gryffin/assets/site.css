@@ -1,0 +1,280 @@
+/* Gryffin: the company's home page, a showcase of its products, each of which keeps its own
+   site.
+
+   World: a Persian illuminated page at night. Lapis grounds, and saffron gold for the
+   ornament and the one accent (the way into each product, focus, selection). The shamseh
+   (the sun rosette at the heart of an illuminated page) is the page's centrepiece; the
+   khatam (eight-pointed stars) is its texture. Both are drawn from geometry by ornament.py.
+   The page closes on a field of saffron.
+   Type: Lalezar (Borna Izadpanah, after the lettering of Tehran's Lalezar street signs) for
+   display, Vazirmatn for text. Self-hosted, licences in ./licenses.
+   Shapes: panels 24px, tiles 16px, buttons and dots fully round. Nothing else.
+   Persian text never gets letter-spacing: it breaks the joins between letters.
+   No scripts (the CSP forbids them). One authored moment: on load the rosette draws itself
+   in while the headline rises; after that only hover responds. */
+
+@font-face { font-family: "Lalezar"; src: url("fonts/Lalezar.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Vazirmatn"; src: url("fonts/Vazirmatn-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Vazirmatn"; src: url("fonts/Vazirmatn-Bold.woff2") format("woff2"); font-weight: 600 800; font-display: swap; }
+
+/* One deliberate look, dark in every theme: the night page. */
+:root {
+  --night: #071031;
+  --deep: #0b1a4b;
+  --lapis: #11276b;
+  --lapis-up: #183590;
+  --line: rgb(186 205 255 / 0.14);
+  --line-strong: rgb(186 205 255 / 0.26);
+  --text: #f3f6ff;
+  --soft: #b5c2e8;
+  --saffron: #f2b33d;
+  --saffron-up: #f8c766;
+  --ink: #141a3a;
+  --ink-soft: #3a4166;
+  --lamp: rgb(66 104 230 / 0.42);
+  --shadow: 1 5 22;
+  --font-display: "Lalezar", "Vazirmatn", Tahoma, system-ui, sans-serif;
+  --font-body: "Vazirmatn", Tahoma, "Segoe UI", system-ui, sans-serif;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --gutter: clamp(16px, 4vw, 40px);
+  color-scheme: dark;
+}
+
+/* --- the parts of the page the browser draws ---------------------------------------- */
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scrollbar-color: var(--lapis-up) var(--night); background: var(--night); }
+body {
+  margin: 0;
+  background: var(--night);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  line-height: 1.85;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection { background: var(--saffron); color: var(--ink); }
+a { color: inherit; text-underline-offset: 0.3em; text-decoration-thickness: 1px; }
+:focus-visible { outline: 3px solid var(--saffron); outline-offset: 3px; border-radius: 8px; }
+[dir="ltr"] { unicode-bidi: isolate; }
+img { max-width: 100%; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.wrap { max-width: 1200px; margin-inline: auto; padding-inline: var(--gutter); }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 400; margin: 0; text-wrap: balance; }
+
+/* The khatam, faint, fading out from where it's placed. */
+.textured { position: relative; isolation: isolate; }
+.textured::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: url("img/khatam.svg") center / 96px 96px;
+  opacity: 0.09;
+  -webkit-mask-image: radial-gradient(ellipse 70% 80% at var(--tx, 30%) 40%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 70% 80% at var(--tx, 30%) 40%, #000 20%, transparent 75%);
+}
+
+/* --- buttons ---------------------------------------------------------------------- */
+.btn {
+  display: inline-flex; align-items: center; gap: 10px; padding: 13px 22px; border-radius: 999px;
+  background: var(--saffron); color: var(--ink); font-weight: 700; text-decoration: none; white-space: nowrap;
+  box-shadow: 0 10px 24px -12px rgb(242 179 61 / 0.7);
+  transition: background-color 160ms ease, transform 160ms var(--ease-out);
+}
+.btn svg { width: 20px; height: 20px; stroke-width: 2.25; transition: transform 220ms var(--ease-out); }
+.btn:active { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover { background: var(--saffron-up); }
+  .btn:hover svg { transform: translateX(-4px); }  /* forward, in a right-to-left page */
+}
+
+/* --- header ------------------------------------------------------------------------- */
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 76px; }
+.wordmark { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.wordmark svg { width: 26px; height: 26px; color: var(--saffron); stroke-width: 1.6; }
+.wordmark b { font-family: var(--font-display); font-weight: 400; font-size: 1.9rem; line-height: 1; }
+.wordmark span { font-size: 0.9rem; color: var(--soft); }
+.bar nav { display: flex; gap: 4px; }
+.bar nav a { padding: 8px 14px; border-radius: 999px; text-decoration: none; color: var(--soft); transition: background-color 180ms ease, color 180ms ease; }
+.bar nav a:hover { color: var(--text); background: var(--line); }
+
+/* --- hero: the line, and the shamseh -------------------------------------------------- */
+.hero {
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); align-items: center; gap: 32px;
+  padding-block: clamp(24px, 4vw, 56px) clamp(64px, 9vw, 128px);
+  --tx: 25%;
+}
+.hero-text { position: relative; z-index: 1; }
+.hero h1 { font-size: clamp(2.7rem, 4.4vw + 1rem, 5.3rem); line-height: 1.26; }
+.hero h1 .line { display: block; }
+.hero h1 em { font-style: normal; color: var(--saffron); }
+.hero .lede { margin: 22px 0 32px; max-width: 44ch; font-size: clamp(1.08rem, 0.4vw + 1rem, 1.25rem); color: var(--soft); }
+
+.hero-art { position: relative; display: grid; place-items: center; }
+.hero-art::before {  /* a lamp behind the rosette */
+  content: ""; position: absolute; inset: 4%; border-radius: 50%;
+  background: radial-gradient(closest-side, var(--lamp), transparent);
+}
+.shamseh { position: relative; width: min(100%, 540px); aspect-ratio: 1; overflow: visible; color: var(--saffron); }
+.shamseh .ring > * { stroke-width: 1.3; vector-effect: non-scaling-stroke; }
+.shamseh .r1 { opacity: 0.55; }
+.shamseh .r2 { opacity: 0.8; }
+.shamseh .r3 { opacity: 0.6; }
+.shamseh .r4 { opacity: 0.95; }
+.shamseh .r5 { opacity: 0.75; }
+.shamseh .r6 > * { stroke-width: 1.8; }
+.shamseh .dot { fill: currentColor; stroke: none; }
+
+/* --- products -------------------------------------------------------------------------- */
+.products { padding-bottom: clamp(72px, 10vw, 140px); }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.section-head h2 { font-size: clamp(2rem, 1.6vw + 1.4rem, 2.8rem); line-height: 1.25; }
+.section-head .count { color: var(--soft); font-variant-numeric: tabular-nums; }
+
+.panels { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.panel.featured, .panel.wide { grid-column: 1 / -1; }
+.panel > article {
+  position: relative; height: 100%; display: grid; overflow: hidden;
+  border-radius: 24px; border: 1px solid var(--line); background: var(--deep);
+  box-shadow: 0 34px 70px -40px rgb(var(--shadow) / 0.9);
+}
+.panel.featured > article { grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr); }
+.panel.wide > article { grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); }
+.panel-text { position: relative; z-index: 1; display: flex; flex-direction: column; min-width: 0; padding: clamp(24px, 3.4vw, 48px); }
+.panel-head { display: flex; align-items: center; gap: 18px; }
+.mark {
+  flex: none; display: grid; place-items: center; width: 68px; height: 68px; overflow: hidden;
+  border-radius: 16px; background: #fff; box-shadow: 0 10px 22px -12px rgb(var(--shadow) / 0.9);
+}
+.mark img { width: 58px; height: 58px; }
+.mark.letter { background: var(--saffron); color: var(--ink); font-family: var(--font-display); font-size: 2.4rem; line-height: 1; }
+.panel h3 { font-size: clamp(2rem, 1.4vw + 1.5rem, 2.9rem); line-height: 1.2; }
+.tagline { margin: 2px 0 0; color: var(--soft); }
+.for { margin: 22px 0 0; }
+.for b { color: var(--saffron); font-weight: 700; }
+.what { margin: 4px 0 0; max-width: 54ch; color: var(--soft); }
+.points { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 22px; }
+.points li { display: flex; align-items: flex-start; gap: 10px; font-size: 0.98rem; line-height: 1.7; }
+.points svg { flex: none; width: 20px; height: 20px; margin-top: 3px; color: var(--saffron); stroke-width: 2.4; }
+.panel-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; margin-top: auto; padding-top: 30px; }
+.address { font-size: 0.86rem; color: var(--soft); }
+
+/* The product itself, in browser frames, leaning toward its name. */
+.shots {
+  position: relative; display: grid; align-items: center; min-height: 380px;
+  padding: clamp(28px, 3.4vw, 52px) clamp(12px, 2vw, 28px); perspective: 1600px;
+  background: radial-gradient(closest-side at 50% 55%, var(--lamp), transparent 85%);
+}
+.frame {
+  margin: 0; overflow: hidden; border-radius: 14px; background: #0b0f1d;
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 50px 90px -40px rgb(0 0 0 / 0.85), 0 18px 36px -24px rgb(0 0 0 / 0.6);
+  transition: transform 700ms var(--ease-out), opacity 700ms var(--ease-out);
+}
+.frame .chrome { display: flex; gap: 6px; padding: 9px 12px; background: #121a31; border-bottom: 1px solid var(--line); }
+.frame .chrome i { width: 9px; height: 9px; border-radius: 50%; background: rgb(255 255 255 / 0.2); }
+.frame img { display: block; width: 100%; height: auto; }
+.frame.front { position: relative; z-index: 2; width: 96%; justify-self: end; transform: rotateY(-16deg) rotateX(6deg); transform-origin: 0% 50%; }
+.frame.back { position: absolute; z-index: 1; width: 78%; top: 8%; inset-inline-start: 6%; opacity: 0.5; transform: rotateY(-16deg) rotateX(6deg) translateZ(-140px); }
+@media (hover: hover) and (pointer: fine) {
+  .panel.featured:hover .frame.front { transform: rotateY(-6deg) rotateX(2deg); }
+  .panel.featured:hover .frame.back { opacity: 0.7; transform: rotateY(-8deg) rotateX(3deg) translateZ(-100px) translateY(-10px); }
+}
+
+/* A product without pictures: its mark, large, like an icon on a home screen. */
+.monogram {
+  position: relative; display: grid; place-items: center; min-height: 300px;
+  background: radial-gradient(closest-side, var(--lamp), transparent 80%);
+}
+.monogram::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: url("img/khatam.svg") center / 72px 72px; opacity: 0.12;
+  -webkit-mask-image: radial-gradient(closest-side, #000, transparent);
+  mask-image: radial-gradient(closest-side, #000, transparent);
+}
+.monogram span {
+  position: relative; display: grid; place-items: center; width: clamp(150px, 16vw, 210px); aspect-ratio: 1;
+  border-radius: 28%; background: var(--saffron); color: var(--ink);
+  font-family: var(--font-display); font-size: clamp(5rem, 7vw, 7.5rem); line-height: 1;
+  box-shadow: 0 40px 70px -30px rgb(0 0 0 / 0.7), inset 0 -10px 24px rgb(0 0 0 / 0.12);
+  transform: rotate(-8deg);
+  transition: transform 600ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .panel:hover .monogram span { transform: rotate(0deg) scale(1.03); }
+}
+.panel:not(.featured):not(.wide) .monogram { min-height: 220px; }
+
+/* --- about ---------------------------------------------------------------------------- */
+.about { background: var(--lapis); padding-block: clamp(72px, 10vw, 136px); --tx: 80%; }
+.about-in { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px 72px; align-items: start; }
+.about h2 { font-size: clamp(1.9rem, 2vw + 1.2rem, 3.1rem); line-height: 1.4; }
+.facts { list-style: none; margin: 0; padding: 0; }
+.facts li { padding-block: 20px; border-top: 1px solid var(--line-strong); color: var(--soft); font-size: clamp(1.08rem, 0.5vw + 1rem, 1.3rem); line-height: 1.8; }
+.facts li:first-child { border-top: 0; padding-top: 6px; }
+.facts b { display: block; color: var(--text); font-weight: 700; }
+
+/* --- contact: the page closes on saffron ------------------------------------------------ */
+.contact { background: var(--saffron); color: var(--ink); padding-block: clamp(64px, 9vw, 120px); }
+.contact ::selection { background: var(--ink); color: var(--saffron); }
+.contact :focus-visible { outline-color: var(--ink); }
+.contact-in { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 32px 64px; align-items: end; }
+.contact h2 { font-size: clamp(2.8rem, 4.6vw + 1rem, 5.4rem); line-height: 1.2; }
+.contact-say p { margin: 10px 0 0; color: var(--ink-soft); font-size: 1.15rem; max-width: 36ch; }
+.ways { margin: 0; display: grid; gap: 22px; }
+.ways > div { min-width: 0; }
+.ways dt { font-size: 0.92rem; color: var(--ink-soft); }
+.ways dd { margin: 2px 0 0; font-size: clamp(1.25rem, 1.2vw + 0.9rem, 1.75rem); font-weight: 800; line-height: 1.5; }
+.ways dd a { display: inline-flex; align-items: center; gap: 12px; text-decoration: underline; text-decoration-color: rgb(20 26 58 / 0.35); text-underline-offset: 0.35em; }
+.ways dd a:hover { text-decoration-color: currentColor; }
+.ways svg { flex: none; width: 26px; height: 26px; stroke-width: 2; }
+
+.foot { font-size: 0.9rem; color: var(--soft); }
+.foot-in { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; padding-block: 22px 30px; }
+
+/* --- the page for an address that isn't there (404.html) --------------------------- */
+.missing { min-height: 100vh; min-height: 100dvh; }
+.missing-in { padding-block: clamp(48px, 10vw, 120px); }
+.missing-in h1 { font-size: clamp(2.4rem, 4vw + 1rem, 4.4rem); line-height: 1.3; }
+.missing-in p { color: var(--soft); max-width: 46ch; margin: 18px 0 30px; font-size: 1.15rem; }
+
+/* --- the one moment: the rosette draws itself in while the line rises --------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+  .shamseh .ring > * { stroke-dasharray: 1; animation: draw 2.2s var(--ease-out) backwards; }
+  .shamseh .r2 > * { animation-delay: 0.15s; }
+  .shamseh .r3 > * { animation-delay: 0.3s; }
+  .shamseh .r4 > * { animation-delay: 0.45s; }
+  .shamseh .r5 > * { animation-delay: 0.6s; }
+  .shamseh .r6 > * { animation-delay: 0.75s; }
+  .shamseh .dots > * { stroke-dasharray: none; animation: appear 1s ease-out 1.1s backwards; }
+  .shamseh { animation: turn 300s linear infinite; }
+  .hero h1 .line, .hero .lede, .hero .btn { animation: rise 900ms var(--ease-out) backwards; }
+  .hero h1 .line + .line { animation-delay: 90ms; }
+  .hero .lede { animation-delay: 200ms; }
+  .hero .btn { animation-delay: 280ms; }
+}
+@keyframes draw { from { stroke-dashoffset: 1; } }
+@keyframes appear { from { opacity: 0; } }
+@keyframes turn { to { transform: rotate(360deg); } }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+
+/* --- narrower screens ------------------------------------------------------------------ */
+@media (max-width: 1000px) {
+  .panel.featured > article, .panel.wide > article { grid-template-columns: minmax(0, 1fr); }
+  .frame.front { width: 100%; }
+  .shots { min-height: 0; padding-top: 0; }
+  .about-in, .contact-in { grid-template-columns: minmax(0, 1fr); }
+  .contact-in { align-items: start; }
+}
+@media (max-width: 760px) {
+  .hero { grid-template-columns: minmax(0, 1fr); position: relative; padding-top: 12px; }
+  .hero-art { position: absolute; z-index: 0; inset-inline-start: -38%; top: -4%; width: 115%; opacity: 0.32; pointer-events: none; }
+  .panels { grid-template-columns: minmax(0, 1fr); }
+  .panel > article { border-radius: 20px; }
+  .points { grid-template-columns: minmax(0, 1fr); }
+  .frame.front { width: 100%; transform: none; }
+  .frame.back { display: none; }
+  .monogram { min-height: 200px; }
+  .bar nav a { padding: 8px 9px; }
+  .wordmark span { display: none; }
+}

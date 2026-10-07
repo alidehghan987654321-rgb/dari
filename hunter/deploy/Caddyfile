@@ -1,0 +1,9 @@
+# The sellers' website with HTTPS. Caddy gets and renews the certificate by itself
+# as soon as HUNTER_DOMAIN (in .env) points at this server.
+{$HUNTER_DOMAIN} {
+	encode zstd gzip
+	# Styles and scripts are versioned in the page (?v=...), fonts and icons don't change.
+	@static path /static/*
+	header @static Cache-Control "public, max-age=604800"
+	reverse_proxy site:8100
+}

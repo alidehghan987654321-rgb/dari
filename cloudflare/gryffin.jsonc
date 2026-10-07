@@ -1,0 +1,20 @@
+// The company's home page (gryffin/) on Cloudflare: a Worker that only serves those static
+// files, on gryffin.uk and www.gryffin.uk. No server code and no database. Each product keeps
+// its own site (hunter.gryffin.uk, bookfin.gryffin.uk); this page only links to them.
+// Deployed by hand with .github/workflows/deploy-gryffin.yml, after gryffin/build.py --check.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gryffin",
+  "compatibility_date": "2026-06-01",
+  "workers_dev": false,
+  // Cloudflare creates the DNS records and HTTPS certificates itself. It refuses (and
+  // changes nothing) if one of these names already points somewhere else.
+  "routes": [
+    { "pattern": "gryffin.uk", "custom_domain": true },
+    { "pattern": "www.gryffin.uk", "custom_domain": true }
+  ],
+  // Products hosted here live at gryffin.uk/<slug>/ (gryffin/build.py); an address that
+  // isn't there gets 404.html.
+  "assets": { "directory": "../gryffin", "not_found_handling": "404-page" },
+  "observability": { "enabled": true }
+}

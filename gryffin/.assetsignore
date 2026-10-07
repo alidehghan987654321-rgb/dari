@@ -1,0 +1,6 @@
+README.md
+.assetsignore
+build.py
+products.json
+__pycache__
+ornament.py

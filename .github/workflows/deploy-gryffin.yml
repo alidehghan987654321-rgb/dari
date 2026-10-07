@@ -1,0 +1,60 @@
+# Deploys the company's home page (gryffin/) to Cloudflare on gryffin.uk and www.gryffin.uk,
+# with any product sites hosted under it (gryffin/build.py).
+# Runs when the home page itself (gryffin/) changes on the site's branch, or by hand. A push
+# that touches anything else never changes the main domain. Needs the repository secrets
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; until they're set it's skipped with a warning,
+# and re-running that run once they're set deploys it.
+name: Deploy the Gryffin home page
+
+on:
+  push:
+    branches: [main, claude/trusting-cori-54e2u9]
+    paths:
+      - "gryffin/**"
+      - "cloudflare/gryffin.jsonc"
+      - ".github/workflows/deploy-gryffin.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-gryffin
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check the secrets are set
+        id: secrets
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::warning::Not deployed. Add the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (Settings -> Secrets and variables -> Actions)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
+      - name: Check the page is built from products.json
+        if: steps.secrets.outputs.ready == 'true'
+        run: python3 gryffin/build.py --check && python3 gryffin/ornament.py --check
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - name: Deploy the page
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: cloudflare
+        run: |
+          npm ci
+          npx wrangler deploy -c gryffin.jsonc
+          echo "Live at https://gryffin.uk"
