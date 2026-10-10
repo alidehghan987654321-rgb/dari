@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>آمار دانلودر</title><link rel="stylesheet" href="/vendor/tabler/tabler.min.css"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/simple.css"></head>
+<body><main class="wrap admin">
+<a href="/">صفحهٔ دانلود</a>
+<h1>آمار استفاده</h1><p class="muted">آمار واقعی از زمان فعال‌سازی ثبت می‌شود.</p>
+<form id="login"><label for="token">کلید مدیریت</label><input id="token" type="password" autocomplete="off" required><button class="btn primary" type="submit">نمایش آمار</button></form>
+<p id="feedback" role="status" aria-live="polite"></p>
+<section id="report" hidden>
+<p id="since" class="muted"></p>
+<table><caption>کاربران</caption><thead><tr><th scope="col">شاخص</th><th scope="col">تلگرام</th><th scope="col">سایت</th></tr></thead><tbody id="users"></tbody></table>
+<p id="visitors"></p><p id="starts"></p><p id="groups"></p>
+<table><caption>درخواست‌های دانلود</caption><thead><tr><th scope="col">شاخص</th><th scope="col">تلگرام</th><th scope="col">سایت</th></tr></thead><tbody id="downloads"></tbody></table>
+<h2>برنامهٔ اشتراک</h2><p id="threshold"></p><progress id="growth" max="10000" value="0" aria-label="کاربران فعال تلگرام نسبت به هدف ده هزار"></progress><p id="estimate"></p>
+<p class="muted">فعلاً رایگان است. عبور از هدف هیچ پرداختی را خودکار فعال نمی‌کند. درآمد نمایش‌داده‌شده فقط یک سناریو است؛ هزینه‌ها، کارمزدها و نرخ تبدیل به مشترک از آن کم نشده‌اند.</p>
+<h2>این اعداد چه معنایی دارند؟</h2>
+<p class="muted">تلگرام: حساب‌های انسانی که پیام یا فرمانی فرستاده‌اند. سایت: مرورگرهایی که درخواست دانلود ثبت کرده‌اند. بازدید سایت جداست. گروه و کانال به‌عنوان کاربر انسانی شمرده نمی‌شوند.</p>
+<p class="muted">تلگرام نصب روبات را گزارش نمی‌کند؛ تعداد شروع‌کنندگان با /start ثبت می‌شود. یک نفر با چند مرورگر ممکن است چند بار شمرده شود و کاربران سایت و تلگرام با هم جمع نمی‌شوند. از نام، آی‌پی و لینک‌ها در آمار استفاده نمی‌شود.</p>
+<button id="refresh" type="button" class="btn ghost">تازه‌سازی آمار</button> <button id="logout" type="button" class="btn ghost">خروج</button>
+</section></main><script src="/admin.js" defer></script></body></html>

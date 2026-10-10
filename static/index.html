@@ -5,19 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Video Downloader</title>
   <meta name="description" content="Download videos from Instagram, TikTok, YouTube, X and 1000+ other sites with just a link. دانلود ویدیو از اینستاگرام، تیک‌تاک، یوتیوب و بیش از ۱۰۰۰ سایت دیگر.">
-  <meta name="theme-color" content="#0c0a1f">
+  <meta name="theme-color" content="#206bc4">
   <meta property="og:title" content="Video Downloader — any video, with just a link">
   <meta property="og:description" content="Download videos from Instagram, TikTok, YouTube, X and 1000+ other sites.">
   <meta property="og:image" content="/assets/banner-en.png">
   <link rel="icon" href="/assets/avatar.png">
   <link rel="apple-touch-icon" href="/assets/avatar.png">
   <link rel="preload" href="/fonts/Vazirmatn-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/vendor/tabler/tabler.min.css">
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/simple.css">
 </head>
 <body>
   <header class="top wrap">
     <a class="brand" href="/">
-      <img src="/assets/avatar.png" alt="" width="40" height="40">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg></span>
       <span data-i18n="brand">Video Downloader</span>
     </a>
     <div class="top-actions">
@@ -29,17 +31,21 @@
     </div>
   </header>
 
-  <main class="wrap">
-    <section class="hero">
-      <div class="badge"><i></i><span data-i18n="badge">Free, no sign-up</span></div>
-      <h1><span data-i18n="h1_1">Any video,</span><br><span class="grad" data-i18n="h1_2">with just a link</span></h1>
+  <main class="wrap promo-layout">
+    <aside class="promo-rail" aria-labelledby="promo-title-start">
+      <h2 id="promo-title-start" data-i18n="our_projects">Our projects</h2>
+      <div id="promos-start" class="promo-list"></div>
+    </aside>
+    <div class="download-content">
+    <section class="hero card card-md">
+      <h1><span data-i18n="h1_1">Any video,</span><br> <span data-i18n="h1_2">with just a link</span></h1>
       <p class="sub" data-i18n="sub">Paste a post or video link here — we'll do the rest.</p>
 
       <form id="form" class="search" autocomplete="off">
-        <input id="url" name="url" type="text" inputmode="url" dir="ltr" required
+        <input id="url" name="url" class="form-control" type="text" inputmode="url" dir="ltr" required
                placeholder="https://www.instagram.com/reel/..." data-i18n-aria="url_label" aria-label="Video link">
         <button type="button" id="paste" class="btn ghost" data-i18n="paste" hidden>Paste</button>
-        <button type="submit" id="go" class="btn primary">
+        <button type="submit" id="go" class="btn primary btn-primary">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>
           <span data-i18n="download">Download</span>
         </button>
@@ -61,6 +67,7 @@
       </div>
 
       <div id="results" class="results"></div>
+      <p class="privacy" data-i18n="privacy">Free for now. Anonymous usage is counted to improve the service.</p>
     </section>
 
     <section class="sites">
@@ -79,12 +86,6 @@
       </div>
     </section>
 
-    <section class="steps">
-      <div class="step"><span data-i18n="n1">1</span><b data-i18n="step1_title">Copy the link</b><p data-i18n="step1_text">In the app, tap “Share”, then “Copy link”.</p></div>
-      <div class="step"><span data-i18n="n2">2</span><b data-i18n="step2_title">Paste it here</b><p data-i18n="step2_text">Paste the link in the box above and hit “Download”.</p></div>
-      <div class="step"><span data-i18n="n3">3</span><b data-i18n="step3_title">Save it</b><p data-i18n="step3_text">Watch the video right here and save it with one click.</p></div>
-    </section>
-
     <section class="telegram card tg-only" hidden>
       <div>
         <h2 data-i18n="tg_title">We're on Telegram too</h2>
@@ -96,6 +97,11 @@
         <a class="btn ghost" data-tg-link="?startchannel=add&amp;admin=post_messages" data-i18n="tg_channel">Add to channel</a>
       </div>
     </section>
+    </div>
+    <aside class="promo-rail" aria-labelledby="promo-title-end">
+      <h2 id="promo-title-end" data-i18n="discover_more">Discover more</h2>
+      <div id="promos-end" class="promo-list"></div>
+    </aside>
   </main>
 
   <footer class="wrap muted" data-i18n="footer">
@@ -122,5 +128,6 @@
   <!-- Not deferred: switches the language before the page is first drawn. -->
   <script src="/i18n.js"></script>
   <script src="/app.js" defer></script>
+  <script src="/promos.js" defer></script>
 </body>
 </html>

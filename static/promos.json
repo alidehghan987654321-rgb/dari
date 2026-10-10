@@ -1,0 +1,8 @@
+[
+  {"id":"studio","url":"https://studio.gryffin.uk/","image":"/promos/studio.webp","rail":"start","title":{"fa":"استودیو گریفین","en":"Gryffin Studio"},"description":{"fa":"وب‌سایت، اپلیکیشن و ابزارهای هوشمند برای کسب‌وکار شما.","en":"Websites, applications and AI-assisted business tools."}},
+  {"id":"work","url":"https://work.gryffin.uk/","image":"/promos/work.webp","rail":"start","title":{"fa":"کاریابی گریفین","en":"Gryffin Work"},"description":{"fa":"آگهی‌های شغلی بریتانیا را پیدا و مقایسه کنید.","en":"Find and compare job opportunities across the UK."}},
+  {"id":"bookfin","url":"https://bookfin.gryffin.uk/ir","image":"/promos/bookfin.webp","rail":"start","title":{"fa":"نوبیکس","en":"Nobix / Bookfin"},"description":{"fa":"نوبت‌دهی آنلاین و مدیریت برنامهٔ سالن؛ با دموی رایگان.","en":"Online booking and salon scheduling, with a free demo."}},
+  {"id":"gryffin","url":"https://gryffin.uk/","image":"/promos/gryffin.webp","rail":"end","title":{"fa":"ترمینال گریفین","en":"Gryffin Terminal"},"description":{"fa":"چارت، آموزش و ابزارهای بررسی بازار طلا و رمزارز.","en":"Charts, education and market tools for gold and crypto."}},
+  {"id":"hunter","url":"https://hunter.gryffin.uk/","image":"/promos/hunter.webp","rail":"end","title":{"fa":"شکارچی","en":"Hunter"},"description":{"fa":"دموی بررسی محصول، تأمین‌کننده و محاسبهٔ قیمت فروش.","en":"Explore the product sourcing and pricing demo."}},
+  {"id":"hub","url":"https://hub.gryffin.uk/","image":"/promos/hub.webp","rail":"end","title":{"fa":"هاب گریفین","en":"Gryffin Hub"},"description":{"fa":"ابزارهای آنلاین گریفین برای کسب‌وکارهای ایرانی.","en":"Explore Gryffin's online tools for Iranian businesses."}}
+]

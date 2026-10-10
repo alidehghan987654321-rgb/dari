@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from usage import Usage
 from pydantic import BaseModel, Field
 from telegram import Bot, Update
 from telegram.error import TelegramError
@@ -92,6 +93,7 @@ class Job:
     error: str | None = None  # a DownloadError code, or "unexpected"
     error_details: dict[str, Any] = field(default_factory=dict)
     finished_at: float | None = None
+    actor: str = ""
 
     @property
     def active(self) -> bool:
@@ -170,6 +172,7 @@ def create_app(settings: Settings | None = None, telegram: Application | None = 
     secret = webhook_secret(settings.bot_token or "")
     bot_ready = False
     jobs: dict[str, Job] = {}
+    usage = Usage()
     running: set[asyncio.Task[None]] = set()  # keeps the tasks from being garbage collected
     sem = asyncio.Semaphore(settings.max_concurrent)
     info: dict[str, Any] = {
@@ -237,6 +240,35 @@ def create_app(settings: Settings | None = None, telegram: Application | None = 
     app.state.jobs = jobs
     app.state.sweep = sweep
 
+    @app.middleware("http")
+    async def visitor_identity(request: Request, call_next):
+        visitor = request.cookies.get("dari_visitor", "")
+        new = not re.fullmatch(r"[a-f0-9]{32}", visitor)
+        if new:
+            visitor = secrets.token_hex(16)
+        request.state.visitor = visitor
+        response = await call_next(request)
+        if request.url.path == "/" and response.status_code == 200:
+            await asyncio.to_thread(usage.record, "web", visitor, "visit")
+        if new and request.url.path in ("/", "/api/jobs"):
+            response.set_cookie("dari_visitor", visitor, max_age=365*86400,
+                httponly=True, secure=request.url.scheme == "https", samesite="lax")
+        return response
+
+    @app.get("/api/admin/stats")
+    async def admin_stats(request: Request):
+        token = os.getenv("ADMIN_TOKEN", "")
+        supplied = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        if not token or not secrets.compare_digest(token, supplied):
+            raise HTTPException(401, "unauthorized")
+        try:
+            result = await asyncio.to_thread(usage.summary)
+        except Exception:
+            log.exception("Usage summary unavailable")
+            raise HTTPException(503, "stats_unavailable")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
     async def run(job: Job) -> None:
         async with sem:
             job.status = "downloading"
@@ -268,6 +300,8 @@ def create_app(settings: Settings | None = None, telegram: Application | None = 
                 job.status = "done"
             finally:
                 job.finished_at = time.monotonic()
+                await asyncio.to_thread(usage.record, "web", job.actor,
+                    "completed" if job.status == "done" and job.files else "failed")
 
     @app.post("/telegram")
     async def telegram_update(request: Request) -> dict[str, bool]:
@@ -304,9 +338,11 @@ def create_app(settings: Settings | None = None, telegram: Application | None = 
             raise HTTPException(503, "busy")
 
         job_id = secrets.token_urlsafe(12)
-        job = Job(id=job_id, url=url, ip=ip, dir=workdir / job_id)
+        job = Job(id=job_id, url=url, ip=ip, dir=workdir / job_id, actor=request.state.visitor)
         job.dir.mkdir()
         jobs[job_id] = job
+        await asyncio.to_thread(usage.record, "web", request.state.visitor, "activity")
+        await asyncio.to_thread(usage.record, "web", request.state.visitor, "request")
         log.info("Job %s from %s: %s", job_id, ip, url)
         task = asyncio.create_task(run(job))
         running.add(task)

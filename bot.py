@@ -38,11 +38,13 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 from telegram.request import BaseRequest
 
 import ui
+from usage import Usage
 from downloader import DownloadError, MediaFile, Progress, download, is_video_link
 
 # Opt in to PTB's upcoming behaviour (durations as timedelta), which also
@@ -234,12 +236,16 @@ async def process_url(
     *,
     lang: str,
     verbose: bool = True,
+    usage: Usage | None = None,
 ) -> None:
     """Download ``url`` and reply to ``message`` with the media.
 
     ``verbose`` shows progress and errors in the chat (see StatusMessage).
     """
     status = StatusMessage(message, verbose)
+    actor = message.from_user.id if message.from_user and not message.from_user.is_bot else f"chat:{message.chat.id}"
+    if usage:
+        await asyncio.to_thread(usage.record, "telegram", actor, "request")
     latest: Progress | None = None
 
     def on_progress(progress: Progress) -> None:  # runs in the download thread
@@ -278,17 +284,25 @@ async def process_url(
                     await status.show(ui.t(lang, "sending"))
                     for media in result.files:
                         await send_media(message, media, lang, signature)
+                    if usage:
+                        await asyncio.to_thread(usage.record, "telegram", actor, "completed" if result.files else "failed")
         if result.too_large:
             await status.show(ui.partly_sent(lang, result.too_large))
         else:
             await status.delete()
     except DownloadError as exc:
+        if usage:
+            await asyncio.to_thread(usage.record, "telegram", actor, "failed")
         log.info("Could not download %s: %s", url, exc)
         await status.show(ui.failed(lang, exc))
     except TelegramError as exc:
+        if usage:
+            await asyncio.to_thread(usage.record, "telegram", actor, "failed")
         log.exception("Sending %s failed", url)
         await status.show(ui.send_failed(lang, exc.message))
     except Exception:
+        if usage:
+            await asyncio.to_thread(usage.record, "telegram", actor, "failed")
         log.exception("Unexpected error for %s", url)
         await status.show(ui.t(lang, "unexpected"))
 
@@ -302,6 +316,10 @@ async def download_and_send(
     verbose: bool,
 ) -> None:
     config: Config = context.bot_data["config"]
+    usage = context.bot_data.get("usage")
+    actor = message.from_user.id if message.from_user and not message.from_user.is_bot else None
+    if actor is not None and usage is not None:
+        await asyncio.to_thread(usage.record, "telegram", actor, "activity")
     sem: asyncio.Semaphore = context.bot_data["semaphore"]
     if len(urls) > MAX_URLS_PER_MESSAGE:
         if verbose:
@@ -310,7 +328,7 @@ async def download_and_send(
     user_id = message.from_user.id if message.from_user else None
     log.info("Chat %s, user %s requested %s", message.chat.id, user_id, urls)
     await asyncio.gather(
-        *(process_url(message, url, config, sem, lang=lang, verbose=verbose) for url in urls)
+        *(process_url(message, url, config, sem, lang=lang, verbose=verbose, usage=usage) for url in urls)
     )
 
 
@@ -480,6 +498,31 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.error("Unhandled error while processing %s", update, exc_info=context.error)
 
 
+async def track_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    usage = context.bot_data["usage"]
+    user = update.effective_user
+    message = update.effective_message
+    # Membership changes do not count the person who added the bot as a user.
+    if user and not user.is_bot and not update.my_chat_member and (message or update.callback_query):
+        config = context.bot_data["config"]
+        chat = update.effective_chat
+        if chat and chat.type != 'private' and not update.callback_query:
+            command = (message.text or '').split()
+            if not command or command[0].split('@')[0] not in ('/start', '/help', '/dl', '/lang'):
+                return
+        if config.allowed_users and user.id not in config.allowed_users and (not chat or chat.id not in config.allowed_users):
+            return
+        await asyncio.to_thread(usage.record, "telegram", user.id, "activity", f"tg-{update.update_id}-activity")
+        if message and message.text and message.text.split()[0].split('@')[0] == '/start':
+            await asyncio.to_thread(usage.record, "telegram", user.id, "start", f"tg-{update.update_id}-start")
+    change = update.my_chat_member
+    if change and change.chat.type in ('group', 'supergroup', 'channel'):
+        status = change.new_chat_member.status
+        active = status in ('member', 'administrator') or (status == 'restricted' and change.new_chat_member.is_member)
+        await asyncio.to_thread(usage.record, "telegram", change.chat.id,
+            "installed" if active else "removed", f"tg-{update.update_id}-membership")
+
+
 # Telegram shows the "fa" texts to Persian apps and the default (English) to everyone else.
 PROFILE_LANGS = {"en": None, "fa": "fa"}
 
@@ -539,6 +582,8 @@ def build_app(config: Config, request: BaseRequest | None = None) -> Application
     app = builder.build()
 
     app.bot_data["config"] = config
+    app.bot_data["usage"] = Usage()
+    app.add_handler(TypeHandler(Update, track_usage), group=-2)
     app.bot_data["semaphore"] = asyncio.Semaphore(config.max_concurrent)
 
     if config.allowed_users:

@@ -6,6 +6,11 @@
 (function () {
   const STRINGS = {
     en: {
+      our_projects: "Our projects",
+      discover_more: "More from Gryffin",
+      visit_project: "Visit website",
+      promotion: "Our promotion",
+      privacy: "Free for now. Anonymous usage is counted to improve the service.",
       title: "Video Downloader",
       brand: "Video Downloader",
       other_lang: "فارسی",
@@ -77,6 +82,11 @@
       err_network: "Couldn't reach the server. Check your internet connection.",
     },
     fa: {
+      our_projects: "پروژه‌های ما",
+      discover_more: "بیشتر از گریفین",
+      visit_project: "مشاهدهٔ سایت",
+      promotion: "معرفی از مجموعهٔ ما",
+      privacy: "فعلاً رایگان است. برای بهبود سرویس، تعداد استفاده‌ها با شناسهٔ ناشناس ثبت می‌شود.",
       title: "دانلودر ویدیو",
       brand: "دانلودر ویدیو",
       other_lang: "English",

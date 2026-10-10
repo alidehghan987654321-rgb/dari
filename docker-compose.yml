@@ -4,6 +4,8 @@ services:
     build: .
     env_file: .env
     restart: unless-stopped
+    volumes:
+      - usage_data:/app/data
     # To use a cookies file, uncomment this (on web too) and set COOKIES_FILE=/app/cookies.txt in .env:
     # volumes:
     #   - ./cookies.txt:/app/cookies.txt:ro
@@ -15,6 +17,8 @@ services:
               "--proxy-headers", "--forwarded-allow-ips", "*"]
     env_file: .env
     restart: unless-stopped
+    volumes:
+      - usage_data:/app/data
     # volumes:
     #   - ./cookies.txt:/app/cookies.txt:ro
 
@@ -36,5 +40,6 @@ services:
       - web
 
 volumes:
+  usage_data:
   caddy_data:
   caddy_config:

@@ -1,0 +1,101 @@
+/* Tabler 1.6.1 adaptation with local Vazirmatn. */
+:root { --bg:#f1f5f9; --card:#fff; --card-border:#d8e1eb; --ink:#1d2c40; --muted:#52647a; --accent:#206bc4; --danger:#b52d3e; --grad:#206bc4; --radius:14px; --tblr-font-sans-serif:Vazirmatn,Tahoma,sans-serif; }
+body { background:var(--bg); font-family:var(--tblr-font-sans-serif); }
+body::before { display:none; }
+::selection { background:#cfe3ff; color:#13243b; }
+.wrap { width:min(940px, 100% - 40px); }
+.top { padding:24px 0; border-bottom:1px solid var(--card-border); margin-bottom:48px; }
+.brand { gap:12px; font-size:19px; color:#173251; }
+.brand-mark { display:grid; place-items:center; width:42px; height:42px; border-radius:12px; background:var(--accent); color:#fff; }
+.brand-mark svg { width:25px; height:25px; }
+.hero.card { padding:48px; text-align:center; margin:0; border:1px solid var(--card-border); background:#fff; border-radius:14px; }
+.hero h1 { font-size:clamp(28px, 5vw, 40px); line-height:1.45; margin:0 0 14px; color:#173251; }
+.hero h1 br { display:none; }
+.hero h1 span + span::before { content:' '; }
+.hero h1 span + span { margin-inline-start:.2em; }
+.sub { margin-bottom:32px; font-size:17px; }
+.grad { background:none; color:var(--ink); }
+.search { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:10px; padding:0; background:none; border:0; border-radius:0; box-shadow:none; }
+.search:focus-within { border:0; box-shadow:none; }
+.search input.form-control { min-height:54px; width:100%; background:#f8fafc; border:1px solid #b4c2d2; border-radius:8px; padding:0 16px; font:16px var(--tblr-font-sans-serif); }
+.search input::placeholder { color:#60748b; }
+.search input:focus { border-color:var(--accent); outline:3px solid #cfe3ff; }
+.btn { border-radius:8px; min-height:44px; font-weight:600; font-size:15px; }
+.search .btn { min-height:54px; padding-inline:22px; }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; box-shadow:none; }
+.btn.primary:hover { background:#18569f; border-color:#18569f; }
+.btn.ghost { background:#fff; border-color:#b4c2d2; color:#263f5d; }
+.btn.ghost:hover { background:#eef4fb; }
+.btn:focus-visible, input:focus-visible, a:focus-visible { outline:3px solid #206bc4; outline-offset:3px; }
+.sites { padding:30px 0 20px; }
+.sites h2 { font-size:15px; color:var(--muted); font-weight:400; }
+.chips { gap:8px; }
+.chip, .chip.more { background:#fff; color:#405775; border:1px solid var(--card-border); padding:6px 12px; border-radius:6px; font-size:13px; font-weight:400; }
+.telegram { margin:24px 0 0; padding:28px; background:#e8f1fc; border:1px solid #c8d9ee; border-radius:14px; }
+.telegram h2 { font-size:20px; }
+.tg-buttons { width:260px; }
+.privacy { text-align:center; font-size:13px; color:var(--muted); margin:24px 0 0; }
+.spinner { border-color:#d9dfe8; border-top-color:var(--accent); }
+.bar { background:#e5edf7; }
+.card.status,.card.error { display:block; }
+.card.result { display:grid; }
+.result .preview { border-radius:10px; }
+footer { padding:30px 0; }
+.admin { padding-block:36px; max-width:860px; }
+.admin h1 { font-size:28px; margin-block:24px 8px; }
+.admin form { display:flex; flex-wrap:wrap; gap:12px; margin-block:28px; }
+.admin label { width:100%; }
+.admin input { flex:1; min-width:180px; padding:12px; border:1px solid #b4c2d2; border-radius:8px; font:inherit; background:#fff; }
+.admin table { width:100%; border-collapse:collapse; margin-block:20px; font-variant-numeric:tabular-nums; background:#fff; }
+.admin th, .admin td { padding:14px 16px; border-bottom:1px solid var(--card-border); text-align:start; }
+.admin th { background:#e9eff7; color:#263f5d; font-weight:600; }
+.admin h2 { font-size:20px; margin-top:30px; }
+.admin caption { text-align:start; caption-side:top; font-size:20px; color:var(--ink); font-weight:700; padding-bottom:12px; }
+.admin progress { width:100%; accent-color:var(--accent); height:16px; }
+@media(max-width:640px) {
+ .wrap { width:calc(100% - 28px); }
+ .top { margin-bottom:24px; padding:18px 0; }
+ .brand { font-size:16px; }
+ .hero.card { padding:28px 18px; }
+ .hero h1 br { display:block; }
+ .sub { font-size:15px; margin-bottom:24px; }
+ .search { grid-template-columns:1fr 1fr; }
+ .search input.form-control { grid-column:1 / -1; }
+ .search .primary { grid-column:1 / -1; }
+ .search:has(#paste:not([hidden])) .primary { grid-column:auto; }
+ .search .btn { padding-inline:12px; }
+ .tg-buttons { width:100%; }
+ .admin th,.admin td { padding:10px 8px; font-size:14px; }
+}
+
+/* Owned promotions are separate from the download action. */
+.promo-layout { width:min(1440px,100% - 40px); display:grid; grid-template-columns:220px minmax(0,1fr) 220px; gap:24px; align-items:start; }
+.download-content { min-width:0; }
+.promo-layout .hero.card { padding:36px 28px; }
+.promo-rail h2 { font-size:15px; font-weight:600; margin:0 0 14px; color:var(--muted); }
+.promo-list { display:grid; gap:18px; }
+.project-promo { display:block; border:1px solid var(--card-border); border-radius:12px; overflow:hidden; background:#fff; text-decoration:none; color:var(--ink); }
+.project-promo img { display:block; width:100%; height:auto; aspect-ratio:16 / 9; object-fit:cover; border-bottom:1px solid var(--card-border); }
+.promo-copy { padding:16px; }
+.promo-copy small { display:block; font-size:11px; color:var(--muted); margin:0 0 8px; }
+.promo-copy h3 { font-size:17px; font-weight:700; line-height:1.5; margin:0 0 8px; }
+.promo-copy p { font-size:13px; line-height:1.8; margin:0 0 12px; color:var(--muted); }
+.promo-action { display:block; color:#18569f; font-size:13px; font-weight:600; }
+.project-promo:hover { border-color:var(--accent); }
+.project-promo:hover .promo-action { text-decoration:underline; }
+.promo-layout.no-promos { display:block; max-width:940px; }
+@media(max-width:1100px) {
+ .promo-layout { grid-template-columns:1fr 1fr; }
+ .download-content { grid-column:1 / -1; grid-row:1; }
+ .promo-rail { grid-row:2; }
+ .promo-list { grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+}
+@media(max-width:640px) {
+ .promo-layout { width:calc(100% - 28px); gap:24px; grid-template-columns:1fr; }
+ .promo-layout .hero.card { padding:28px 18px; }
+ .promo-rail { grid-column:1; grid-row:auto; }
+ .promo-list { grid-template-columns:1fr 1fr; }
+ .promo-copy { padding:12px; }
+ .promo-copy h3 { font-size:15px; }
+}
+@media(max-width:360px) { .promo-list { grid-template-columns:1fr; } }

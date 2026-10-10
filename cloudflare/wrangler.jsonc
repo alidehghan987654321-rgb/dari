@@ -22,7 +22,7 @@
       "max_instances": 1
     }
   ],
-  "durable_objects": { "bindings": [{ "name": "APP", "class_name": "App" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["App"] }],
+  "durable_objects": { "bindings": [{ "name": "APP", "class_name": "App" }, { "name": "USAGE", "class_name": "UsageStats" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["App"] }, { "tag": "v2", "new_sqlite_classes": ["UsageStats"] }],
   "observability": { "enabled": true }
 }

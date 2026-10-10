@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py downloader.py ui.py web.py ./
+COPY bot.py downloader.py ui.py web.py usage.py ./
 COPY static ./static
 COPY assets/avatar.png assets/banner.png assets/banner-en.png ./assets/
 
